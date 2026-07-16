@@ -1,0 +1,12 @@
+{
+  "name": "@rentos/config",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "files": [
+    "tsconfig.base.json",
+    "tsconfig.nestjs.json",
+    "tsconfig.nextjs.json",
+    "eslint-preset.js"
+  ]
+}

@@ -1,0 +1,622 @@
+// RentOS core data model — PRD Appendix A.
+// Every tenant-owned table carries tenant_id and is protected by a Postgres
+// RLS policy (see prisma/migrations/*_enable_rls/migration.sql). The app
+// connects with a non-owner role so RLS cannot be silently bypassed by
+// table ownership — see docs/HANDOFF.md "RLS enforcement" for the full
+// rationale. Prisma models use camelCase; every column is explicitly
+// @map'd to snake_case so the database itself stays conventional SQL,
+// independent of the ORM.
+
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../generated/client"
+  // "native" covers local dev (whatever host you're running on); the
+  // musl targets cover the Alpine-based Docker runtime images (infra/docker/*)
+  // — Prisma's query engine is a native binary and silently fails at
+  // runtime if the container's libc doesn't match what was generated.
+  binaryTargets = ["native", "linux-musl", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum GlobalRole {
+  PLATFORM_ADMIN
+  SUPER_ADMIN
+  OPS_ADMIN
+  FINANCE_ADMIN
+  VIEWER
+}
+
+enum BookingModel {
+  RECURRING_LEASE
+  NIGHTLY
+  DURATION_ORDER
+  HOURLY_SLOT
+}
+
+enum AssetStatus {
+  AVAILABLE
+  RESERVED
+  OCCUPIED
+  MAINTENANCE
+  RETIRED
+}
+
+/// Union of every state reachable by any BookingModel's lifecycle (PRD §8.1,
+/// Appendix B). Which subset is legal for a given booking is enforced by the
+/// state machine in @rentos/domain, not by this enum — Postgres only needs
+/// to know the value is one of these.
+enum BookingStatus {
+  DRAFT
+  PENDING_APPROVAL
+  NEEDS_INFO
+  APPROVED
+  REJECTED
+  EXPIRED
+  ACTIVE
+  LAPSED
+  RENEWING
+  NOTICE_GIVEN
+  SUSPENDED
+  DEFAULT
+  MOVED_OUT
+  CLOSED
+  PAID
+  CHECKED_IN
+  CHECKED_OUT
+  NO_SHOW
+  EXTENDED
+  PICKED_UP
+  RETURNED
+  INSPECTION
+}
+
+enum InvoiceStatus {
+  SCHEDULED
+  ISSUED
+  OVERDUE
+  PAID
+  PARTIALLY_REFUNDED
+  REFUNDED
+  VOID
+  CREDITED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentMethod {
+  VIRTUAL_ACCOUNT
+  QRIS
+  EWALLET
+  CARD
+  MANUAL_TRANSFER
+  CASH
+}
+
+enum DepositStatus {
+  HELD
+  PARTIALLY_APPLIED
+  APPLIED
+  REFUND_REQUESTED
+  REFUNDED
+}
+
+enum KycStatus {
+  NOT_SUBMITTED
+  PENDING_REVIEW
+  VERIFIED
+  REJECTED
+}
+
+enum LedgerEntryType {
+  DEBIT
+  CREDIT
+}
+
+enum LedgerAccount {
+  ACCOUNTS_RECEIVABLE
+  REVENUE
+  DEPOSIT_LIABILITY
+  CASH
+  TAX_PAYABLE
+  REFUND
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy
+// ---------------------------------------------------------------------------
+
+model Tenant {
+  id            String   @id @default(uuid()) @db.Uuid
+  slug          String   @unique
+  name          String
+  legalName     String?  @map("legal_name")
+  isPkp         Boolean  @default(false) @map("is_pkp")
+  defaultLocale String   @default("id") @map("default_locale")
+  timezone      String   @default("Asia/Jakarta")
+  branding      Json     @default("{}")
+  featureFlags  Json     @default("{}") @map("feature_flags")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  domains            TenantDomain[]
+  locations          Location[]
+  users              User[]
+  customers          Customer[]
+  assetTypes         AssetType[]
+  assets             Asset[]
+  bookings           Booking[]
+  invoices           Invoice[]
+  payments           Payment[]
+  automationSettings AutomationSetting[]
+  promoCodes         PromoCode[]
+
+  @@map("tenants")
+}
+
+model TenantDomain {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  domain    String   @unique
+  isPrimary Boolean  @default(false) @map("is_primary")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@map("tenant_domains")
+}
+
+model Location {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  address   String?
+  timezone  String   @default("Asia/Jakarta")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  assets Asset[]
+
+  @@index([tenantId])
+  @@map("locations")
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  /// null => platform admin (no tenant scope)
+  tenantId     String?    @db.Uuid @map("tenant_id")
+  tenant       Tenant?    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email        String
+  passwordHash String?    @map("password_hash")
+  displayName  String?    @map("display_name")
+  status       String     @default("ACTIVE")
+  roles        UserRole[]
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+}
+
+model UserRole {
+  id     String     @id @default(uuid()) @db.Uuid
+  userId String     @db.Uuid @map("user_id")
+  user   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   GlobalRole
+
+  @@unique([userId, role])
+  @@map("user_roles")
+}
+
+// ---------------------------------------------------------------------------
+// CRM
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String    @db.Uuid @map("tenant_id")
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phone           String
+  email           String?
+  fullName        String?   @map("full_name")
+  kycStatus       KycStatus @default(NOT_SUBMITTED) @map("kyc_status")
+  isBlocklisted   Boolean   @default(false) @map("is_blocklisted")
+  blocklistReason String?   @map("blocklist_reason")
+  notes           String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  kycDocuments KycDocument[]
+  bookings     Booking[]
+  invoices     Invoice[]
+
+  @@unique([tenantId, phone])
+  @@index([tenantId])
+  @@map("customers")
+}
+
+model KycDocument {
+  id               String    @id @default(uuid()) @db.Uuid
+  tenantId         String    @db.Uuid @map("tenant_id")
+  customerId       String    @db.Uuid @map("customer_id")
+  customer         Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  documentType     String    @map("document_type")
+  /// Encrypted object-storage key. The raw file never lands in this table.
+  storageKey       String    @map("storage_key")
+  status           KycStatus @default(PENDING_REVIEW)
+  reviewedByUserId String?   @db.Uuid @map("reviewed_by_user_id")
+  reviewedAt       DateTime? @map("reviewed_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([customerId])
+  @@map("kyc_documents")
+}
+
+// ---------------------------------------------------------------------------
+// Catalog
+// ---------------------------------------------------------------------------
+
+model AssetType {
+  id               String       @id @default(uuid()) @db.Uuid
+  tenantId         String       @db.Uuid @map("tenant_id")
+  tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name             String
+  slug             String
+  bookingModel     BookingModel @map("booking_model")
+  attributesSchema Json         @default("{}") @map("attributes_schema")
+  /// { basePrice, currency, billingPeriod, depositRule, adminFee, prorationRule, taxInclusive }
+  pricing          Json
+  photos           Json         @default("[]")
+  isPooled         Boolean      @default(false) @map("is_pooled")
+  isPublished      Boolean      @default(false) @map("is_published")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  assets   Asset[]
+  bookings Booking[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+  @@map("asset_types")
+}
+
+model Asset {
+  id           String      @id @default(uuid()) @db.Uuid
+  tenantId     String      @db.Uuid @map("tenant_id")
+  tenant       Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  locationId   String      @db.Uuid @map("location_id")
+  location     Location    @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  assetTypeId  String      @db.Uuid @map("asset_type_id")
+  assetType    AssetType   @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
+  code         String
+  status       AssetStatus @default(AVAILABLE)
+  statusReason String?     @map("status_reason")
+  attributes   Json        @default("{}")
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+
+  bookings Booking[]
+
+  @@unique([tenantId, locationId, code])
+  @@index([tenantId])
+  @@index([assetTypeId])
+  @@map("assets")
+}
+
+// ---------------------------------------------------------------------------
+// Booking & financial spine
+// ---------------------------------------------------------------------------
+
+model Booking {
+  id                  String        @id @default(uuid()) @db.Uuid
+  tenantId            String        @db.Uuid @map("tenant_id")
+  tenant              Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId          String        @db.Uuid @map("customer_id")
+  customer            Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  assetTypeId         String        @db.Uuid @map("asset_type_id")
+  assetType           AssetType     @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
+  assetId             String?       @db.Uuid @map("asset_id")
+  asset               Asset?        @relation(fields: [assetId], references: [id])
+  bookingModel        BookingModel  @map("booking_model")
+  status              BookingStatus @default(DRAFT)
+  startDate           DateTime      @map("start_date")
+  endDate             DateTime?     @map("end_date")
+  /// Day-of-month billing anchor, RECURRING_LEASE only.
+  anchorDay           Int?          @map("anchor_day")
+  /// Pricing terms frozen at submission time — never re-derived from AssetType later.
+  priceSnapshot       Json          @map("price_snapshot")
+  /// Soft-reservation TTL while PENDING_APPROVAL, prevents indefinite inventory lock.
+  reservedUntil       DateTime?     @map("reserved_until")
+  noticeGivenAt       DateTime?     @map("notice_given_at")
+  noticeEffectiveDate DateTime?     @map("notice_effective_date")
+  approvedByUserId    String?       @db.Uuid @map("approved_by_user_id")
+  rejectionReason     String?       @map("rejection_reason")
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+
+  events    BookingEvent[]
+  contracts Contract[]
+  invoices  Invoice[]
+  deposits  Deposit[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([customerId])
+  @@index([assetId])
+  @@map("bookings")
+}
+
+/// Append-only audit trail — "every transition writes actor, timestamp, reason" (PRD §8.1).
+model BookingEvent {
+  id         String         @id @default(uuid()) @db.Uuid
+  tenantId   String         @db.Uuid @map("tenant_id")
+  bookingId  String         @db.Uuid @map("booking_id")
+  booking    Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  fromStatus BookingStatus? @map("from_status")
+  toStatus   BookingStatus  @map("to_status")
+  actorType  String         @map("actor_type")
+  actorId    String?        @db.Uuid @map("actor_id")
+  reason     String?
+  metadata   Json           @default("{}")
+  createdAt  DateTime       @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([bookingId])
+  @@map("booking_events")
+}
+
+model Contract {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String    @db.Uuid @map("tenant_id")
+  bookingId       String    @db.Uuid @map("booking_id")
+  booking         Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  templateVersion String    @map("template_version")
+  /// v1: wet-sign PDF upload. e-Meterai/Privy adapter is Phase 2.
+  documentUrl     String?   @map("document_url")
+  signedAt        DateTime? @map("signed_at")
+  signedByName    String?   @map("signed_by_name")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([bookingId])
+  @@map("contracts")
+}
+
+model Invoice {
+  id                    String        @id @default(uuid()) @db.Uuid
+  tenantId              String        @db.Uuid @map("tenant_id")
+  tenant                Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  bookingId             String?       @db.Uuid @map("booking_id")
+  booking               Booking?      @relation(fields: [bookingId], references: [id])
+  customerId            String        @db.Uuid @map("customer_id")
+  customer              Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// Tenant-prefixed, sequential, tax-compliant (e.g. "STG/2026/07/000123").
+  invoiceNumber         String        @map("invoice_number")
+  status                InvoiceStatus @default(SCHEDULED)
+  currency              String        @default("IDR")
+  subtotal              Decimal       @db.Decimal(14, 2)
+  taxAmount             Decimal       @default(0) @db.Decimal(14, 2) @map("tax_amount")
+  totalAmount           Decimal       @db.Decimal(14, 2) @map("total_amount")
+  issueDate             DateTime      @map("issue_date")
+  dueDate               DateTime      @map("due_date")
+  paidAt                DateTime?     @map("paid_at")
+  voidedAt              DateTime?     @map("voided_at")
+  periodStart           DateTime?     @map("period_start")
+  periodEnd             DateTime?     @map("period_end")
+  supersededByInvoiceId String?       @db.Uuid @map("superseded_by_invoice_id")
+  createdAt              DateTime     @default(now()) @map("created_at")
+  updatedAt               DateTime    @updatedAt @map("updated_at")
+
+  lines       InvoiceLine[]
+  payments    Payment[]
+  creditNotes CreditNote[]
+
+  @@unique([tenantId, invoiceNumber])
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([customerId])
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid @map("tenant_id")
+  invoiceId   String   @db.Uuid @map("invoice_id")
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  description String
+  quantity    Decimal  @default(1) @db.Decimal(10, 2)
+  unitPrice   Decimal  @db.Decimal(14, 2) @map("unit_price")
+  amount      Decimal  @db.Decimal(14, 2)
+  /// RENT | DEPOSIT | ADMIN_FEE | TAX | DISCOUNT | DAMAGE
+  lineType    String   @map("line_type")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([invoiceId])
+  @@map("invoice_lines")
+}
+
+model Payment {
+  id                String        @id @default(uuid()) @db.Uuid
+  tenantId          String        @db.Uuid @map("tenant_id")
+  tenant            Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoiceId         String        @db.Uuid @map("invoice_id")
+  invoice           Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  /// XENDIT | MIDTRANS | MANUAL | MOCK
+  provider          String
+  providerRef       String?       @map("provider_ref")
+  idempotencyKey    String        @unique @map("idempotency_key")
+  method            PaymentMethod
+  status            PaymentStatus @default(PENDING)
+  amount            Decimal       @db.Decimal(14, 2)
+  paidAt            DateTime?     @map("paid_at")
+  /// Set for manual entries — maker-checker: recorder != verifier (PRD §7.2.4).
+  recordedByUserId  String?       @db.Uuid @map("recorded_by_user_id")
+  verifiedByUserId  String?       @db.Uuid @map("verified_by_user_id")
+  proofUrl          String?       @map("proof_url")
+  rawWebhookPayload Json?         @map("raw_webhook_payload")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([invoiceId])
+  @@map("payments")
+}
+
+model CreditNote {
+  id             String   @id @default(uuid()) @db.Uuid
+  tenantId       String   @db.Uuid @map("tenant_id")
+  invoiceId      String   @db.Uuid @map("invoice_id")
+  invoice        Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amount         Decimal  @db.Decimal(14, 2)
+  reason         String
+  issuedByUserId String   @db.Uuid @map("issued_by_user_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@map("credit_notes")
+}
+
+model Deposit {
+  id                    String        @id @default(uuid()) @db.Uuid
+  tenantId              String        @db.Uuid @map("tenant_id")
+  bookingId             String        @db.Uuid @map("booking_id")
+  booking               Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  amount                Decimal       @db.Decimal(14, 2)
+  status                DepositStatus @default(HELD)
+  appliedAmount         Decimal       @default(0) @db.Decimal(14, 2) @map("applied_amount")
+  refundApprovedByUserId String?      @db.Uuid @map("refund_approved_by_user_id")
+  refundedAt             DateTime?    @map("refunded_at")
+  payoutRef               String?     @map("payout_ref")
+  createdAt                DateTime   @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([bookingId])
+  @@map("deposits")
+}
+
+/// Double-entry, append-only. Balances are checked nightly (PRD §10 Reliability).
+model LedgerEntry {
+  id            String          @id @default(uuid()) @db.Uuid
+  tenantId      String          @db.Uuid @map("tenant_id")
+  account       LedgerAccount
+  entryType     LedgerEntryType @map("entry_type")
+  amount        Decimal         @db.Decimal(14, 2)
+  currency      String          @default("IDR")
+  /// INVOICE | PAYMENT | DEPOSIT | CREDIT_NOTE
+  referenceType String          @map("reference_type")
+  referenceId   String          @db.Uuid @map("reference_id")
+  description   String?
+  createdAt     DateTime        @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([tenantId, referenceType, referenceId])
+  @@map("ledger_entries")
+}
+
+// ---------------------------------------------------------------------------
+// Comms & automation
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @db.Uuid @map("tenant_id")
+  customerId  String?   @db.Uuid @map("customer_id")
+  /// WHATSAPP | EMAIL
+  channel     String
+  templateKey String    @map("template_key")
+  recipient   String
+  payload     Json      @default("{}")
+  /// QUEUED | SENT | FAILED
+  status      String    @default("QUEUED")
+  providerRef String?   @map("provider_ref")
+  error       String?
+  sentAt      DateTime? @map("sent_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@map("notifications")
+}
+
+model AutomationSetting {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// e.g. "A5_INVOICE_REMINDER_LADDER" — see PRD §8.4 automation catalog.
+  key       String
+  enabled   Boolean  @default(true)
+  config    Json     @default("{}")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, key])
+  @@map("automation_settings")
+}
+
+model PromoCode {
+  id             String    @id @default(uuid()) @db.Uuid
+  tenantId       String    @db.Uuid @map("tenant_id")
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code           String
+  /// FLAT | PERCENT
+  discountType   String    @map("discount_type")
+  amount         Decimal   @db.Decimal(14, 2)
+  /// FIRST_CYCLE | RECURRING
+  appliesTo      String    @map("applies_to")
+  maxRedemptions Int?      @map("max_redemptions")
+  redeemedCount  Int       @default(0) @map("redeemed_count")
+  expiresAt      DateTime? @map("expires_at")
+  isActive       Boolean   @default(true) @map("is_active")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@unique([tenantId, code])
+  @@map("promo_codes")
+}
+
+/// Immutable — protects the owner from his own staff (PRD §7.2.7).
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String?  @db.Uuid @map("tenant_id")
+  actorUserId String?  @db.Uuid @map("actor_user_id")
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String?  @map("entity_id")
+  metadata    Json     @default("{}")
+  ipAddress   String?  @map("ip_address")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@map("audit_log")
+}
+
+/// Idempotency + replay ledger for inbound gateway webhooks (PRD §10 Availability).
+model WebhookEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String?   @db.Uuid @map("tenant_id")
+  /// XENDIT | MIDTRANS | WHATSAPP
+  provider    String
+  externalId  String    @map("external_id")
+  eventType   String    @map("event_type")
+  payload     Json
+  processedAt DateTime? @map("processed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@unique([provider, externalId])
+  @@map("webhook_events")
+}

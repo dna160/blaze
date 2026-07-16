@@ -1,0 +1,18 @@
+# Railway service config for apps/console. Config File Path in the
+# dashboard: apps/console/railway.toml. Root directory stays the repo root.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "infra/docker/console.Dockerfile"
+
+[deploy]
+healthcheckPath = "/login"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+# NEXT_PUBLIC_API_URL and NEXT_PUBLIC_TENANT_SLUG are compiled into the
+# client bundle at BUILD time — set them as Railway "Build Variables" on
+# this service. Console v1 is one deployment per tenant (see
+# apps/console/src/lib/api.ts) — a second tenant onboarding gets its own
+# console service pointed at its own NEXT_PUBLIC_TENANT_SLUG.

@@ -1,0 +1,11 @@
+{
+  "extends": "@rentos/config/tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "noEmit": true
+  },
+  "include": ["src"]
+}

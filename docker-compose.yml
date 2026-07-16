@@ -1,0 +1,115 @@
+name: rentos
+
+x-api-env: &api-env
+  NODE_ENV: production
+  DATABASE_URL: postgresql://postgres:postgres@postgres:5432/rentos?schema=public
+  DATABASE_URL_APP: postgresql://rentos_app:changeme_in_production@postgres:5432/rentos?schema=public
+  REDIS_URL: redis://redis:6379
+  JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-in-production-please-0123456789}
+  MESSAGING_PROVIDER: ${MESSAGING_PROVIDER:-console_log}
+  PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-mock}
+  CORS_ORIGINS: http://localhost:3000,http://localhost:3001
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: rentos
+    ports:
+      - "5432:5432"
+    volumes:
+      - rentos_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: applies Prisma migrations (owner role) then seeds tenant #1 demo data.
+  # Runs once per `docker compose up`; exits 0 and stays stopped after success.
+  migrate:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    environment:
+      <<: *api-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        cd packages/database &&
+        npx prisma migrate deploy &&
+        npx tsx prisma/seed.ts
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    environment:
+      <<: *api-env
+      PORT: 4000
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: .
+      dockerfile: infra/docker/worker.Dockerfile
+    environment:
+      <<: *api-env
+      PORT: 4100
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  storefront:
+    build:
+      context: .
+      dockerfile: infra/docker/storefront.Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:4000/api
+        NEXT_PUBLIC_DEV_TENANT_SLUG: gudang-aman
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+  console:
+    build:
+      context: .
+      dockerfile: infra/docker/console.Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:4000/api
+        NEXT_PUBLIC_TENANT_SLUG: gudang-aman
+    ports:
+      - "3001:3000"
+    depends_on:
+      - api
+
+volumes:
+  rentos_postgres_data:

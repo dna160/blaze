@@ -1,0 +1,21 @@
+# Railway service config for apps/worker. Config File Path in the
+# dashboard: apps/worker/railway.toml. Root directory stays the repo root.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "infra/docker/worker.Dockerfile"
+
+[deploy]
+healthcheckPath = "/"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+# The worker has no public traffic — 1 instance is correct. BullMQ jobs are
+# NOT idempotent-safe across concurrent workers processing the same
+# repeatable job id without care; do not scale this service horizontally
+# without revisiting apps/worker/src/queues.ts concurrency assumptions.
+numReplicas = 1
+
+# Required runtime variables — same DATABASE_URL_APP / REDIS_URL /
+# MESSAGING_PROVIDER as apps/api (see apps/api/railway.toml, .env.example).
+# JWT_SECRET and CORS_ORIGINS are not needed here — the worker has no HTTP API surface.

@@ -1,0 +1,20 @@
+# Railway service config for apps/storefront. Config File Path in the
+# dashboard: apps/storefront/railway.toml. Root directory stays the repo root.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "infra/docker/storefront.Dockerfile"
+
+[deploy]
+healthcheckPath = "/"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+# NEXT_PUBLIC_API_URL and NEXT_PUBLIC_DEV_TENANT_SLUG are compiled into the
+# client bundle at BUILD time (Next.js behavior) — set them as Railway
+# "Build Variables" on this service, not just runtime variables, or the
+# Docker build args in infra/docker/storefront.Dockerfile won't pick them up.
+# Attach your custom domain (or Railway's generated one) to this service —
+# that Host is what apps/api's TenantMiddleware ultimately resolves the
+# tenant from in production, once you move off NEXT_PUBLIC_DEV_TENANT_SLUG.

@@ -1,0 +1,24 @@
+# Railway service config for apps/api. In the Railway dashboard, create a
+# service from this GitHub repo, set its "Config File Path" to
+# apps/api/railway.toml (root directory stays the repo root — the
+# Dockerfile path below is relative to repo root, not to this file).
+# No Nixpacks: builder is pinned to DOCKERFILE.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "infra/docker/api.Dockerfile"
+
+[deploy]
+healthcheckPath = "/api/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+# Required runtime variables (set in the Railway dashboard, not committed):
+#   DATABASE_URL_APP   — rentos_app connection string (RLS-enforced role; see docs/HANDOFF.md)
+#   REDIS_URL          — Railway Redis plugin reference variable
+#   JWT_SECRET         — random 32+ byte secret
+#   MESSAGING_PROVIDER — console_log | whatsapp_cloud
+#   PAYMENT_PROVIDER   — mock | xendit
+#   CORS_ORIGINS       — comma-separated storefront + console origins
+# See .env.example for the full list, including optional Xendit/WhatsApp keys.
