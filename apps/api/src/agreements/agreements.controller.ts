@@ -4,8 +4,10 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  Headers,
   Param,
   Post,
+  Req,
   Res,
   UploadedFile,
   UseGuards,
@@ -13,13 +15,14 @@ import {
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { ApiTags } from "@nestjs/swagger";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 
 import { BookingService } from "../booking/booking.service.js";
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
+import { TenancyService } from "../tenancy/tenancy.service.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 
 import { AgreementsService } from "./agreements.service.js";
@@ -28,14 +31,15 @@ const STAFF_ROLES = new Set(["SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN"]);
 
 @ApiTags("contracts")
 @Controller("contracts")
-@UseGuards(JwtAuthGuard)
 export class AgreementsController {
   constructor(
     private readonly contracts: AgreementsService,
     private readonly booking: BookingService,
+    private readonly tenancy: TenancyService,
   ) {}
 
   @Get("by-booking/:bookingId")
+  @UseGuards(JwtAuthGuard)
   async getByBooking(
     @CurrentTenant() tenant: ResolvedTenant,
     @CurrentUser() user: AuthenticatedUser,
@@ -46,6 +50,7 @@ export class AgreementsController {
   }
 
   @Get(":id/file")
+  @UseGuards(JwtAuthGuard)
   async getFile(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string, @Res() res: Response) {
     const contract = await this.contracts.getById(tenant.id, id);
     await this.assertAccess(tenant, user, contract.bookingId);
@@ -60,6 +65,7 @@ export class AgreementsController {
 
   /** Either the customer (self-serve) or ops/finance staff (recording a paper contract) can upload the signed document. */
   @Post("by-booking/:bookingId/sign")
+  @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor("file"))
   async sign(
     @CurrentTenant() tenant: ResolvedTenant,
@@ -76,6 +82,23 @@ export class AgreementsController {
       mimetype: file.mimetype,
       size: file.size,
     });
+  }
+
+  /**
+   * Real e-sign provider signature-completion callback. Like the payment
+   * gateway webhook, this hits a fixed API domain directly (not the
+   * tenant's storefront/console subdomain), so the tenant is resolved
+   * from the path rather than Host/JWT. Never reached at all under
+   * MockESignProvider, which signs synchronously with no webhook.
+   */
+  @Post("webhook/:tenantSlug")
+  async webhook(
+    @Param("tenantSlug") tenantSlug: string,
+    @Req() req: Request,
+    @Headers() headers: Record<string, string>,
+  ) {
+    const tenant = await this.tenancy.resolveBySlug(tenantSlug);
+    return this.contracts.handleWebhook(tenant, JSON.stringify(req.body), headers);
   }
 
   private async assertAccess(tenant: ResolvedTenant, user: AuthenticatedUser, bookingId: string): Promise<void> {

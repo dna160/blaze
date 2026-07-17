@@ -16,7 +16,7 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 |---|---|---|
 | **0 — Foundation** | Tenancy + RLS, auth/RBAC, domain model, asset registry, Xendit/WA sandbox | ✅ Done (auth: staff JWT + customer OTP; RLS verified; provider seams in place, sandbox keys not yet supplied) |
 | **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (Session 3), KYC upload + review (Session 4), and the contract e-sign gate (Session 5). 🚧 Remaining gaps: request-info/customer-reply UI, unit reassignment on approve UI |
-| **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | 🚧 Nearly done. ✅ Done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow (console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only), visual unit map + occupancy view (Session 9, console UI, staff-only), swap/upgrade requests (Session 10, storefront + console UI, no mid-cycle proration yet — see "Known shortcuts"). ⬜ Still missing: e-sign, partial deposit application against damages |
+| **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | ✅ Every named item on PRD §13's list is now done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow (console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only), visual unit map + occupancy view (Session 9, console UI, staff-only), swap/upgrade requests (Session 10, storefront + console UI, no mid-cycle proration yet — see "Known shortcuts"), and a real ESignProvider port (Session 11, Privy adapter coded-but-unconfigured, MockESignProvider is the zero-regression default). ⬜ Two related-but-unlisted gaps remain: partial deposit application against damages, swap-request mid-cycle proration. |
 | **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | ⬜ Not started. `BookingModelStrategy` seam exists and is proven (typed stubs for NIGHTLY/DURATION_ORDER/HOURLY_SLOT throw `BookingModelNotImplementedError`) — Phase 3 is implementing their real math, not inventing the seam |
 | **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | ⬜ Not started, deliberately deferred per PRD |
 
@@ -292,9 +292,50 @@ double-submit while one's pending (409); a customer can view their own
 booking's swap history but not another customer's (403). Ledger balance
 unaffected throughout (swap has no ledger entries in v1, by design).
 
+**Session 11 (real e-sign provider — closes out PRD §13 Phase 2's list):**
+`ESignProvider` (`apps/api/src/agreements/esign-provider.interface.ts`),
+matching the Payment/Messaging/Storage port pattern exactly.
+`AgreementsService.sign()` now routes every upload through
+`esign.sendForSignature()` instead of always immediately marking the
+contract signed — `MockESignProvider` (default) signs synchronously,
+so **this is a zero-behavior-change refactor for the existing wet-sign
+flow**; `PrivyESignProvider` is coded against Privy's (privy.id)
+documented digital-signature/e-Meterai REST API shape but returns
+`PENDING` and requires `PRIVY_API_KEY`/`PRIVY_MERCHANT_KEY` to actually
+run — like `XenditPaymentProvider`, this has not been exercised against
+a live Privy sandbox, only structurally verified; validate against
+current Privy docs before pointing it at production. Selecting it is a
+single env var (`ESIGN_PROVIDER=privy`, `agreements.module.ts`) — no
+call-site change. Added `Contract.esignProvider`/`esignEnvelopeId`/
+`esignStatus` columns (simple `ALTER TABLE`, `contracts` already had RLS
+from the original migration, nothing new to enable). New
+`POST /contracts/webhook/:tenantSlug` mirrors the payment webhook's
+shape exactly (tenant resolved from the path, not Host/JWT, since a
+gateway callback never carries the tenant's subdomain) and is unreachable
+under Mock, which never sends a webhook. This also required moving
+`AgreementsController`'s auth from a class-level `@UseGuards(JwtAuthGuard)`
+to per-method guards (matching `PaymentsController`'s existing shape),
+since a webhook route can't carry a JWT and class-level guards can't be
+selectively unset per-method in Nest.
+
+Verified live: booking → approve → sign → pay flow under
+`ESIGN_PROVIDER=mock` (the default, unset in `.env.example`) produces
+byte-identical results to the pre-refactor behavior — contract signs
+synchronously, booking reaches `ACTIVE` — confirming zero regression on
+the path every prior session's contract-gate testing depended on.
+Switching to `ESIGN_PROVIDER=privy` with no credentials set correctly
+throws a clear, actionable error (visible in server logs, generic 500 to
+the client) at the exact point Xendit's adapter does the same thing —
+same failure shape, same convention. The webhook endpoint 404s cleanly
+for an unknown tenant slug and surfaces a clear error for a missing
+signature header. Storefront/console contract sections now show "Sent
+for e-signature via {provider} — waiting for the signature to complete"
+distinct from the plain "Not signed yet" state, and hide the re-upload
+form while a real-provider signature is pending. This closes the last
+named item on PRD §13 Phase 2's explicit list.
+
 ### What's explicitly NOT done (don't assume it exists)
 
-- Real e-signature providers (Privy/e-Meterai) — PRD explicitly scopes wet-sign PDF upload as v1-acceptable (§11); that's what's built. `ESignProvider` as its own port/adapter (matching Payment/Messaging/Storage) is Phase 2 if a tenant needs legally-binding e-Meterai stamping.
 - Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
 - Partial deposit application against damages (`Deposit.appliedAmount` / `PARTIALLY_APPLIED` / `APPLIED` states exist in schema, unused — v1 refund workflow only handles the full-amount HELD → REFUND_REQUESTED → REFUNDED path)
 - Invoice-payment refunds (as opposed to deposit refunds) — no endpoint; `PaymentProvider.refund()` is only called from the deposit-refund flow today
@@ -317,30 +358,34 @@ e-signature gate wired into the `APPROVED → ACTIVE` triple-AND guard
 `StorageProvider` upload instead of a text field (Session 6), the
 automatic credit-note replacement invoice (Session 7), month-end close +
 CSV accounting export (Session 8), the visual unit map + occupancy view
-(Session 9), and swap/upgrade requests (Session 10) are all done — every
-major PRD §7.1/§7.2 P0 flow now has both a working API and reachable UI,
-the booking activation guard is no longer stubbed on any of its three
-conditions, every document-bearing flow (KYC, contracts, manual payments)
-uses the same upload/preview pattern, invoice corrections match the PRD's
-documented lifecycle exactly (§8.2), and Phase 2's own success criterion
+(Session 9), swap/upgrade requests (Session 10), and a real `ESignProvider`
+port (Session 11, Privy adapter) are all done — every major PRD §7.1/§7.2
+P0 flow now has both a working API and reachable UI, the booking
+activation guard is no longer stubbed on any of its three conditions,
+every document-bearing flow (KYC, contracts, manual payments) uses the
+same upload/preview pattern, invoice corrections match the PRD's
+documented lifecycle exactly (§8.2), Phase 2's own success criterion
 ("finance closes a month in < 1 day") has a real view + export to close
-against. Only e-sign remains on PRD §13 Phase 2's explicit list, plus two
-related-but-unlisted gaps (partial deposit application, swap-request mid-
-cycle proration). Next highest-leverage chunks, in rough priority order:
+against, and **every named item on PRD §13 Phase 2's list is now done**.
+Two related-but-unlisted gaps remain (partial deposit application,
+swap-request mid-cycle proration), and Phase 3 hasn't been started. Next
+highest-leverage chunks, in rough priority order:
 
-1. Real e-signature provider (Privy/e-Meterai) as an `ESignProvider` port
-   if a tenant needs legally-binding stamping beyond wet-sign PDF (v1
-   scope per PRD §11 — see "Architectural decisions log"). This is the
-   last named item on PRD §13 Phase 2's list.
-2. Partial deposit application against damages (schema exists, unused —
+1. Partial deposit application against damages (schema exists, unused —
    see "What's explicitly NOT done").
-3. Swap-request mid-cycle proration (see "Known shortcuts") — needs a
+2. Swap-request mid-cycle proration (see "Known shortcuts") — needs a
    signed-adjustment-line concept on `Invoice` or a dedicated proration
    calculation in `packages/domain`; today staff handle it manually via
    the existing credit-note/manual-payment tools.
-4. Once the above land, Phase 2 is functionally complete — next up is
-   Phase 3 (NIGHTLY/DURATION_ORDER real logic, pooled inventory, seasonal
-   pricing, a second tenant in a different vertical) per PRD §13.
+3. Phase 3 per PRD §13: `NIGHTLY`/`DURATION_ORDER` real booking-model
+   logic (today they're typed stubs that throw
+   `BookingModelNotImplementedError` — the seam is proven, the math
+   isn't written), pooled inventory flag, seasonal pricing, and a second
+   tenant in a different vertical onboarded **without code changes** —
+   this is the PRD's extensibility thesis validated or falsified. This
+   is a materially bigger lift than anything in Phase 2: it's the first
+   point where "does the architecture actually generalize" gets tested
+   against a real second booking model, not just a clean interface.
 
 Before writing new code:
 1. `docker compose up` (or run each service manually per README "Local development") in an environment with real network access, to confirm the Dockerfiles actually work — this is unverified debt, still outstanding from Session 1.

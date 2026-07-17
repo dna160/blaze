@@ -73,7 +73,8 @@ export default function BookingDetailPage() {
     );
   }
 
-  const canUploadContract = booking.status === "APPROVED" && contract && !contract.signedAt;
+  const esignPending = contract?.esignStatus === "PENDING";
+  const canUploadContract = booking.status === "APPROVED" && contract && !contract.signedAt && !esignPending;
 
   return (
     <ConsoleShell>
@@ -88,6 +89,10 @@ export default function BookingDetailPage() {
           {contract.signedAt ? (
             <p className="mt-2 text-sm text-green-700">
               Signed by {contract.signedByName} on {new Date(contract.signedAt).toLocaleDateString("id-ID")}.
+            </p>
+          ) : esignPending ? (
+            <p className="mt-2 text-sm text-amber-700">
+              Sent for e-signature via {contract.esignProvider} — waiting for the signature to complete.
             </p>
           ) : (
             <p className="mt-2 text-sm text-brand-700/60">Not signed yet — waiting on the customer, or record one collected in person below.</p>

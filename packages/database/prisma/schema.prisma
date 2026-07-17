@@ -396,10 +396,18 @@ model Contract {
   bookingId       String    @db.Uuid @map("booking_id")
   booking         Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   templateVersion String    @map("template_version")
-  /// v1: wet-sign PDF upload. e-Meterai/Privy adapter is Phase 2.
+  /// The uploaded document — under MockESignProvider this is already the
+  /// final signed record (v1's wet-sign behavior); under a real ESignProvider
+  /// it's the document that was sent out, replaced with the signed version
+  /// once the provider's webhook confirms completion.
   documentUrl     String?   @map("document_url")
   signedAt        DateTime? @map("signed_at")
   signedByName    String?   @map("signed_by_name")
+  /// Set by whichever ESignProvider handled this contract (MOCK by default).
+  esignProvider   String?   @map("esign_provider")
+  esignEnvelopeId String?   @map("esign_envelope_id")
+  /// PENDING | SIGNED | DECLINED | EXPIRED — null until sendForSignature() is called.
+  esignStatus     String?   @map("esign_status")
   createdAt       DateTime  @default(now()) @map("created_at")
 
   @@index([tenantId])
