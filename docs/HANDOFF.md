@@ -16,7 +16,7 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 |---|---|---|
 | **0 — Foundation** | Tenancy + RLS, auth/RBAC, domain model, asset registry, Xendit/WA sandbox | ✅ Done (auth: staff JWT + customer OTP; RLS verified; provider seams in place, sandbox keys not yet supplied) |
 | **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (Session 3), KYC upload + review (Session 4), and the contract e-sign gate (Session 5). 🚧 Remaining gaps: request-info/customer-reply UI, unit reassignment on approve UI |
-| **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | 🚧 In progress. ✅ Done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow (console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only), visual unit map + occupancy view (Session 9, console UI, staff-only). ⬜ Still missing: swap requests, e-sign, partial deposit application against damages |
+| **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | 🚧 Nearly done. ✅ Done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow (console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only), visual unit map + occupancy view (Session 9, console UI, staff-only), swap/upgrade requests (Session 10, storefront + console UI, no mid-cycle proration yet — see "Known shortcuts"). ⬜ Still missing: e-sign, partial deposit application against damages |
 | **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | ⬜ Not started. `BookingModelStrategy` seam exists and is proven (typed stubs for NIGHTLY/DURATION_ORDER/HOURLY_SLOT throw `BookingModelNotImplementedError`) — Phase 3 is implementing their real math, not inventing the seam |
 | **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | ⬜ Not started, deliberately deferred per PRD |
 
@@ -252,6 +252,46 @@ surfaces as "No active tenant" rather than crashing or fabricating data;
 worth a manual `asset.status` correction if it's ever noticed live,
 not a code fix.
 
+**Session 10 (swap/upgrade requests):** PRD §7.1.4's "request
+upgrade/downsize... creates a swap request routed to admin" and the
+persona table's "Grow/Shrink: swap request in portal → prorated switch."
+New `SwapRequest` model (`packages/database/prisma/migrations/20260717142334_add_swap_requests`,
+RLS-covered — new tables aren't retroactively covered by the original
+`enable_rls` migration, so this one repeats the ENABLE/FORCE/POLICY
+statements itself, same shape). Customer picks a target `AssetType` +
+reason on an `ACTIVE`/`RENEWING` booking (`POST /swap-requests`); staff
+approve by picking the actual replacement unit from what's currently
+`AVAILABLE` of that type (`POST /swap-requests/:id/approve`), which
+reassigns both units through `assetFsm` (old `OCCUPIED→AVAILABLE`, new
+`AVAILABLE→RESERVED→OCCUPIED`, mirroring how booking activation moves an
+asset) and re-snapshots the booking's `assetId`/`assetTypeId`/`priceSnapshot`
+to the new type. `Booking.priceSnapshot`'s doc comment says pricing is
+"frozen at submission time — never re-derived from AssetType later"; a
+swap is the one deliberate, documented exception, since the customer is
+now genuinely on a different unit/rate. **Intentional v1 scope limit**:
+approval does *not* auto-generate a mid-cycle proration invoice/credit
+for the switch-over day — the existing invoice model has no clean way to
+represent a signed adjustment (see "Known shortcuts"). Staff can issue a
+manual credit note or manual charge for the partial period using the
+tools already built if the tenant's policy requires exact proration.
+Console gets a new "Swap Requests" nav item/queue page (approve flow
+fetches available units of the requested type inline, reject prompts for
+a reason); storefront booking detail page gets a request form (visible
+on `ACTIVE`/`RENEWING` bookings, hidden while a request is already
+pending) and shows swap request history/status.
+
+Verified live: customer submits a swap request → staff queue shows full
+context (current unit/type, requested type, reason) → wrong-asset-type
+approval attempt 400s → correct approval reassigns both units (old unit
+back to `AVAILABLE`, new unit `OCCUPIED`), updates the booking's
+asset/type/priceSnapshot to the new (cheaper) type, and writes a
+`BookingEvent`; re-approving an already-`APPROVED` request 409s; a
+second request rejected with a reason correctly leaves that booking
+untouched; a customer can't submit for someone else's booking (403) or
+double-submit while one's pending (409); a customer can view their own
+booking's swap history but not another customer's (403). Ledger balance
+unaffected throughout (swap has no ledger entries in v1, by design).
+
 ### What's explicitly NOT done (don't assume it exists)
 
 - Real e-signature providers (Privy/e-Meterai) — PRD explicitly scopes wet-sign PDF upload as v1-acceptable (§11); that's what's built. `ESignProvider` as its own port/adapter (matching Payment/Messaging/Storage) is Phase 2 if a tenant needs legally-binding e-Meterai stamping.
@@ -276,29 +316,28 @@ e-signature gate wired into the `APPROVED → ACTIVE` triple-AND guard
 (Session 5, `apps/api/src/agreements`), proof-of-payment as a real
 `StorageProvider` upload instead of a text field (Session 6), the
 automatic credit-note replacement invoice (Session 7), month-end close +
-CSV accounting export (Session 8), and the visual unit map + occupancy
-view (Session 9) are all done — every major PRD §7.1/§7.2 P0 flow now has
-both a working API and reachable UI, the booking activation guard is no
-longer stubbed on any of its three conditions, every document-bearing
-flow (KYC, contracts, manual payments) uses the same upload/preview
-pattern, invoice corrections match the PRD's documented lifecycle exactly
-(§8.2), and Phase 2's own success criterion ("finance closes a month in
-< 1 day") has a real view + export to close against. Only two items
-remain on PRD §13 Phase 2's list — swap requests and e-sign — plus
-partial deposit application, which was never on that list but is a
-related gap. Next highest-leverage chunks, in rough priority order:
+CSV accounting export (Session 8), the visual unit map + occupancy view
+(Session 9), and swap/upgrade requests (Session 10) are all done — every
+major PRD §7.1/§7.2 P0 flow now has both a working API and reachable UI,
+the booking activation guard is no longer stubbed on any of its three
+conditions, every document-bearing flow (KYC, contracts, manual payments)
+uses the same upload/preview pattern, invoice corrections match the PRD's
+documented lifecycle exactly (§8.2), and Phase 2's own success criterion
+("finance closes a month in < 1 day") has a real view + export to close
+against. Only e-sign remains on PRD §13 Phase 2's explicit list, plus two
+related-but-unlisted gaps (partial deposit application, swap-request mid-
+cycle proration). Next highest-leverage chunks, in rough priority order:
 
-1. Swap/upgrade requests — schema exists (PRD §7.1.4 "request
-   upgrade/downsize... creates a swap request routed to admin"), zero
-   application logic. Needs a new `SwapRequest`-shaped flow: customer
-   requests → admin approves → prorated invoice adjustment → asset
-   reassignment, most naturally built as a sibling to the booking
-   approval workbench rather than bolted onto `BookingService`.
-2. Real e-signature provider (Privy/e-Meterai) as an `ESignProvider` port
+1. Real e-signature provider (Privy/e-Meterai) as an `ESignProvider` port
    if a tenant needs legally-binding stamping beyond wet-sign PDF (v1
-   scope per PRD §11 — see "Architectural decisions log").
-3. Partial deposit application against damages (schema exists, unused —
+   scope per PRD §11 — see "Architectural decisions log"). This is the
+   last named item on PRD §13 Phase 2's list.
+2. Partial deposit application against damages (schema exists, unused —
    see "What's explicitly NOT done").
+3. Swap-request mid-cycle proration (see "Known shortcuts") — needs a
+   signed-adjustment-line concept on `Invoice` or a dedicated proration
+   calculation in `packages/domain`; today staff handle it manually via
+   the existing credit-note/manual-payment tools.
 4. Once the above land, Phase 2 is functionally complete — next up is
    Phase 3 (NIGHTLY/DURATION_ORDER real logic, pooled inventory, seasonal
    pricing, a second tenant in a different vertical) per PRD §13.
@@ -333,6 +372,7 @@ Before writing new code:
 - Runtime Docker images copy the *full* installed `node_modules` (including devDependencies) from the build stage rather than doing a second prod-only `pnpm install`. Simpler and more robust for a pnpm workspace with symlinked local packages; costs image size. Revisit once there's a real build environment to validate a leaner runtime install against.
 - Credit notes treat the entire credited amount as a Revenue reversal against AR (`recordCreditNoteEntries`), not split proportionally across Revenue/TaxPayable. Correct for crediting a whole remaining balance; approximate for a partial credit on a taxed invoice (the TaxPayable account will be very slightly overstated in that specific case). Exact proportional splitting is a small, contained fix if it ever matters — `FinanceService.createCreditNote` is the one call site.
 - Deposit refunds always call `PaymentProvider.refund()` against the *original* payment's `providerRef` (best-effort lookup by booking + DEPOSIT line), never a manual-disbursement-only path. `MockPaymentProvider.refund()` doesn't validate the ref at all, so this was never exercised against a picky real gateway — when wiring real Xendit payouts, double check Xendit's refund API actually accepts a ref from an *invoice* payment for what's conceptually a *deposit* payout (PRD says deposit refunds go out via "Xendit payout," which is a different Xendit product/endpoint than a payment refund — this may need its own adapter method, not reuse of `refund()`).
+- Swap-request approval (`SwapRequestsService.approve`) reassigns the asset and re-snapshots pricing immediately but does **not** generate a mid-cycle proration invoice/credit for the switch-over day — the customer's next invoice bills at the new rate in full, and whatever they already paid for the current period at the old rate is left as-is. Staff can manually issue a credit note (for a downsize) or record a manual charge (for an upgrade) via the tools already built if the tenant's policy requires exact proration. A real fix needs either a signed-adjustment-line concept on Invoice or a dedicated proration calculation in `packages/domain` — tracked here, not started.
 
 ## Open PRD questions still unanswered (§15)
 

@@ -18,6 +18,7 @@ import { NotificationsModule } from "./notifications/notifications.module.js";
 import { PaymentsModule } from "./payments/payments.module.js";
 import { PrismaModule } from "./prisma/prisma.module.js";
 import { ReportingModule } from "./reporting/reporting.module.js";
+import { SwapRequestsModule } from "./swap-requests/swap-requests.module.js";
 import { TenancyModule } from "./tenancy/tenancy.module.js";
 
 @Module({
@@ -37,6 +38,7 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     KycModule,
     NotificationsModule,
     ReportingModule,
+    SwapRequestsModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_FILTER, useClass: HttpExceptionFilter }],

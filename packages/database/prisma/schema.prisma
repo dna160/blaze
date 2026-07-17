@@ -121,6 +121,12 @@ enum KycStatus {
   REJECTED
 }
 
+enum SwapRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum LedgerEntryType {
   DEBIT
   CREDIT
@@ -288,8 +294,9 @@ model AssetType {
   createdAt        DateTime     @default(now()) @map("created_at")
   updatedAt        DateTime     @updatedAt @map("updated_at")
 
-  assets   Asset[]
-  bookings Booking[]
+  assets       Asset[]
+  bookings     Booking[]
+  swapRequests SwapRequest[]
 
   @@unique([tenantId, slug])
   @@index([tenantId])
@@ -311,7 +318,8 @@ model Asset {
   createdAt    DateTime    @default(now()) @map("created_at")
   updatedAt    DateTime    @updatedAt @map("updated_at")
 
-  bookings Booking[]
+  bookings           Booking[]
+  swapRequestTargets SwapRequest[]
 
   @@unique([tenantId, locationId, code])
   @@index([tenantId])
@@ -350,10 +358,11 @@ model Booking {
   createdAt           DateTime      @default(now()) @map("created_at")
   updatedAt           DateTime      @updatedAt @map("updated_at")
 
-  events    BookingEvent[]
-  contracts Contract[]
-  invoices  Invoice[]
-  deposits  Deposit[]
+  events       BookingEvent[]
+  contracts    Contract[]
+  invoices     Invoice[]
+  deposits     Deposit[]
+  swapRequests SwapRequest[]
 
   @@index([tenantId])
   @@index([tenantId, status])
@@ -510,6 +519,33 @@ model Deposit {
   @@index([tenantId])
   @@index([bookingId])
   @@map("deposits")
+}
+
+/// PRD §7.1.4 "request upgrade/downsize... creates a swap request routed to
+/// admin" + §7.2.4 Phase 2 scope. `newAssetId` is set on approval (the
+/// specific replacement unit staff assigned), not at request time — the
+/// customer only picks a target AssetType, staff picks the actual unit from
+/// what's AVAILABLE.
+model SwapRequest {
+  id                   String            @id @default(uuid()) @db.Uuid
+  tenantId             String            @db.Uuid @map("tenant_id")
+  bookingId            String            @db.Uuid @map("booking_id")
+  booking              Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  requestedAssetTypeId String            @db.Uuid @map("requested_asset_type_id")
+  requestedAssetType   AssetType         @relation(fields: [requestedAssetTypeId], references: [id])
+  reason               String?
+  status               SwapRequestStatus @default(PENDING)
+  newAssetId           String?           @db.Uuid @map("new_asset_id")
+  newAsset             Asset?            @relation(fields: [newAssetId], references: [id])
+  reviewedByUserId     String?           @db.Uuid @map("reviewed_by_user_id")
+  reviewedAt           DateTime?         @map("reviewed_at")
+  rejectionReason      String?           @map("rejection_reason")
+  createdAt            DateTime          @default(now()) @map("created_at")
+  updatedAt            DateTime          @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([bookingId])
+  @@map("swap_requests")
 }
 
 /// Double-entry, append-only. Balances are checked nightly (PRD §10 Reliability).

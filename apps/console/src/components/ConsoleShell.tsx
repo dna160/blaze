@@ -8,6 +8,7 @@ import { authClient } from "@/lib/auth-client";
 
 const NAV = [
   { href: "/bookings", label: "Approval Workbench" },
+  { href: "/swap-requests", label: "Swap Requests" },
   { href: "/kyc", label: "KYC Review" },
   { href: "/assets", label: "Inventory" },
   { href: "/invoices", label: "Finance" },
