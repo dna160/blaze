@@ -24,6 +24,17 @@ export class DepositsService {
     return this.prisma.runInTenantContext(tenantId, (tx) => tx.deposit.findMany({ where: { bookingId } }));
   }
 
+  /** Console deposits queue (PRD §7.2.4 refund workflow) — filterable by status, e.g. ?status=REFUND_REQUESTED for the approval queue. */
+  listAll(tenantId: string, filters: { status?: string }) {
+    return this.prisma.runInTenantContext(tenantId, (tx) =>
+      tx.deposit.findMany({
+        where: { status: filters.status as never },
+        include: { booking: { include: { customer: true, asset: true } } },
+        orderBy: { createdAt: "desc" },
+      }),
+    );
+  }
+
   async requestRefund(tenant: ResolvedTenant, depositId: string) {
     const deposit = await this.prisma.runInTenantContext(tenant.id, (tx) =>
       tx.deposit.findUnique({ where: { id: depositId } }),

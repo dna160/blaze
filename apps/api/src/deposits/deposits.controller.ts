@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
+import { Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
@@ -16,6 +16,12 @@ import { DepositsService } from "./deposits.service.js";
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class DepositsController {
   constructor(private readonly deposits: DepositsService) {}
+
+  @Get()
+  @Roles("SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN", "VIEWER")
+  listAll(@CurrentTenant() tenant: ResolvedTenant, @Query("status") status?: string) {
+    return this.deposits.listAll(tenant.id, { status });
+  }
 
   @Get("by-booking/:bookingId")
   @Roles("SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN", "VIEWER")

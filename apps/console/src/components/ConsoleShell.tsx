@@ -10,6 +10,7 @@ const NAV = [
   { href: "/bookings", label: "Approval Workbench" },
   { href: "/assets", label: "Inventory" },
   { href: "/invoices", label: "Finance" },
+  { href: "/deposits", label: "Deposits" },
   { href: "/reports", label: "Reports" },
 ];
 

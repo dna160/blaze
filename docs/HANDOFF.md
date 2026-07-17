@@ -15,8 +15,8 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 | Phase | Scope | Status |
 |---|---|---|
 | **0 — Foundation** | Tenancy + RLS, auth/RBAC, domain model, asset registry, Xendit/WA sandbox | ✅ Done (auth: staff JWT + customer OTP; RLS verified; provider seams in place, sandbox keys not yet supplied) |
-| **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below). 🚧 Gaps: KYC upload UI, contract e-sign gate, request-info/customer-reply UI, unit reassignment on approve UI |
-| **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | 🚧 In progress. ✅ Done: double-entry ledger (accrual basis, verified balanced live), manual payment recording + maker-checker verification, deposit refund request/approve workflow, credit note issuance, nightly ledger-balance-check worker job. ⬜ Still missing: unit map, swap requests, e-sign, accounting export, month-end view, partial deposit application against damages |
+| **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (added Session 3). 🚧 Gaps: KYC upload UI, contract e-sign gate, request-info/customer-reply UI, unit reassignment on approve UI |
+| **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | 🚧 In progress. ✅ Done: double-entry ledger (accrual basis, verified balanced live), manual payment recording + maker-checker verification (now with console UI), deposit refund request/approve workflow (now with console UI), credit note issuance (now with console UI), nightly ledger-balance-check worker job. ⬜ Still missing: unit map, swap requests, e-sign, accounting export, month-end view, partial deposit application against damages |
 | **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | ⬜ Not started. `BookingModelStrategy` seam exists and is proven (typed stubs for NIGHTLY/DURATION_ORDER/HOURLY_SLOT throw `BookingModelNotImplementedError`) — Phase 3 is implementing their real math, not inventing the seam |
 | **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | ⬜ Not started, deliberately deferred per PRD |
 
@@ -42,9 +42,32 @@ entry_type` returned identical DEBIT/CREDIT totals (4,202,725.81 =
 and credit-note entries all landed. The `ledger-balance-check` worker job
 independently confirmed `balanced: true` reading the same data.
 
+**Session 3 (finance UI + pay-now):** Built the UI the backend had been
+missing. `apps/storefront/portal/invoices/[id]` — payment method selector
+→ `POST /payments/initiate`; this was a real gap, not just missing
+polish: before this, a customer could never actually pay through the app,
+only via direct API calls in earlier verification. `apps/console/invoices/[id]`
+— payment list with role-and-maker-checker-aware Verify button, manual
+payment recording form, credit note list + issue form. `apps/console/deposits`
+— full refund queue with status-and-role-gated action buttons. Added
+`GET /deposits` (list-all, filterable by status) to support the queue view.
+All new pages verified rendering (200, correct shell content) against the
+live API; response shapes cross-checked against frontend types by hand.
+
+**Found and fixed a real bug in `turbo.json`** while doing this: the
+`typecheck` task only declared `dependsOn: ["^build"]` (upstream packages),
+not its own `build` — harmless for NestJS/library packages, but Next.js's
+`tsconfig.json` includes `.next/types/**/*.ts`, which only exists after
+*that app's own* `next build` runs. Depending on task scheduling order,
+`turbo run typecheck build` could typecheck against a stale or missing
+`.next/types` and fail with `TS6053: File ... not found` — reproduced
+this exact failure once. Fixed by adding `"build"` to typecheck's
+`dependsOn` alongside `"^build"`.
+
 33 unit tests in `packages/domain` cover the state machines and
 proration/tax math. All 4 apps + 3 packages typecheck, build, and pass
-`turbo run typecheck test build` clean.
+`turbo run typecheck test build` clean (verified with `--force` after the
+turbo.json fix, to rule out stale-cache false positives).
 
 ### What's explicitly NOT done (don't assume it exists)
 
@@ -54,7 +77,7 @@ proration/tax math. All 4 apps + 3 packages typecheck, build, and pass
 - Partial deposit application against damages (`Deposit.appliedAmount` / `PARTIALLY_APPLIED` / `APPLIED` states exist in schema, unused — v1 refund workflow only handles the full-amount HELD → REFUND_REQUESTED → REFUNDED path)
 - Automatic replacement invoice after a credit note (PRD: "superseded by CREDIT_NOTE + new invoice") — v1 marks the original invoice CREDITED and stops there; issuing the corrected replacement invoice is a manual follow-up action, not automatic
 - Invoice-payment refunds (as opposed to deposit refunds) — no endpoint; `PaymentProvider.refund()` is only called from the deposit-refund flow today
-- No console/storefront UI yet for any of the new finance endpoints (manual payment recording/verification, deposit refund, credit notes) — verified via direct API calls only, same as Session 1's approach
+- Proof-of-payment upload for manual payments is a plain text URL field (`proofUrl`) in the console form — no actual file upload widget or object storage integration, same gap as KYC documents (see above). Staff paste a reference/URL by hand.
 - Unit map (visual grid) — list view only (P1 in PRD anyway)
 - Swap/upgrade requests, promo codes, duration discounts — schema exists, zero application logic
 - Platform admin console (multi-tenant switcher, tenant provisioning wizard) — out of scope until Phase 4; today, provisioning a tenant means writing rows directly (see `packages/database/prisma/seed.ts` as the template)
@@ -65,19 +88,20 @@ proration/tax math. All 4 apps + 3 packages typecheck, build, and pass
 
 ## Resume here
 
-Refunds/credit-notes/maker-checker/ledger are now done (Session 2). Next
-highest-leverage chunks, in rough priority order:
+Refunds/credit-notes/maker-checker/ledger (Session 2) and their console +
+storefront UI, plus the storefront pay-now flow (Session 3), are all done.
+Next highest-leverage chunks, in rough priority order:
 
-1. **Console/storefront UI for the new finance endpoints** — `POST
-   /payments/manual`, `POST /payments/:id/verify`, `POST
-   /deposits/:id/request-refund`, `POST /deposits/:id/approve-refund`,
-   `POST /invoices/:id/credit-notes` all exist and are verified working,
-   but nobody can reach them except via direct API calls. This is
-   probably the single highest-leverage next task — the backend
-   capability outpacing the UI is now the gap, not the reverse.
-2. Automatic replacement invoice after a credit note (see "What's
+1. **KYC upload flow** (storefront upload UI + object storage integration
+   + console review queue) — this is the last major P0 gap from PRD §7.1.2
+   with zero UI today, and it blocks the "auto-approve if KYC verified"
+   approval policy from ever being meaningfully exercised.
+2. Real file/object storage for proof-of-payment and KYC documents — both
+   currently take a raw text URL with no actual upload widget or backing
+   storage. One S3-compatible integration would unblock both.
+3. Automatic replacement invoice after a credit note (see "What's
    explicitly NOT done").
-3. Work down PRD §13 Phase 2's remaining items: unit map, swap requests,
+4. Work down PRD §13 Phase 2's remaining items: unit map, swap requests,
    e-sign, accounting export, month-end view.
 
 Before writing new code:

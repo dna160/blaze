@@ -69,21 +69,33 @@ export default function PortalPage() {
                 <th className="p-3">Status</th>
                 <th className="p-3">Due</th>
                 <th className="p-3 text-right">Total</th>
+                <th className="p-3"></th>
               </tr>
             </thead>
             <tbody>
-              {invoices.map((inv) => (
-                <tr key={inv.id} className="border-t border-brand-600/10">
-                  <td className="p-3">{inv.invoiceNumber}</td>
-                  <td className="p-3">{inv.status}</td>
-                  <td className="p-3">{new Date(inv.dueDate).toLocaleDateString("id-ID")}</td>
-                  <td className="p-3 text-right">
-                    {new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(
-                      Number(inv.totalAmount),
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {invoices.map((inv) => {
+                const payable = inv.status === "ISSUED" || inv.status === "OVERDUE";
+                return (
+                  <tr key={inv.id} className="border-t border-brand-600/10">
+                    <td className="p-3">{inv.invoiceNumber}</td>
+                    <td className="p-3">{inv.status}</td>
+                    <td className="p-3">{new Date(inv.dueDate).toLocaleDateString("id-ID")}</td>
+                    <td className="p-3 text-right">
+                      {new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(
+                        Number(inv.totalAmount),
+                      )}
+                    </td>
+                    <td className="p-3 text-right">
+                      <Link
+                        href={`/portal/invoices/${inv.id}`}
+                        className={payable ? "font-medium text-accent-500 hover:underline" : "text-brand-700/60 hover:underline"}
+                      >
+                        {payable ? "Pay now" : "View"}
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { InvoiceDto } from "@rentos/contracts";
 
@@ -57,8 +58,12 @@ export default function InvoicesPage() {
             </thead>
             <tbody>
               {invoices.map((inv) => (
-                <tr key={inv.id} className="border-t border-brand-600/10">
-                  <td className="p-3 font-medium">{inv.invoiceNumber}</td>
+                <tr key={inv.id} className="border-t border-brand-600/10 hover:bg-brand-700/5">
+                  <td className="p-3 font-medium">
+                    <Link href={`/invoices/${inv.id}`} className="hover:underline">
+                      {inv.invoiceNumber}
+                    </Link>
+                  </td>
                   <td className="p-3">
                     <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_COLORS[inv.status] ?? ""}`}>
                       {inv.status}
