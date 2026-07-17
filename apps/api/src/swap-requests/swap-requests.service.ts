@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import type { Prisma } from "@rentos/database";
-import { assetFsm } from "@rentos/domain";
+import { assetFsm, computeSwapProration } from "@rentos/domain";
 
 import { PrismaService } from "../prisma/prisma.service.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
@@ -11,13 +11,16 @@ const SWAPPABLE_BOOKING_STATUSES = new Set(["ACTIVE", "RENEWING"]);
  * PRD §7.1.4 "request upgrade/downsize... creates a swap request routed to
  * admin" + persona table's "Grow/Shrink: swap request in portal → prorated
  * switch." v1 reassigns the asset and re-snapshots pricing for the *next*
- * invoice cycle onward — it deliberately does NOT auto-generate a mid-cycle
- * proration invoice/credit for the switch-over day itself (that needs a
- * signed adjustment, which this ledger's invoice model doesn't represent
- * yet). Staff can issue a manual credit note or record a manual charge for
- * the partial period using the tools already built (FinanceService /
- * PaymentsService) if the tenant's policy requires exact proration. Tracked
- * in docs/HANDOFF.md.
+ * invoice cycle onward, and computes (via `computeSwapProration`) exactly
+ * what's owed or owed-back for the days remaining in the CURRENT,
+ * already-billed period — but deliberately does NOT auto-generate a
+ * mid-cycle invoice/credit note for that number. A downsize produces a
+ * negative adjustment, and this invoice model has no negative-amount
+ * convention anything downstream (payments, dunning, the storefront UI)
+ * is built to represent. The computed number is stored on the SwapRequest
+ * row and surfaced to staff, who act on it with the tools that already
+ * exist: a manual credit note for a downsize, a manual charge for an
+ * upgrade. Tracked in docs/HANDOFF.md.
  */
 @Injectable()
 export class SwapRequestsService {
@@ -92,6 +95,30 @@ export class SwapRequestsService {
       const newAssetType = await tx.assetType.findUniqueOrThrow({ where: { id: swapRequest.requestedAssetTypeId } });
       const oldAssetId = booking.assetId;
 
+      // Current billing period comes from the booking's most recently PAID
+      // invoice — the actual, real period the customer paid for, not a
+      // date derived purely from anchorDay math (which could drift from
+      // what was really invoiced, e.g. after a credited/replacement invoice).
+      const lastPaidInvoice = await tx.invoice.findFirst({
+        where: { bookingId: booking.id, status: "PAID", periodStart: { not: null }, periodEnd: { not: null } },
+        orderBy: { periodEnd: "desc" },
+      });
+      let prorationNetAdjustment: string | null = null;
+      let prorationDaysRemaining: number | null = null;
+      if (lastPaidInvoice?.periodStart && lastPaidInvoice.periodEnd) {
+        const oldPricing = booking.priceSnapshot as { basePrice: number };
+        const newPricing = newAssetType.pricing as { basePrice: number };
+        const proration = computeSwapProration({
+          oldMonthlyRate: oldPricing.basePrice,
+          newMonthlyRate: newPricing.basePrice,
+          periodStart: lastPaidInvoice.periodStart,
+          periodEnd: lastPaidInvoice.periodEnd,
+          switchDate: new Date(),
+        });
+        prorationNetAdjustment = proration.netAdjustment.toString();
+        prorationDaysRemaining = proration.daysRemaining;
+      }
+
       await assetFsm.fire("AVAILABLE", "RESERVE", undefined);
       await assetFsm.fire("RESERVED", "MOVE_IN", undefined);
       await tx.asset.update({ where: { id: newAssetId }, data: { status: "OCCUPIED" } });
@@ -124,7 +151,14 @@ export class SwapRequestsService {
 
       return tx.swapRequest.update({
         where: { id: swapRequestId },
-        data: { status: "APPROVED", newAssetId, reviewedByUserId: approverUserId, reviewedAt: new Date() },
+        data: {
+          status: "APPROVED",
+          newAssetId,
+          reviewedByUserId: approverUserId,
+          reviewedAt: new Date(),
+          prorationNetAdjustment,
+          prorationDaysRemaining,
+        },
       });
     });
   }

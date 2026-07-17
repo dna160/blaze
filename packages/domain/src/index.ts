@@ -14,6 +14,11 @@ export {
   type InvoiceSnapshot,
   type InvoiceLineSnapshot,
 } from "./pricing/credit-note.js";
+export {
+  computeSwapProration,
+  type SwapProrationParams,
+  type SwapProrationResult,
+} from "./pricing/swap-proration.js";
 
 export type {
   BookingModelStrategy,

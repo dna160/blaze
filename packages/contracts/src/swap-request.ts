@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { MoneyStringSchema } from "./common.js";
+
 export const SwapRequestStatusSchema = z.enum(["PENDING", "APPROVED", "REJECTED"]);
 
 /** Self-service portal — request upgrade/downsize (PRD §7.1.4). Customer picks a target AssetType; staff picks the actual replacement unit on approval. */
@@ -30,6 +32,9 @@ export const SwapRequestDtoSchema = z.object({
   reviewedByUserId: z.string().uuid().nullable(),
   reviewedAt: z.string().datetime().nullable(),
   rejectionReason: z.string().nullable(),
+  /** Set on approval — positive means the customer owes more for the rest of the current period, negative means they're owed a credit. Staff act on this manually (see docs/HANDOFF.md "Known shortcuts"). Null if no PAID invoice existed yet to derive the period from. */
+  prorationNetAdjustment: MoneyStringSchema.nullable(),
+  prorationDaysRemaining: z.number().int().nullable(),
   createdAt: z.string().datetime(),
 });
 export type SwapRequestDto = z.infer<typeof SwapRequestDtoSchema>;

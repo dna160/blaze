@@ -548,6 +548,11 @@ model SwapRequest {
   reviewedByUserId     String?           @db.Uuid @map("reviewed_by_user_id")
   reviewedAt           DateTime?         @map("reviewed_at")
   rejectionReason      String?           @map("rejection_reason")
+  /// Computed at approval (computeSwapProration) for staff to act on manually — positive means the
+  /// customer owes more, negative means they're owed a credit. Null when no PAID invoice existed yet
+  /// to derive the current billing period from.
+  prorationNetAdjustment Decimal?        @db.Decimal(14, 2) @map("proration_net_adjustment")
+  prorationDaysRemaining Int?            @map("proration_days_remaining")
   createdAt            DateTime          @default(now()) @map("created_at")
   updatedAt            DateTime          @updatedAt @map("updated_at")
 

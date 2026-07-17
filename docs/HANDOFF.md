@@ -16,7 +16,7 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 |---|---|---|
 | **0 — Foundation** | Tenancy + RLS, auth/RBAC, domain model, asset registry, Xendit/WA sandbox | ✅ Done (auth: staff JWT + customer OTP; RLS verified; provider seams in place, sandbox keys not yet supplied) |
 | **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (Session 3), KYC upload + review (Session 4), and the contract e-sign gate (Session 5). 🚧 Remaining gaps: request-info/customer-reply UI, unit reassignment on approve UI |
-| **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | ✅ Every named item on PRD §13's list is done, plus partial deposit application against damages (Session 12, unlisted but schema had been carrying it since early sessions): double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow with partial-application support (console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only), visual unit map + occupancy view (Session 9, console UI, staff-only), swap/upgrade requests (Session 10, storefront + console UI, no mid-cycle proration yet — see "Known shortcuts"), and a real ESignProvider port (Session 11, Privy adapter coded-but-unconfigured, MockESignProvider is the zero-regression default). ⬜ One unlisted gap remains: swap-request mid-cycle proration. |
+| **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | ✅ **Complete** — every named item on PRD §13's list plus every gap found along the way is done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow with partial-application support (Session 12, console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only), visual unit map + occupancy view (Session 9, console UI, staff-only), swap/upgrade requests with computed mid-cycle proration (Sessions 10 + 13, storefront + console UI), and a real ESignProvider port (Session 11, Privy adapter coded-but-unconfigured, MockESignProvider is the zero-regression default). Phase 3 is next. |
 | **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | ⬜ Not started. `BookingModelStrategy` seam exists and is proven (typed stubs for NIGHTLY/DURATION_ORDER/HOURLY_SLOT throw `BookingModelNotImplementedError`) — Phase 3 is implementing their real math, not inventing the seam |
 | **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | ⬜ Not started, deliberately deferred per PRD |
 
@@ -371,6 +371,47 @@ full 450,000 — was what actually got paid out; `OPS_ADMIN` correctly
 throughout, and every application produced a matching `AuditLog` row
 with the amount and reason.
 
+**Session 13 (swap-request mid-cycle proration — the last known Phase 2
+gap):** `computeSwapProration` (`packages/domain/src/pricing/swap-proration.ts`,
+5 new unit tests) is a pure function: given the old/new monthly rates and
+the current billing period's bounds, it returns `daysRemaining`,
+`oldRateUnusedCredit`, `newRateCharge`, and `netAdjustment` (positive =
+customer owes more, negative = they're owed a credit). Both period
+bounds are **inclusive** (matching `periodEndFor`'s existing convention
+of "last day of the period," not an exclusive boundary) — this required
+a `+1` on both the total-days and remaining-days calculations that's
+easy to get wrong; the unit tests pin a full-31-day period counting as
+31, not 30. `SwapRequestsService.approve()` now looks up the booking's
+most recently `PAID` invoice (the actual billed period, not a date
+re-derived from `anchorDay` math that could drift after a credited/
+replacement invoice) and calls `computeSwapProration` with today as the
+switch date, storing the result on two new `SwapRequest` columns
+(`prorationNetAdjustment`, `prorationDaysRemaining`; null when no `PAID`
+invoice exists yet to derive a period from). **Deliberately stops
+there** — it does not auto-generate an invoice or credit note for the
+computed number. A downsize produces a negative `netAdjustment`, and
+this codebase's invoice model has no negative-amount convention:
+nothing downstream (payments, dunning, the storefront UI) is built to
+represent one, and inventing that under this scope would be building on
+an unproven assumption rather than reusing what's already proven.
+Instead, the number is surfaced directly to staff — console's swap
+queue shows a banner after approval ("customer owes an additional Rp X"
+/ "customer is owed a credit of Rp X" / "no manual adjustment needed" /
+"proration wasn't computed") with the exact days-remaining and amount,
+and staff act on it with the tools already built: a manual credit note
+for a downsize, a manual charge for an upgrade.
+
+Verified live against three real scenarios on actual `PAID` invoices:
+an upgrade (450,000 → 1,200,000/mo, 30 of 31 days remaining) computed a
+net adjustment of exactly 725,806.45 — hand-verified as
+`(1,200,000/31 − 450,000/31) × 30`; the symmetric downsize produced
+exactly `-725,806.45`; a booking with no `PAID` invoice yet correctly
+returned `null` for both fields rather than a wrong or crashing
+computation. Ledger balance stayed at 0.00 throughout (proration is
+compute-only — no ledger entries by design). This closes the last known
+Phase 2 gap; every named item on PRD §13 Phase 2's list plus every
+gap this session series found along the way is now done.
+
 ### What's explicitly NOT done (don't assume it exists)
 
 - Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
@@ -386,45 +427,59 @@ with the amount and reason.
 
 ## Resume here
 
-Refunds/credit-notes/maker-checker/ledger (Session 2) with their console +
-storefront UI (Session 3), the storefront pay-now flow (Session 3), KYC
-upload + review with real object storage (Session 4), the contract
-e-signature gate wired into the `APPROVED → ACTIVE` triple-AND guard
-(Session 5, `apps/api/src/agreements`), proof-of-payment as a real
-`StorageProvider` upload instead of a text field (Session 6), the
-automatic credit-note replacement invoice (Session 7), month-end close +
-CSV accounting export (Session 8), the visual unit map + occupancy view
-(Session 9), swap/upgrade requests (Session 10), a real `ESignProvider`
-port (Session 11, Privy adapter), and partial deposit application
-against damages (Session 12) are all done — every major PRD §7.1/§7.2
-P0 flow now has both a working API and reachable UI, the booking
-activation guard is no longer stubbed on any of its three conditions,
-every document-bearing flow (KYC, contracts, manual payments) uses the
-same upload/preview pattern, invoice corrections match the PRD's
-documented lifecycle exactly (§8.2), Phase 2's own success criterion
-("finance closes a month in < 1 day") has a real view + export to close
-against, and **every named item on PRD §13 Phase 2's list is now done,
-plus the one unlisted gap that had real schema support since early
-sessions**. Only swap-request mid-cycle proration remains as an
-unlisted gap, and Phase 3 hasn't been started. Next highest-leverage
-chunks, in rough priority order:
+**Phase 2 is complete.** Refunds/credit-notes/maker-checker/ledger
+(Session 2) with their console + storefront UI (Session 3), the
+storefront pay-now flow (Session 3), KYC upload + review with real
+object storage (Session 4), the contract e-signature gate wired into
+the `APPROVED → ACTIVE` triple-AND guard (Session 5,
+`apps/api/src/agreements`), proof-of-payment as a real `StorageProvider`
+upload instead of a text field (Session 6), the automatic credit-note
+replacement invoice (Session 7), month-end close + CSV accounting
+export (Session 8), the visual unit map + occupancy view (Session 9),
+swap/upgrade requests (Session 10), a real `ESignProvider` port
+(Session 11, Privy adapter), partial deposit application against
+damages (Session 12), and swap-request mid-cycle proration (Session
+13) are all done — every major PRD §7.1/§7.2 P0 flow now has both a
+working API and reachable UI, the booking activation guard is no
+longer stubbed on any of its three conditions, every document-bearing
+flow (KYC, contracts, manual payments) uses the same upload/preview
+pattern, invoice corrections match the PRD's documented lifecycle
+exactly (§8.2), Phase 2's own success criterion ("finance closes a
+month in < 1 day") has a real view + export to close against, and
+**every named item on PRD §13 Phase 2's list, plus every gap this
+session series found along the way, is done**. No known Phase 2 gaps
+remain — everything left (see "Known shortcuts") is either a deliberate
+scope boundary with a real reason documented, or genuinely Phase 3+
+territory.
 
-1. Swap-request mid-cycle proration (see "Known shortcuts") — needs a
-   signed-adjustment-line concept on `Invoice` or a dedicated proration
-   calculation in `packages/domain`; today staff handle it manually via
-   the existing credit-note/manual-payment tools. This is now the only
-   remaining known gap short of Phase 3.
-2. Phase 3 per PRD §13: `NIGHTLY`/`DURATION_ORDER` real booking-model
-   logic (today they're typed stubs that throw
-   `BookingModelNotImplementedError` — the seam is proven, the math
-   isn't written), pooled inventory flag, seasonal pricing, and a second
-   tenant in a different vertical onboarded **without code changes** —
-   this is the PRD's extensibility thesis validated or falsified. This
-   is a materially bigger lift than anything in Phase 2: it's the first
-   point where "does the architecture actually generalize" gets tested
-   against a real second booking model, not just a clean interface.
-   Realistically this is where the next session should focus once the
-   proration item above is either done or deliberately deferred.
+Next highest-leverage chunk — the only one left — is **Phase 3** per
+PRD §13:
+
+1. `NIGHTLY`/`DURATION_ORDER` real booking-model logic (today they're
+   typed stubs that throw `BookingModelNotImplementedError` in
+   `packages/domain/src/booking-model/` — the seam is proven via
+   `RECURRING_LEASE`, the math for the other two isn't written yet).
+   Start here: read `recurring-lease.strategy.ts` as the template for
+   what a `BookingModelStrategy` needs to implement
+   (`computeInitialInvoice`, `computeNextCycleInvoice`,
+   `computeFinalSettlement`, `nextCycleDate`), then work out what
+   "nightly" (check-in/check-out dates, one invoice per stay) and
+   "duration order" (day/week range, deposit hold, no recurring cycle)
+   actually need instead of a monthly anchor-date cycle.
+2. Pooled inventory flag (`AssetType.isPooled` already exists in
+   schema, unused) — availability becomes a count against a shared
+   pool rather than one specific asset per booking.
+3. Seasonal/dynamic pricing (needed for the hotel vertical per PRD
+   §7.1.3).
+4. A second tenant in a different vertical (hotel/kost or equipment)
+   onboarded **without code changes** — the PRD's extensibility thesis
+   validated or falsified. This is a materially bigger lift than
+   anything in Phase 2: it's the first point where "does the
+   architecture actually generalize" gets tested against a real second
+   booking model, not just a clean interface holding up under one
+   vertical's load. Don't start this until at least one of items 1-3
+   above is real, since there's nothing to onboard a second tenant onto
+   otherwise.
 
 Before writing new code:
 1. `docker compose up` (or run each service manually per README "Local development") in an environment with real network access, to confirm the Dockerfiles actually work — this is unverified debt, still outstanding from Session 1.
@@ -456,7 +511,7 @@ Before writing new code:
 - Runtime Docker images copy the *full* installed `node_modules` (including devDependencies) from the build stage rather than doing a second prod-only `pnpm install`. Simpler and more robust for a pnpm workspace with symlinked local packages; costs image size. Revisit once there's a real build environment to validate a leaner runtime install against.
 - Credit notes treat the entire credited amount as a Revenue reversal against AR (`recordCreditNoteEntries`), not split proportionally across Revenue/TaxPayable. Correct for crediting a whole remaining balance; approximate for a partial credit on a taxed invoice (the TaxPayable account will be very slightly overstated in that specific case). Exact proportional splitting is a small, contained fix if it ever matters — `FinanceService.createCreditNote` is the one call site.
 - Deposit refunds always call `PaymentProvider.refund()` against the *original* payment's `providerRef` (best-effort lookup by booking + DEPOSIT line), never a manual-disbursement-only path. `MockPaymentProvider.refund()` doesn't validate the ref at all, so this was never exercised against a picky real gateway — when wiring real Xendit payouts, double check Xendit's refund API actually accepts a ref from an *invoice* payment for what's conceptually a *deposit* payout (PRD says deposit refunds go out via "Xendit payout," which is a different Xendit product/endpoint than a payment refund — this may need its own adapter method, not reuse of `refund()`).
-- Swap-request approval (`SwapRequestsService.approve`) reassigns the asset and re-snapshots pricing immediately but does **not** generate a mid-cycle proration invoice/credit for the switch-over day — the customer's next invoice bills at the new rate in full, and whatever they already paid for the current period at the old rate is left as-is. Staff can manually issue a credit note (for a downsize) or record a manual charge (for an upgrade) via the tools already built if the tenant's policy requires exact proration. A real fix needs either a signed-adjustment-line concept on Invoice or a dedicated proration calculation in `packages/domain` — tracked here, not started.
+- Swap-request approval (`SwapRequestsService.approve`) reassigns the asset and re-snapshots pricing immediately and *computes* the mid-cycle proration (`computeSwapProration`, stored on `SwapRequest.prorationNetAdjustment`/`prorationDaysRemaining`), but does **not** auto-generate an invoice or credit note for that number — a downsize computes a negative adjustment, and this codebase's invoice model has no negative-amount convention anything downstream (payments, dunning, the storefront UI) is built to handle. Staff see the exact number in the console swap queue and act on it manually: a credit note for a downsize, a manual charge for an upgrade. A real fix needs a signed-adjustment-line concept on `Invoice`, or a standalone account-credit primitive this schema doesn't have yet — bigger than a "small, contained fix," genuinely deferred, not forgotten.
 
 ## Open PRD questions still unanswered (§15)
 

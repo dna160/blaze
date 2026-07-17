@@ -25,6 +25,19 @@ interface AvailableAsset {
   code: string;
 }
 
+interface ApprovalResult {
+  customerLabel: string;
+  unitCode: string;
+  prorationNetAdjustment: string | null;
+  prorationDaysRemaining: number | null;
+}
+
+function formatIDR(amount: string): string {
+  return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(
+    Math.abs(Number(amount)),
+  );
+}
+
 /** PRD §7.1.4 / persona table "Grow/Shrink" — swap-request approval queue. */
 export default function SwapRequestsPage() {
   const router = useRouter();
@@ -34,6 +47,7 @@ export default function SwapRequestsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [availableAssets, setAvailableAssets] = useState<AvailableAsset[] | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState("");
+  const [approvalResult, setApprovalResult] = useState<ApprovalResult | null>(null);
 
   async function load() {
     const token = authClient.getToken();
@@ -73,15 +87,21 @@ export default function SwapRequestsPage() {
     }
   }
 
-  async function approve(id: string) {
+  async function approve(req: SwapRequestWithRelations) {
     if (!selectedAssetId) return;
-    setBusyId(id);
+    setBusyId(req.id);
     setError(null);
     try {
-      await apiFetch(`/swap-requests/${id}/approve`, {
-        token: authClient.getToken(),
-        method: "POST",
-        body: { newAssetId: selectedAssetId },
+      const unitCode = availableAssets?.find((a) => a.id === selectedAssetId)?.code ?? "the new unit";
+      const result = await apiFetch<{ prorationNetAdjustment: string | null; prorationDaysRemaining: number | null }>(
+        `/swap-requests/${req.id}/approve`,
+        { token: authClient.getToken(), method: "POST", body: { newAssetId: selectedAssetId } },
+      );
+      setApprovalResult({
+        customerLabel: req.booking.customer.fullName ?? req.booking.customer.phone,
+        unitCode,
+        prorationNetAdjustment: result.prorationNetAdjustment,
+        prorationDaysRemaining: result.prorationDaysRemaining,
       });
       setExpandedId(null);
       await load();
@@ -112,6 +132,40 @@ export default function SwapRequestsPage() {
       <h1 className="text-2xl font-semibold">Swap Requests</h1>
       <p className="mt-1 text-sm text-brand-700/60">Customer-requested unit upgrades/downsizes awaiting a decision.</p>
       {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
+
+      {approvalResult && (
+        <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm">
+          <div className="flex items-start justify-between">
+            <p className="font-medium">
+              Swap approved: {approvalResult.customerLabel} → unit {approvalResult.unitCode}
+            </p>
+            <button onClick={() => setApprovalResult(null)} className="text-amber-700/60 hover:text-amber-900">
+              Dismiss
+            </button>
+          </div>
+          {approvalResult.prorationNetAdjustment === null ? (
+            <p className="mt-1 text-amber-800">
+              No prior paid invoice to derive the current billing period from — proration wasn't computed.
+            </p>
+          ) : Number(approvalResult.prorationNetAdjustment) === 0 ? (
+            <p className="mt-1 text-amber-800">
+              Rates match, or no days remain in the current period — no manual adjustment needed.
+            </p>
+          ) : Number(approvalResult.prorationNetAdjustment) > 0 ? (
+            <p className="mt-1 text-amber-800">
+              For the {approvalResult.prorationDaysRemaining} day(s) left in the current period, the customer owes an
+              additional <strong>{formatIDR(approvalResult.prorationNetAdjustment)}</strong> at the new rate. Record a
+              manual charge on their next invoice.
+            </p>
+          ) : (
+            <p className="mt-1 text-amber-800">
+              For the {approvalResult.prorationDaysRemaining} day(s) left in the current period, the customer is owed
+              a credit of <strong>{formatIDR(approvalResult.prorationNetAdjustment)}</strong> for the unused old
+              rate. Issue a credit note on their next invoice.
+            </p>
+          )}
+        </div>
+      )}
 
       {!requests ? (
         <p className="mt-6">Loading...</p>
@@ -171,7 +225,7 @@ export default function SwapRequestsPage() {
                         ))}
                       </select>
                       <button
-                        onClick={() => approve(req.id)}
+                        onClick={() => approve(req)}
                         disabled={busyId === req.id || !selectedAssetId}
                         className="rounded bg-brand-700 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
                       >
