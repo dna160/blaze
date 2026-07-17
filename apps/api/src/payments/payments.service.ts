@@ -6,15 +6,20 @@ import { recordPaymentReceivedEntries } from "@rentos/database";
 import { BookingService } from "../booking/booking.service.js";
 import { FinanceService } from "../finance/finance.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { STORAGE_PROVIDER, type StorageProvider } from "../storage/storage-provider.interface.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 
 import { PAYMENT_PROVIDER, type PaymentMethodValue, type PaymentProvider } from "./payment-provider.interface.js";
+
+const ALLOWED_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
+const MAX_FILE_BYTES = 8 * 1024 * 1024; // receipt/transfer-slip photos, not raw camera dumps
 
 @Injectable()
 export class PaymentsService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
+    @Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider,
     private readonly booking: BookingService,
     private readonly finance: FinanceService,
   ) {}
@@ -120,8 +125,15 @@ export class PaymentsService {
     recordedByUserId: string,
     invoiceId: string,
     method: "CASH" | "MANUAL_TRANSFER",
-    proofUrl: string,
+    proof: { buffer: Buffer; mimetype: string; size: number },
   ) {
+    if (!ALLOWED_CONTENT_TYPES.has(proof.mimetype)) {
+      throw new BadRequestException(`Unsupported file type "${proof.mimetype}". Use JPEG, PNG, WebP, or PDF.`);
+    }
+    if (proof.size > MAX_FILE_BYTES) {
+      throw new BadRequestException("File too large — max 8MB.");
+    }
+
     const invoice = await this.prisma.runInTenantContext(tenant.id, (tx) =>
       tx.invoice.findUnique({ where: { id: invoiceId } }),
     );
@@ -129,6 +141,9 @@ export class PaymentsService {
     if (invoice.status !== "ISSUED" && invoice.status !== "OVERDUE") {
       throw new ConflictException(`Invoice is ${invoice.status}, not payable.`);
     }
+
+    const key = `payments/${tenant.id}/${invoiceId}/${randomUUID()}`;
+    const { storageKey } = await this.storage.save({ key, buffer: proof.buffer, contentType: proof.mimetype });
 
     return this.prisma.runInTenantContext(tenant.id, (tx) =>
       tx.payment.create({
@@ -141,10 +156,20 @@ export class PaymentsService {
           status: "PENDING",
           amount: invoice.totalAmount,
           recordedByUserId,
-          proofUrl,
+          proofUrl: storageKey,
         },
       }),
     );
+  }
+
+  /** Staff-only proof-of-payment preview — same redirect/buffer shape as KYC/contract file reads. */
+  async getProofFile(tenant: ResolvedTenant, paymentId: string) {
+    const payment = await this.prisma.runInTenantContext(tenant.id, (tx) =>
+      tx.payment.findUnique({ where: { id: paymentId } }),
+    );
+    if (!payment) throw new NotFoundException("Payment not found.");
+    if (!payment.proofUrl) throw new NotFoundException("This payment has no proof-of-payment file.");
+    return this.storage.read(payment.proofUrl);
   }
 
   async verifyManual(tenant: ResolvedTenant, verifiedByUserId: string, paymentId: string) {

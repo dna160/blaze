@@ -1,7 +1,22 @@
-import { Body, Controller, ForbiddenException, Headers, Param, Post, Req, UseGuards } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Headers,
+  Param,
+  Post,
+  Req,
+  Res,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
 import { ApiTags } from "@nestjs/swagger";
-import { InitiatePaymentRequestSchema, RecordManualPaymentRequestSchema } from "@rentos/contracts";
-import type { Request } from "express";
+import { InitiatePaymentRequestSchema } from "@rentos/contracts";
+import type { Request, Response } from "express";
 
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
@@ -35,16 +50,28 @@ export class PaymentsController {
     return this.payments.initiate(tenant, body.invoiceId, body.method);
   }
 
-  /** PRD §7.2.4: Super Admin / Ops Admin record manual payments (RBAC Appendix C). Never finalizes by itself — see verify(). */
+  /** PRD §7.2.4: Super Admin / Ops Admin record manual payments with a proof-of-payment upload (RBAC Appendix C). Never finalizes by itself — see verify(). */
   @Post("manual")
   @UseGuards(JwtAuthGuard, RolesGuard, TenantMatchGuard)
   @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseInterceptors(FileInterceptor("file"))
   recordManual(
     @CurrentTenant() tenant: ResolvedTenant,
     @CurrentUser() user: AuthenticatedUser,
-    @Body(new ZodValidationPipe(RecordManualPaymentRequestSchema)) body: ReturnType<typeof RecordManualPaymentRequestSchema.parse>,
+    @Body("invoiceId") invoiceId: string,
+    @Body("method") method: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
   ) {
-    return this.payments.recordManual(tenant, user.id, body.invoiceId, body.method, body.proofUrl);
+    if (method !== "CASH" && method !== "MANUAL_TRANSFER") {
+      throw new BadRequestException('method must be "CASH" or "MANUAL_TRANSFER".');
+    }
+    if (!invoiceId) throw new BadRequestException("invoiceId is required.");
+    if (!file) throw new BadRequestException("No proof-of-payment file uploaded.");
+    return this.payments.recordManual(tenant, user.id, invoiceId, method, {
+      buffer: file.buffer,
+      mimetype: file.mimetype,
+      size: file.size,
+    });
   }
 
   /** PRD §7.2.4 maker-checker: Finance Admin (or Super Admin) verifies — never the recorder. */
@@ -53,6 +80,20 @@ export class PaymentsController {
   @Roles("SUPER_ADMIN", "FINANCE_ADMIN")
   verifyManual(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
     return this.payments.verifyManual(tenant, user.id, id);
+  }
+
+  /** Staff-only proof-of-payment preview (recorder, verifier, or any Finance/Ops role). */
+  @Get(":id/file")
+  @UseGuards(JwtAuthGuard, RolesGuard, TenantMatchGuard)
+  @Roles("SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN")
+  async getFile(@CurrentTenant() tenant: ResolvedTenant, @Param("id") id: string, @Res() res: Response) {
+    const result = await this.payments.getProofFile(tenant, id);
+    if (result.kind === "redirect") {
+      res.redirect(result.url);
+      return;
+    }
+    res.setHeader("Content-Type", result.contentType);
+    res.send(result.buffer);
   }
 
   /**

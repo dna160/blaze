@@ -78,11 +78,16 @@ export type InitiatePaymentResponse = z.infer<typeof InitiatePaymentResponseSche
  * with proof upload and maker-checker"). Recording never finalizes the
  * invoice by itself — a second, different staff member must verify via
  * POST /payments/:id/verify before the invoice/booking transitions.
+ *
+ * Sent as multipart/form-data (POST /payments/manual) rather than JSON —
+ * `invoiceId`/`method` travel as form fields alongside the proof-of-payment
+ * file, so there's no JSON body for this schema to validate directly; it
+ * documents the non-file fields the controller extracts manually (same
+ * pattern as the KYC and contract-signing uploads).
  */
 export const RecordManualPaymentRequestSchema = z.object({
   invoiceId: z.string().uuid(),
   method: z.enum(["CASH", "MANUAL_TRANSFER"]),
-  proofUrl: z.string().min(1),
 });
 export type RecordManualPaymentRequest = z.infer<typeof RecordManualPaymentRequestSchema>;
 

@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import type { InvoiceDto, PaymentDto } from "@rentos/contracts";
 
 import { ConsoleShell } from "@/components/ConsoleShell";
-import { apiFetch, ApiError } from "@/lib/api";
+import { apiFetch, apiFetchBlob, apiUpload, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 
 type InvoiceWithPayments = InvoiceDto & { payments: PaymentDto[] };
@@ -16,7 +16,12 @@ interface CreditNote {
   issuedByUserId: string;
   createdAt: string;
 }
-type PaymentWithMaker = PaymentDto & { recordedByUserId: string | null; verifiedByUserId: string | null; provider: string };
+type PaymentWithMaker = PaymentDto & {
+  recordedByUserId: string | null;
+  verifiedByUserId: string | null;
+  provider: string;
+  proofUrl: string | null;
+};
 
 function formatIDR(amount: string | number): string {
   return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(
@@ -38,7 +43,8 @@ export default function InvoiceDetailPage() {
   const [busy, setBusy] = useState(false);
 
   const [method, setMethod] = useState<"CASH" | "MANUAL_TRANSFER">("MANUAL_TRANSFER");
-  const [proofUrl, setProofUrl] = useState("");
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [cnAmount, setCnAmount] = useState("");
   const [cnReason, setCnReason] = useState("");
 
@@ -67,20 +73,31 @@ export default function InvoiceDetailPage() {
 
   async function recordPayment(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
+    if (!proofFile) return;
+    setUploading(true);
     setError(null);
     try {
-      await apiFetch("/payments/manual", {
-        token: authClient.getToken(),
-        method: "POST",
-        body: { invoiceId: id, method, proofUrl },
-      });
-      setProofUrl("");
+      const formData = new FormData();
+      formData.append("invoiceId", String(id));
+      formData.append("method", method);
+      formData.append("file", proofFile);
+      await apiUpload("/payments/manual", authClient.getToken(), formData);
+      setProofFile(null);
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to record payment.");
     } finally {
-      setBusy(false);
+      setUploading(false);
+    }
+  }
+
+  async function viewProof(paymentId: string) {
+    setError(null);
+    try {
+      const blob = await apiFetchBlob(`/payments/${paymentId}/file`, authClient.getToken());
+      window.open(URL.createObjectURL(blob), "_blank");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to load proof of payment.");
     }
   }
 
@@ -169,9 +186,16 @@ export default function InvoiceDetailPage() {
                   <span className="rounded-full bg-brand-700/10 px-2 py-1 text-xs">{p.status}</span>
                 </div>
                 {p.provider === "MANUAL" && (
-                  <div className="mt-2 text-xs text-brand-700/60">
-                    Recorded by {p.recordedByUserId === user?.id ? "you" : p.recordedByUserId?.slice(0, 8)}
-                    {p.verifiedByUserId && ` · Verified by ${p.verifiedByUserId === user?.id ? "you" : p.verifiedByUserId.slice(0, 8)}`}
+                  <div className="mt-2 flex items-center gap-2 text-xs text-brand-700/60">
+                    <span>
+                      Recorded by {p.recordedByUserId === user?.id ? "you" : p.recordedByUserId?.slice(0, 8)}
+                      {p.verifiedByUserId && ` · Verified by ${p.verifiedByUserId === user?.id ? "you" : p.verifiedByUserId.slice(0, 8)}`}
+                    </span>
+                    {p.proofUrl && (
+                      <button onClick={() => viewProof(p.id)} className="underline hover:text-brand-700">
+                        View proof
+                      </button>
+                    )}
                   </div>
                 )}
                 {p.status === "PENDING" && p.provider === "MANUAL" && canVerify && p.recordedByUserId !== user?.id && (
@@ -204,17 +228,17 @@ export default function InvoiceDetailPage() {
                 <option value="CASH">Cash</option>
               </select>
               <input
+                type="file"
                 required
-                value={proofUrl}
-                onChange={(e) => setProofUrl(e.target.value)}
-                placeholder="Proof reference (receipt photo URL)"
-                className="w-full rounded border border-brand-600/20 px-2 py-1 text-sm"
+                accept="application/pdf,image/jpeg,image/png,image/webp"
+                onChange={(e) => setProofFile(e.target.files?.[0] ?? null)}
+                className="w-full text-sm"
               />
               <button
-                disabled={busy}
+                disabled={uploading || !proofFile}
                 className="w-full rounded bg-brand-700 py-1.5 text-sm font-medium text-white disabled:opacity-50"
               >
-                Record payment
+                {uploading ? "Uploading..." : "Record payment"}
               </button>
             </form>
           )}
