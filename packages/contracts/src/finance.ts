@@ -106,6 +106,13 @@ export const DepositDtoSchema = z.object({
 });
 export type DepositDto = z.infer<typeof DepositDtoSchema>;
 
+/** PRD §7.2.4 "applied against damages/final invoice" — never more than the deposit's unapplied remainder; enforced server-side, not just by this schema. */
+export const ApplyDepositRequestSchema = z.object({
+  amount: MoneyStringSchema,
+  reason: z.string().min(1).max(500),
+});
+export type ApplyDepositRequest = z.infer<typeof ApplyDepositRequestSchema>;
+
 /** PRD §7.2.4 credit notes — corrections happen via credit note, never edit-in-place. */
 export const CreateCreditNoteRequestSchema = z.object({
   amount: MoneyStringSchema,

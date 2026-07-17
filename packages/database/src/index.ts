@@ -17,6 +17,7 @@ export {
   recordPaymentReceivedEntries,
   recordDepositHeldEntries,
   recordDepositRefundedEntries,
+  recordDepositAppliedEntries,
   recordCreditNoteEntries,
   computeLedgerBalance,
 } from "./ledger.js";

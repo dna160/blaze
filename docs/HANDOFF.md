@@ -16,7 +16,7 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 |---|---|---|
 | **0 — Foundation** | Tenancy + RLS, auth/RBAC, domain model, asset registry, Xendit/WA sandbox | ✅ Done (auth: staff JWT + customer OTP; RLS verified; provider seams in place, sandbox keys not yet supplied) |
 | **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (Session 3), KYC upload + review (Session 4), and the contract e-sign gate (Session 5). 🚧 Remaining gaps: request-info/customer-reply UI, unit reassignment on approve UI |
-| **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | ✅ Every named item on PRD §13's list is now done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow (console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only), visual unit map + occupancy view (Session 9, console UI, staff-only), swap/upgrade requests (Session 10, storefront + console UI, no mid-cycle proration yet — see "Known shortcuts"), and a real ESignProvider port (Session 11, Privy adapter coded-but-unconfigured, MockESignProvider is the zero-regression default). ⬜ Two related-but-unlisted gaps remain: partial deposit application against damages, swap-request mid-cycle proration. |
+| **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | ✅ Every named item on PRD §13's list is done, plus partial deposit application against damages (Session 12, unlisted but schema had been carrying it since early sessions): double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow with partial-application support (console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only), visual unit map + occupancy view (Session 9, console UI, staff-only), swap/upgrade requests (Session 10, storefront + console UI, no mid-cycle proration yet — see "Known shortcuts"), and a real ESignProvider port (Session 11, Privy adapter coded-but-unconfigured, MockESignProvider is the zero-regression default). ⬜ One unlisted gap remains: swap-request mid-cycle proration. |
 | **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | ⬜ Not started. `BookingModelStrategy` seam exists and is proven (typed stubs for NIGHTLY/DURATION_ORDER/HOURLY_SLOT throw `BookingModelNotImplementedError`) — Phase 3 is implementing their real math, not inventing the seam |
 | **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | ⬜ Not started, deliberately deferred per PRD |
 
@@ -334,10 +334,46 @@ distinct from the plain "Not signed yet" state, and hide the re-upload
 form while a real-provider signature is pending. This closes the last
 named item on PRD §13 Phase 2's explicit list.
 
+**Session 12 (partial deposit application against damages):** PRD
+§7.2.4's "applied against damages/final invoice" — the one gap the
+schema had been carrying since early sessions (`Deposit.appliedAmount`,
+`PARTIALLY_APPLIED`/`APPLIED` statuses) with no workflow behind it.
+`DepositsService.applyToDamages` (`SUPER_ADMIN`/`FINANCE_ADMIN` only —
+same RBAC bar as issuing a credit note, since it's a unilateral
+deduction from customer funds) lets staff deduct part or all of a
+`HELD`/`PARTIALLY_APPLIED` deposit with a reason, repeatable up to the
+deposit's full amount. `recordDepositAppliedEntries`
+(`packages/database/src/ledger.ts`) debits `DEPOSIT_LIABILITY` and
+credits `REVENUE` — applying a deposit converts liability into revenue
+at the moment of the decision, no cash moves. Every application is also
+written to the existing (previously under-used) `AuditLog` via
+`AuditService` — a deduction from customer funds is exactly the kind of
+action PRD §7.2.7's "immutable audit log... protects the owner from his
+own staff" exists for. `requestRefund`/`approveRefund` were changed to operate on
+`amount - appliedAmount` (the remaining balance) instead of the full
+deposit amount — harmless before this session since `appliedAmount` was
+always 0 with no application workflow to move it, but necessary now
+that `applyToDamages` exists: refunding the full `amount` after a
+partial application would double-pay the applied portion. `requestRefund`
+also now allows `PARTIALLY_APPLIED` (not just `HELD`)
+and blocks requesting when nothing remains. Console's deposits page
+gained a Remaining column, an "Apply to damages" inline form, and the
+approve-refund button now shows the actual amount it will pay out.
+
+Verified live: applying 50,000 then 400,000 against a 450,000 deposit
+correctly transitions `HELD` → `PARTIALLY_APPLIED` → `APPLIED`;
+over-amount and already-`APPLIED` applications 400/409 as expected; an
+`APPLIED` deposit correctly can't be refunded (409, "nothing left to
+refund"); a separate deposit partially applied (100,000) then
+refunded showed a `payoutRef` proving the remaining 350,000 — not the
+full 450,000 — was what actually got paid out; `OPS_ADMIN` correctly
+403s on `/deposits/:id/apply`. Ledger balance stayed at exactly 0.00
+throughout, and every application produced a matching `AuditLog` row
+with the amount and reason.
+
 ### What's explicitly NOT done (don't assume it exists)
 
 - Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
-- Partial deposit application against damages (`Deposit.appliedAmount` / `PARTIALLY_APPLIED` / `APPLIED` states exist in schema, unused — v1 refund workflow only handles the full-amount HELD → REFUND_REQUESTED → REFUNDED path)
 - Invoice-payment refunds (as opposed to deposit refunds) — no endpoint; `PaymentProvider.refund()` is only called from the deposit-refund flow today
 - Automated KYC verification (Verihubs or similar) — PRD explicitly scopes this to P2; v1 review is 100% manual, by design.
 - Unit map (visual grid) — list view only (P1 in PRD anyway)
@@ -358,26 +394,27 @@ e-signature gate wired into the `APPROVED → ACTIVE` triple-AND guard
 `StorageProvider` upload instead of a text field (Session 6), the
 automatic credit-note replacement invoice (Session 7), month-end close +
 CSV accounting export (Session 8), the visual unit map + occupancy view
-(Session 9), swap/upgrade requests (Session 10), and a real `ESignProvider`
-port (Session 11, Privy adapter) are all done — every major PRD §7.1/§7.2
+(Session 9), swap/upgrade requests (Session 10), a real `ESignProvider`
+port (Session 11, Privy adapter), and partial deposit application
+against damages (Session 12) are all done — every major PRD §7.1/§7.2
 P0 flow now has both a working API and reachable UI, the booking
 activation guard is no longer stubbed on any of its three conditions,
 every document-bearing flow (KYC, contracts, manual payments) uses the
 same upload/preview pattern, invoice corrections match the PRD's
 documented lifecycle exactly (§8.2), Phase 2's own success criterion
 ("finance closes a month in < 1 day") has a real view + export to close
-against, and **every named item on PRD §13 Phase 2's list is now done**.
-Two related-but-unlisted gaps remain (partial deposit application,
-swap-request mid-cycle proration), and Phase 3 hasn't been started. Next
-highest-leverage chunks, in rough priority order:
+against, and **every named item on PRD §13 Phase 2's list is now done,
+plus the one unlisted gap that had real schema support since early
+sessions**. Only swap-request mid-cycle proration remains as an
+unlisted gap, and Phase 3 hasn't been started. Next highest-leverage
+chunks, in rough priority order:
 
-1. Partial deposit application against damages (schema exists, unused —
-   see "What's explicitly NOT done").
-2. Swap-request mid-cycle proration (see "Known shortcuts") — needs a
+1. Swap-request mid-cycle proration (see "Known shortcuts") — needs a
    signed-adjustment-line concept on `Invoice` or a dedicated proration
    calculation in `packages/domain`; today staff handle it manually via
-   the existing credit-note/manual-payment tools.
-3. Phase 3 per PRD §13: `NIGHTLY`/`DURATION_ORDER` real booking-model
+   the existing credit-note/manual-payment tools. This is now the only
+   remaining known gap short of Phase 3.
+2. Phase 3 per PRD §13: `NIGHTLY`/`DURATION_ORDER` real booking-model
    logic (today they're typed stubs that throw
    `BookingModelNotImplementedError` — the seam is proven, the math
    isn't written), pooled inventory flag, seasonal pricing, and a second
@@ -386,6 +423,8 @@ highest-leverage chunks, in rough priority order:
    is a materially bigger lift than anything in Phase 2: it's the first
    point where "does the architecture actually generalize" gets tested
    against a real second booking model, not just a clean interface.
+   Realistically this is where the next session should focus once the
+   proration item above is either done or deliberately deferred.
 
 Before writing new code:
 1. `docker compose up` (or run each service manually per README "Local development") in an environment with real network access, to confirm the Dockerfiles actually work — this is unverified debt, still outstanding from Session 1.

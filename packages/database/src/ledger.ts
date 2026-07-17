@@ -84,6 +84,23 @@ export async function recordDepositRefundedEntries(
 }
 
 /**
+ * Called when staff apply part or all of a HELD deposit against damages
+ * (PRD §7.2.4 "applied against damages/final invoice"). The liability
+ * clears the same way a refund does, but the offsetting entry is Revenue
+ * rather than Cash — no money moves, the business simply keeps what it
+ * was already holding, recognized as revenue at the moment of decision.
+ */
+export async function recordDepositAppliedEntries(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  depositId: string,
+  amount: string,
+) {
+  await recordEntry(tx, tenantId, "DEPOSIT_LIABILITY", "DEBIT", amount, "DEPOSIT", depositId, "Deposit applied against damages");
+  await recordEntry(tx, tenantId, "REVENUE", "CREDIT", amount, "DEPOSIT", depositId, "Deposit applied against damages");
+}
+
+/**
  * Called on credit note issuance against an ISSUED/OVERDUE (unpaid)
  * invoice — reverses the revenue recognized at issue and reduces what's
  * owed. Simplification: treats the full credited amount as a Revenue
