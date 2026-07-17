@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import {
+  createCreditReplacementInvoice,
   generateFinalSettlement,
   generateInitialInvoice,
   generateNextCycleInvoice,
@@ -8,7 +9,7 @@ import {
   type BookingForInvoicing,
   type Prisma,
 } from "@rentos/database";
-import { invoiceFsm } from "@rentos/domain";
+import { invoiceFsm, money } from "@rentos/domain";
 
 import { PrismaService } from "../prisma/prisma.service.js";
 
@@ -83,16 +84,24 @@ export class FinanceService {
   }
 
   /**
-   * PRD §7.2.4: "corrections happen via credit note, never edit-in-place."
-   * v1 scope: marks the invoice CREDITED and records the ledger reversal.
-   * Issuing a replacement invoice for the corrected amount (if one is
-   * needed) is a separate, manual follow-up action today — the PRD's
-   * "superseded by CREDIT_NOTE + new invoice" isn't auto-wired yet
-   * (tracked in docs/HANDOFF.md).
+   * PRD §7.2.4/§8.2: "corrections happen via credit note, never
+   * edit-in-place"; a corrected invoice is "superseded by CREDIT_NOTE +
+   * new invoice". Marks the original invoice CREDITED, records the ledger
+   * reversal, and — when the credit is partial (there's still a balance
+   * owed) — issues a fresh replacement invoice for exactly that remaining
+   * amount, linked back via `supersededByInvoiceId`. A full credit (amount
+   * === total) has nothing left to bill, so no replacement is issued.
    */
-  async createCreditNote(tenantId: string, issuedByUserId: string, invoiceId: string, amount: string, reason: string) {
+  async createCreditNote(
+    tenant: { id: string; slug: string },
+    issuedByUserId: string,
+    invoiceId: string,
+    amount: string,
+    reason: string,
+  ) {
+    const tenantId = tenant.id;
     return this.prisma.runInTenantContext(tenantId, async (tx) => {
-      const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
+      const invoice = await tx.invoice.findUnique({ where: { id: invoiceId }, include: { lines: true } });
       if (!invoice) throw new NotFoundException("Invoice not found.");
       if (Number(amount) <= 0 || Number(amount) > Number(invoice.totalAmount.toString())) {
         throw new BadRequestException("Credit note amount must be positive and not exceed the invoice total.");
@@ -108,6 +117,26 @@ export class FinanceService {
         data: { tenantId, invoiceId, amount, reason, issuedByUserId },
       });
       await recordCreditNoteEntries(tx, tenantId, creditNote.id, invoiceId, amount);
+
+      const remaining = money(invoice.totalAmount.toString()).minus(money(amount));
+      if (remaining.greaterThan(0)) {
+        const replacement = await createCreditReplacementInvoice(
+          tx,
+          tenantId,
+          tenant.slug,
+          {
+            bookingId: invoice.bookingId,
+            customerId: invoice.customerId,
+            totalAmount: invoice.totalAmount.toString(),
+            periodStart: invoice.periodStart,
+            periodEnd: invoice.periodEnd,
+            lines: invoice.lines.map((l) => ({ description: l.description, amount: l.amount.toString(), lineType: l.lineType })),
+          },
+          amount,
+        );
+        await tx.invoice.update({ where: { id: invoiceId }, data: { supersededByInvoiceId: replacement.id } });
+      }
+
       return creditNote;
     });
   }

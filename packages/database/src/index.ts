@@ -8,7 +8,10 @@ export {
   generateFinalSettlement,
   markInvoicePaid,
   markInvoiceOverdue,
+  createCreditReplacementInvoice,
   type BookingForInvoicing,
+  type InvoiceForCredit,
+  type InvoiceLineForCredit,
 } from "./invoicing.js";
 export {
   recordPaymentReceivedEntries,

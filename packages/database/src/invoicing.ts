@@ -1,9 +1,11 @@
 import {
+  computeCreditReplacementDraft,
   getBookingModelStrategy,
   invoiceFsm,
   money,
   type BookingWindow,
   type InvoiceDraft,
+  type InvoiceSnapshot,
   type PricingConfig,
 } from "@rentos/domain";
 
@@ -54,11 +56,16 @@ function dueDateFor(issueDate: Date): Date {
   return due;
 }
 
-async function persistInvoice(
+interface InvoiceOwner {
+  bookingId: string | null;
+  customerId: string;
+}
+
+async function persistInvoiceCore(
   tx: Prisma.TransactionClient,
   tenantId: string,
   tenantSlug: string,
-  booking: BookingForInvoicing,
+  owner: InvoiceOwner,
   draft: InvoiceDraft,
 ) {
   const invoiceNumber = await nextInvoiceNumber(tx, tenantId, tenantSlug);
@@ -68,8 +75,8 @@ async function persistInvoice(
   const invoice = await tx.invoice.create({
     data: {
       tenantId,
-      bookingId: booking.id,
-      customerId: booking.customerId,
+      bookingId: owner.bookingId,
+      customerId: owner.customerId,
       invoiceNumber,
       status,
       currency: "IDR",
@@ -103,6 +110,56 @@ async function persistInvoice(
   await recordInvoiceIssuedEntries(tx, tenantId, invoice.id, invoiceNumber, revenueAmount, draft.taxAmount.toString());
 
   return invoice;
+}
+
+function persistInvoice(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  tenantSlug: string,
+  booking: BookingForInvoicing,
+  draft: InvoiceDraft,
+) {
+  return persistInvoiceCore(tx, tenantId, tenantSlug, { bookingId: booking.id, customerId: booking.customerId }, draft);
+}
+
+export interface InvoiceLineForCredit {
+  description: string;
+  amount: string;
+  lineType: string;
+}
+
+export interface InvoiceForCredit {
+  bookingId: string | null;
+  customerId: string;
+  totalAmount: string;
+  periodStart: Date | null;
+  periodEnd: Date | null;
+  lines: InvoiceLineForCredit[];
+}
+
+/**
+ * PRD §8.2: an invoice "superseded by CREDIT_NOTE + new invoice". Only
+ * called for a *partial* credit — the caller skips this entirely when the
+ * credit note covers the full invoice total, since there's no remaining
+ * balance to bill (see FinanceService.createCreditNote).
+ */
+export async function createCreditReplacementInvoice(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  tenantSlug: string,
+  original: InvoiceForCredit,
+  creditAmount: string,
+) {
+  const draft = computeCreditReplacementDraft(
+    {
+      lines: original.lines.map((l) => ({ description: l.description, amount: l.amount, lineType: l.lineType as never })),
+      totalAmount: original.totalAmount,
+      periodStart: original.periodStart,
+      periodEnd: original.periodEnd,
+    } satisfies InvoiceSnapshot,
+    creditAmount,
+  );
+  return persistInvoiceCore(tx, tenantId, tenantSlug, { bookingId: original.bookingId, customerId: original.customerId }, draft);
 }
 
 export async function generateInitialInvoice(

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { InvoiceDto, PaymentDto } from "@rentos/contracts";
@@ -103,6 +104,22 @@ export default function InvoiceDetailPage() {
           </tbody>
         </table>
       </div>
+
+      {invoice.status === "CREDITED" && (
+        <div className="rounded-lg bg-amber-50 p-4 text-sm text-amber-800">
+          {invoice.supersededByInvoiceId ? (
+            <>
+              This invoice was corrected.{" "}
+              <Link href={`/portal/invoices/${invoice.supersededByInvoiceId}`} className="underline">
+                View and pay the corrected invoice
+              </Link>
+              .
+            </>
+          ) : (
+            "This invoice was credited in full — there's nothing left to pay."
+          )}
+        </div>
+      )}
 
       {payable && !instructions && (
         <div className="space-y-4 rounded-xl border border-brand-600/10 bg-white p-6">

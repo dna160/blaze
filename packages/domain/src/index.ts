@@ -9,6 +9,11 @@ export {
   type ProrationRule,
   type ProrationResult,
 } from "./pricing/proration.js";
+export {
+  computeCreditReplacementDraft,
+  type InvoiceSnapshot,
+  type InvoiceLineSnapshot,
+} from "./pricing/credit-note.js";
 
 export type {
   BookingModelStrategy,

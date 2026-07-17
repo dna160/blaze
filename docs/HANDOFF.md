@@ -16,7 +16,7 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 |---|---|---|
 | **0 — Foundation** | Tenancy + RLS, auth/RBAC, domain model, asset registry, Xendit/WA sandbox | ✅ Done (auth: staff JWT + customer OTP; RLS verified; provider seams in place, sandbox keys not yet supplied) |
 | **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (Session 3), KYC upload + review (Session 4), and the contract e-sign gate (Session 5). 🚧 Remaining gaps: request-info/customer-reply UI, unit reassignment on approve UI |
-| **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | 🚧 In progress. ✅ Done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow (console UI), credit note issuance (console UI), nightly ledger-balance-check worker job. ⬜ Still missing: unit map, swap requests, e-sign, accounting export, month-end view, partial deposit application against damages |
+| **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | 🚧 In progress. ✅ Done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow (console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job. ⬜ Still missing: unit map, swap requests, e-sign, accounting export, month-end view, partial deposit application against damages |
 | **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | ⬜ Not started. `BookingModelStrategy` seam exists and is proven (typed stubs for NIGHTLY/DURATION_ORDER/HOURLY_SLOT throw `BookingModelNotImplementedError`) — Phase 3 is implementing their real math, not inventing the seam |
 | **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | ⬜ Not started, deliberately deferred per PRD |
 
@@ -141,12 +141,41 @@ page swapped its proof text input for a real file input + a "View proof"
 button (blob preview via `apiFetchBlob`, same pattern as the KYC review
 queue).
 
+**Session 7 (automatic credit-note replacement invoice):** `ADJUST`ing an
+invoice via credit note now actually implements PRD §8.2's "superseded by
+CREDIT_NOTE + new invoice", not just the CREDITED half of it.
+`computeCreditReplacementDraft` (`packages/domain/src/pricing/credit-note.ts`,
+5 new unit tests) is a pure function: given the original invoice's lines
+and total plus the credit amount, it scales every line down by the same
+ratio — preserving each line's `lineType`, since the ledger's revenue
+recognition depends on knowing which lines are DEPOSIT/TAX vs. revenue —
+and reconciles rounding by dropping any remainder on the last line so the
+scaled lines always sum to exactly `totalAmount - creditAmount`, never a
+cent off. `createCreditReplacementInvoice`
+(`packages/database/src/invoicing.ts`) persists that draft through the
+same code path `persistInvoice` already used (refactored into a shared
+`persistInvoiceCore` so both share one Prisma-write + ledger-recording
+implementation instead of two). `FinanceService.createCreditNote` calls it
+only when the credit is **partial** — a full-amount credit note leaves
+`supersededByInvoiceId` null, since there's no remaining balance to bill.
+Verified live: a IDR 100,000 partial credit against a real
+747,193.55 invoice produced a correctly-linked replacement invoice
+totalling 647,193.55 with all four original lines (admin fee, deposit,
+rent, PPN) scaled proportionally and summing exactly to the new total;
+issuing a second, full-amount credit note against *that* replacement left
+`supersededByInvoiceId` null and created no further invoice (confirmed via
+invoice count staying flat); over-amount credit notes still correctly
+400. Ledger balance re-checked clean after both credit notes. Added
+`InvoiceDto.supersededByInvoiceId` to `packages/contracts`, and both the
+console and storefront invoice detail pages now show a banner linking to
+the replacement invoice when one exists (or a "credited in full" note
+when it doesn't).
+
 ### What's explicitly NOT done (don't assume it exists)
 
 - Real e-signature providers (Privy/e-Meterai) — PRD explicitly scopes wet-sign PDF upload as v1-acceptable (§11); that's what's built. `ESignProvider` as its own port/adapter (matching Payment/Messaging/Storage) is Phase 2 if a tenant needs legally-binding e-Meterai stamping.
 - Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
 - Partial deposit application against damages (`Deposit.appliedAmount` / `PARTIALLY_APPLIED` / `APPLIED` states exist in schema, unused — v1 refund workflow only handles the full-amount HELD → REFUND_REQUESTED → REFUNDED path)
-- Automatic replacement invoice after a credit note (PRD: "superseded by CREDIT_NOTE + new invoice") — v1 marks the original invoice CREDITED and stops there; issuing the corrected replacement invoice is a manual follow-up action, not automatic
 - Invoice-payment refunds (as opposed to deposit refunds) — no endpoint; `PaymentProvider.refund()` is only called from the deposit-refund flow today
 - Automated KYC verification (Verihubs or similar) — PRD explicitly scopes this to P2; v1 review is 100% manual, by design.
 - Unit map (visual grid) — list view only (P1 in PRD anyway)
@@ -163,21 +192,23 @@ Refunds/credit-notes/maker-checker/ledger (Session 2) with their console +
 storefront UI (Session 3), the storefront pay-now flow (Session 3), KYC
 upload + review with real object storage (Session 4), the contract
 e-signature gate wired into the `APPROVED → ACTIVE` triple-AND guard
-(Session 5, `apps/api/src/agreements`), and proof-of-payment as a real
-`StorageProvider` upload instead of a text field (Session 6) are all
-done — every major PRD §7.1/§7.2 P0 flow now has both a working API and
+(Session 5, `apps/api/src/agreements`), proof-of-payment as a real
+`StorageProvider` upload instead of a text field (Session 6), and the
+automatic credit-note replacement invoice (Session 7) are all done —
+every major PRD §7.1/§7.2 P0 flow now has both a working API and
 reachable UI, the booking activation guard is no longer stubbed on any of
-its three conditions, and every document-bearing flow (KYC, contracts,
-manual payments) uses the same upload/preview pattern. Next
-highest-leverage chunks, in rough priority order:
+its three conditions, every document-bearing flow (KYC, contracts, manual
+payments) uses the same upload/preview pattern, and invoice corrections
+now match the PRD's documented lifecycle exactly (§8.2) instead of
+stopping halfway. Next highest-leverage chunks, in rough priority order:
 
-1. Automatic replacement invoice after a credit note (see "What's
-   explicitly NOT done").
-2. Work down PRD §13 Phase 2's remaining items: unit map, swap requests,
+1. Work down PRD §13 Phase 2's remaining items: unit map, swap requests,
    accounting export, month-end view.
-3. Real e-signature provider (Privy/e-Meterai) as an `ESignProvider` port
+2. Real e-signature provider (Privy/e-Meterai) as an `ESignProvider` port
    if a tenant needs legally-binding stamping beyond wet-sign PDF (v1
    scope per PRD §11 — see "Architectural decisions log").
+3. Partial deposit application against damages (schema exists, unused —
+   see "What's explicitly NOT done").
 
 Before writing new code:
 1. `docker compose up` (or run each service manually per README "Local development") in an environment with real network access, to confirm the Dockerfiles actually work — this is unverified debt, still outstanding from Session 1.

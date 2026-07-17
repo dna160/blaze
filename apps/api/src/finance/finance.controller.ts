@@ -2,13 +2,14 @@ import { Body, Controller, ForbiddenException, Get, Param, Post, Query, UseGuard
 import { ApiTags } from "@nestjs/swagger";
 import { CreateCreditNoteRequestSchema } from "@rentos/contracts";
 
-import { CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
+import { CurrentTenant, CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
 import { Roles } from "../common/decorators/roles.decorator.js";
 import { RolesGuard } from "../common/guards/roles.guard.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
+import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 
 import { FinanceService } from "./finance.service.js";
 
@@ -50,11 +51,11 @@ export class FinanceController {
   @UseGuards(RolesGuard)
   @Roles("SUPER_ADMIN", "FINANCE_ADMIN")
   createCreditNote(
-    @CurrentTenantId() tenantId: string,
+    @CurrentTenant() tenant: ResolvedTenant,
     @CurrentUser() user: AuthenticatedUser,
     @Param("id") id: string,
     @Body(new ZodValidationPipe(CreateCreditNoteRequestSchema)) body: ReturnType<typeof CreateCreditNoteRequestSchema.parse>,
   ) {
-    return this.finance.createCreditNote(tenantId, user.id, id, body.amount, body.reason);
+    return this.finance.createCreditNote(tenant, user.id, id, body.amount, body.reason);
   }
 }

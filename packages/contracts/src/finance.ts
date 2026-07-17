@@ -33,6 +33,8 @@ export const InvoiceDtoSchema = z.object({
   issueDate: z.string().datetime(),
   dueDate: z.string().datetime(),
   paidAt: z.string().datetime().nullable(),
+  /** Set when a credit note replaced this invoice with a corrected one for the remaining balance (PRD §8.2). */
+  supersededByInvoiceId: z.string().uuid().nullable(),
   lines: z.array(InvoiceLineDtoSchema),
 });
 export type InvoiceDto = z.infer<typeof InvoiceDtoSchema>;

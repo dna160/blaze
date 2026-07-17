@@ -4,6 +4,8 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { InvoiceDto, PaymentDto } from "@rentos/contracts";
 
+import Link from "next/link";
+
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { apiFetch, apiFetchBlob, apiUpload, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
@@ -152,6 +154,21 @@ export default function InvoiceDetailPage() {
       <p className="mt-1 text-brand-700/70">
         Status: {invoice.status} · Due {new Date(invoice.dueDate).toLocaleDateString("id-ID")}
       </p>
+      {invoice.status === "CREDITED" && (
+        <p className="mt-2 text-sm text-amber-700">
+          {invoice.supersededByInvoiceId ? (
+            <>
+              Credited — replaced by{" "}
+              <Link href={`/invoices/${invoice.supersededByInvoiceId}`} className="underline hover:text-amber-900">
+                a corrected invoice
+              </Link>{" "}
+              for the remaining balance.
+            </>
+          ) : (
+            "Credited in full — no remaining balance, no replacement invoice was needed."
+          )}
+        </p>
+      )}
       {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
