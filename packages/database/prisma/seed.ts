@@ -21,7 +21,7 @@ async function main() {
       defaultLocale: "id",
       timezone: "Asia/Jakarta",
       branding: { primaryColor: "#0F172A", accentColor: "#F59E0B" },
-      featureFlags: { deposits_enabled: true, kyc_required: true, auto_approve: false },
+      featureFlags: { deposits_enabled: true, kyc_required: true, auto_approve: false, contract_required: false },
     },
   });
 

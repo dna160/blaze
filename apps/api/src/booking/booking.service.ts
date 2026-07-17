@@ -9,7 +9,9 @@ import { NotificationsService } from "../notifications/notifications.service.js"
 import { PrismaService } from "../prisma/prisma.service.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 
-import { bookingFsmFor, type BookingActivationContext } from "./booking-fsm.util.js";
+import { bookingFsmFor, GuardFailedError, type BookingActivationContext, type BookingStatus } from "./booking-fsm.util.js";
+
+type TxBooking = { id: string; assetId: string | null; priceSnapshot: unknown; startDate: Date };
 
 const DEFAULT_RESERVATION_TTL_HOURS = 48;
 
@@ -154,6 +156,13 @@ export class BookingService {
         priceSnapshot: updated.priceSnapshot,
       });
 
+      // Contract is always generated on approval (PRD §5.3) — whether signing it is a hard
+      // gate before ACTIVATE depends on the tenant's contract_required feature flag, checked
+      // at activation time, not here. Wet-sign PDF upload is v1 scope (PRD §11 ESignProvider).
+      await tx.contract.create({
+        data: { tenantId: tenant.id, bookingId, templateVersion: "v1" },
+      });
+
       await tx.bookingEvent.create({
         data: {
           tenantId: tenant.id,
@@ -240,24 +249,77 @@ export class BookingService {
   }
 
   /**
+   * The APPROVED -> ACTIVE triple-AND guard (PRD §8.1) has two independent
+   * async gates that can complete in either order: payment and contract
+   * signing. `contractRequired` reads the tenant's `contract_required`
+   * feature flag (default off — v1 contract upload has no UI/gate unless a
+   * tenant opts in); when it's on, `contractSigned` reflects whether this
+   * booking's Contract row (created at approve() time) has a `signedAt`.
+   */
+  private async computeActivationContext(
+    tx: Prisma.TransactionClient,
+    tenant: ResolvedTenant,
+    booking: TxBooking,
+  ): Promise<BookingActivationContext> {
+    const featureFlags = (tenant.featureFlags ?? {}) as Record<string, unknown>;
+    const contractRequired = Boolean(featureFlags.contract_required);
+    let contractSigned = true;
+    if (contractRequired) {
+      const contract = await tx.contract.findFirst({ where: { bookingId: booking.id }, orderBy: { createdAt: "desc" } });
+      contractSigned = Boolean(contract?.signedAt);
+    }
+    return { contractRequired, contractSigned, firstInvoicePaid: true, unitAssigned: Boolean(booking.assetId) };
+  }
+
+  /** Shared tail once an APPROVED -> ACTIVE transition is confirmed legal: move-in, deposit, audit trail. */
+  private async finalizeActivation(
+    tx: Prisma.TransactionClient,
+    tenant: ResolvedTenant,
+    booking: TxBooking,
+    to: BookingStatus,
+    depositLine?: { amount: Prisma.Decimal | string },
+  ) {
+    const priceSnapshot = booking.priceSnapshot as { prorationRule?: "ANCHOR_DATE" | "FULL_FIRST_PERIOD" };
+    const anchorDay = priceSnapshot.prorationRule === "FULL_FIRST_PERIOD" ? 1 : booking.startDate.getDate();
+    await tx.booking.update({ where: { id: booking.id }, data: { status: to, anchorDay } });
+
+    if (booking.assetId) {
+      await assetFsm.fire("RESERVED", "MOVE_IN", undefined);
+      await tx.asset.update({ where: { id: booking.assetId }, data: { status: "OCCUPIED" } });
+    }
+
+    if (depositLine) {
+      const existingDeposit = await tx.deposit.findFirst({ where: { bookingId: booking.id } });
+      if (!existingDeposit) {
+        const amount = depositLine.amount.toString();
+        const deposit = await tx.deposit.create({
+          data: { tenantId: tenant.id, bookingId: booking.id, amount, status: "HELD" },
+        });
+        await recordDepositHeldEntries(tx, tenant.id, deposit.id, amount);
+      }
+    }
+
+    await tx.bookingEvent.create({
+      data: { tenantId: tenant.id, bookingId: booking.id, toStatus: to, actorType: "SYSTEM", reason: "Activation gates satisfied" },
+    });
+  }
+
+  /**
    * Fired when an invoice tied to this booking gets paid (payments module
    * calls this after confirming payment — see PaymentsService). Dispatches
    * to the correct FSM event based on current status: first payment
-   * activates the lease (triple-AND guard), a cycle payment un-suspends
-   * or completes a renewal.
+   * activates the lease (triple-AND guard) — UNLESS the tenant requires a
+   * signed contract and it isn't signed yet, in which case this is a
+   * legitimate non-error outcome: the invoice is still marked PAID by the
+   * caller, the booking just stays APPROVED until
+   * tryActivateAfterContractSigned() completes the other gate. A cycle
+   * payment un-suspends or completes a renewal (no contract gate there —
+   * that's only checked on first activation).
    */
   async handleInvoicePaid(tenant: ResolvedTenant, bookingId: string, invoiceHasDeposit: boolean, depositAmount?: string) {
     await this.prisma.runInTenantContext(tenant.id, async (tx) => {
       const booking = await tx.booking.findUnique({ where: { id: bookingId } });
       if (!booking) throw new NotFoundException("Booking not found.");
-
-      const fsm = bookingFsmFor(booking.bookingModel);
-      const ctx: BookingActivationContext = {
-        contractRequired: false, // v1: wet-sign contract upload is not yet enforced as a hard gate — tracked in docs/HANDOFF.md
-        contractSigned: true,
-        firstInvoicePaid: true,
-        unitAssigned: Boolean(booking.assetId),
-      };
 
       let event: "ACTIVATE" | "CYCLE_PAYMENT_RECEIVED" | "PAYMENT_RECEIVED";
       if (booking.status === "APPROVED") event = "ACTIVATE";
@@ -265,43 +327,72 @@ export class BookingService {
       else if (booking.status === "SUSPENDED") event = "PAYMENT_RECEIVED";
       else return; // idempotent no-op for statuses that don't expect a payment transition
 
-      const { to } = await fsm.fire(booking.status as never, event, ctx);
-
-      // The billing anchor day is fixed at activation, matching the same rule
-      // prorateFirstPeriod used to build the first invoice (packages/domain/src/pricing/proration.ts):
-      // FULL_FIRST_PERIOD aligns to the 1st of the month, ANCHOR_DATE keeps the move-in day.
-      const priceSnapshot = booking.priceSnapshot as { prorationRule?: "ANCHOR_DATE" | "FULL_FIRST_PERIOD" };
-      const anchorDay =
+      const fsm = bookingFsmFor(booking.bookingModel);
+      const ctx =
         event === "ACTIVATE"
-          ? priceSnapshot.prorationRule === "FULL_FIRST_PERIOD"
-            ? 1
-            : booking.startDate.getDate()
-          : undefined;
+          ? await this.computeActivationContext(tx, tenant, booking)
+          : ({ contractRequired: false, contractSigned: true, firstInvoicePaid: true, unitAssigned: true } as BookingActivationContext);
 
-      await tx.booking.update({ where: { id: bookingId }, data: { status: to, anchorDay } });
-
-      if (event === "ACTIVATE" && booking.assetId) {
-        await assetFsm.fire("RESERVED", "MOVE_IN", undefined);
-        await tx.asset.update({ where: { id: booking.assetId }, data: { status: "OCCUPIED" } });
-
-        if (invoiceHasDeposit && depositAmount) {
-          const deposit = await tx.deposit.create({
-            data: { tenantId: tenant.id, bookingId, amount: depositAmount, status: "HELD" },
-          });
-          await recordDepositHeldEntries(tx, tenant.id, deposit.id, depositAmount);
+      let to: BookingStatus;
+      try {
+        ({ to } = await fsm.fire(booking.status as never, event, ctx));
+      } catch (err) {
+        if (err instanceof GuardFailedError && event === "ACTIVATE") {
+          return; // contract not signed yet — payment is still recorded by the caller; activation resumes once it is
         }
+        throw err;
       }
 
+      if (event === "ACTIVATE") {
+        await this.finalizeActivation(
+          tx,
+          tenant,
+          booking,
+          to,
+          invoiceHasDeposit && depositAmount ? { amount: depositAmount } : undefined,
+        );
+        return;
+      }
+
+      await tx.booking.update({ where: { id: bookingId }, data: { status: to } });
       await tx.bookingEvent.create({
-        data: {
-          tenantId: tenant.id,
-          bookingId,
-          fromStatus: booking.status,
-          toStatus: to,
-          actorType: "WEBHOOK",
-          reason: "Payment confirmed",
-        },
+        data: { tenantId: tenant.id, bookingId, fromStatus: booking.status, toStatus: to, actorType: "WEBHOOK", reason: "Payment confirmed" },
       });
+    });
+  }
+
+  /**
+   * Called after a contract is signed (see ContractsService.sign) — the
+   * mirror image of handleInvoicePaid's guard: if payment already landed
+   * first, this is what actually fires ACTIVATE. A no-op if the booking
+   * isn't APPROVED or the invoice still isn't paid — signing alone never
+   * activates a lease on its own.
+   */
+  async tryActivateAfterContractSigned(tenant: ResolvedTenant, bookingId: string) {
+    await this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const booking = await tx.booking.findUnique({ where: { id: bookingId } });
+      if (!booking || booking.status !== "APPROVED") return;
+
+      const paidInvoice = await tx.invoice.findFirst({
+        where: { bookingId, status: "PAID" },
+        include: { lines: true },
+        orderBy: { createdAt: "asc" },
+      });
+      if (!paidInvoice) return; // still waiting on payment
+
+      const fsm = bookingFsmFor(booking.bookingModel);
+      const ctx = await this.computeActivationContext(tx, tenant, booking);
+
+      let to: BookingStatus;
+      try {
+        ({ to } = await fsm.fire("APPROVED", "ACTIVATE", ctx));
+      } catch (err) {
+        if (err instanceof GuardFailedError) return; // still not eligible for some other reason
+        throw err;
+      }
+
+      const depositLine = paidInvoice.lines.find((l) => l.lineType === "DEPOSIT");
+      await this.finalizeActivation(tx, tenant, booking, to, depositLine ? { amount: depositLine.amount } : undefined);
     });
   }
 

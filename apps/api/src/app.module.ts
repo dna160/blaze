@@ -1,6 +1,7 @@
 import { MiddlewareConsumer, Module, type NestModule } from "@nestjs/common";
 import { APP_FILTER } from "@nestjs/core";
 
+import { AgreementsModule } from "./agreements/agreements.module.js";
 import { AuditModule } from "./audit/audit.module.js";
 import { AuthModule } from "./auth/auth.module.js";
 import { BookingModule } from "./booking/booking.module.js";
@@ -29,6 +30,7 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     CatalogModule,
     CrmModule,
     BookingModule,
+    AgreementsModule,
     FinanceModule,
     PaymentsModule,
     DepositsModule,

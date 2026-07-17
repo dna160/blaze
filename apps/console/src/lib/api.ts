@@ -58,3 +58,17 @@ export async function apiFetchBlob(path: string, token: string | null): Promise<
   if (!res.ok) throw new ApiError(res.statusText, res.status);
   return res.blob();
 }
+
+/** File uploads (signed contract on the customer's behalf) — no Content-Type set so the browser adds the multipart boundary. */
+export async function apiUpload<T>(path: string, token: string | null, formData: FormData): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "X-Tenant-Slug": TENANT_SLUG, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: formData,
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({ message: res.statusText }));
+    throw new ApiError(payload.message ?? "Upload failed", res.status);
+  }
+  return res.json() as Promise<T>;
+}

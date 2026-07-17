@@ -4,3 +4,4 @@ export * from "./catalog.js";
 export * from "./booking.js";
 export * from "./finance.js";
 export * from "./customer.js";
+export * from "./contract.js";

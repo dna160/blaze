@@ -15,7 +15,7 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 | Phase | Scope | Status |
 |---|---|---|
 | **0 — Foundation** | Tenancy + RLS, auth/RBAC, domain model, asset registry, Xendit/WA sandbox | ✅ Done (auth: staff JWT + customer OTP; RLS verified; provider seams in place, sandbox keys not yet supplied) |
-| **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (Session 3) and KYC upload + review (Session 4). 🚧 Gaps: contract e-sign gate, request-info/customer-reply UI, unit reassignment on approve UI |
+| **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (Session 3), KYC upload + review (Session 4), and the contract e-sign gate (Session 5). 🚧 Remaining gaps: request-info/customer-reply UI, unit reassignment on approve UI |
 | **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | 🚧 In progress. ✅ Done: double-entry ledger (accrual basis, verified balanced live), manual payment recording + maker-checker verification (now with console UI), deposit refund request/approve workflow (now with console UI), credit note issuance (now with console UI), nightly ledger-balance-check worker job. ⬜ Still missing: unit map, swap requests, e-sign, accounting export, month-end view, partial deposit application against damages |
 | **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | ⬜ Not started. `BookingModelStrategy` seam exists and is proven (typed stubs for NIGHTLY/DURATION_ORDER/HOURLY_SLOT throw `BookingModelNotImplementedError`) — Phase 3 is implementing their real math, not inventing the seam |
 | **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | ⬜ Not started, deliberately deferred per PRD |
@@ -84,6 +84,39 @@ only once *every* submitted document is approved. Added
 blob-fetch-then-object-URL since a plain `<a href>` new-tab open can't
 carry the Bearer token a protected file endpoint requires).
 
+**Session 5 (contract e-sign gate):** Turned on the last hardcoded `false`
+in the `APPROVED → ACTIVE` triple-AND guard. A `Contract` row is now
+created automatically on booking approval; whether signing it is a hard
+gate is a per-tenant `contract_required` feature flag (off by default —
+`packages/database/prisma/seed.ts`). This required a real refactor, not
+just flipping a flag: payment and contract signing are two independent
+async gates that can complete in either order, and `handleInvoicePaid`
+previously assumed contract was always satisfied. It now computes the
+guard context for real and, when the guard fails because the contract
+isn't signed, catches that specifically and leaves the booking `APPROVED`
+— the invoice is still marked `PAID` by the caller, nothing throws, no
+existing behavior broke. A new `tryActivateAfterContractSigned` mirrors
+it from the other direction, called after a signature upload. **Verified
+live, all three scenarios**, using a temporarily-enabled
+`contract_required` flag on the seed tenant: (1) baseline — flag off,
+booking activates on payment exactly as before, confirming the refactor
+didn't regress the previously-verified path; (2) pay first, contract
+unsigned — invoice correctly reached `PAID` while the booking stayed
+`APPROVED` (no exception); signing the contract afterward correctly
+activated it, moved the asset to `OCCUPIED`, and — notably — created the
+deposit at that point rather than at payment time, since deposit
+creation lives in the shared `finalizeActivation` tail; (3) sign first,
+pay second — booking stayed `APPROVED` after signing alone, then
+activated on payment. Ledger stayed balanced across all three bookings
+created during this test. Built `apps/api/src/agreements/` (named to
+avoid confusion with the unrelated `packages/contracts` DTO package),
+reusing the KYC session's `StorageProvider`/multer upload pattern
+directly. Either the customer (self-serve) or ops/finance staff
+(recording a paper contract collected in person) can upload — added
+`apps/storefront/portal/bookings/[id]`'s contract section and a new
+`apps/console/bookings/[id]` staff detail page (console had none before
+this).
+
 33 unit tests in `packages/domain` cover the state machines and
 proration/tax math. All 4 apps + 3 packages typecheck, build, and pass
 `turbo run typecheck test build` clean (verified with `--force` after the
@@ -91,7 +124,7 @@ turbo.json fix, to rule out stale-cache false positives).
 
 ### What's explicitly NOT done (don't assume it exists)
 
-- Contract e-signature / wet-sign PDF upload (schema exists; `contractRequired` is hardcoded `false` in `BookingService.handleInvoicePaid` — see "Known shortcuts" below). Could now reuse the KYC upload's `StorageProvider`/multer pattern almost directly — that's the templated path if you pick this up next.
+- Real e-signature providers (Privy/e-Meterai) — PRD explicitly scopes wet-sign PDF upload as v1-acceptable (§11); that's what's built. `ESignProvider` as its own port/adapter (matching Payment/Messaging/Storage) is Phase 2 if a tenant needs legally-binding e-Meterai stamping.
 - Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
 - Partial deposit application against damages (`Deposit.appliedAmount` / `PARTIALLY_APPLIED` / `APPLIED` states exist in schema, unused — v1 refund workflow only handles the full-amount HELD → REFUND_REQUESTED → REFUNDED path)
 - Automatic replacement invoice after a credit note (PRD: "superseded by CREDIT_NOTE + new invoice") — v1 marks the original invoice CREDITED and stops there; issuing the corrected replacement invoice is a manual follow-up action, not automatic
@@ -109,22 +142,23 @@ turbo.json fix, to rule out stale-cache false positives).
 ## Resume here
 
 Refunds/credit-notes/maker-checker/ledger (Session 2) with their console +
-storefront UI (Session 3), the storefront pay-now flow (Session 3), and
-KYC upload + review with real object storage (Session 4) are all done —
-every major PRD §7.1/§7.2 P0 flow now has both a working API and reachable
-UI. Next highest-leverage chunks, in rough priority order:
+storefront UI (Session 3), the storefront pay-now flow (Session 3), KYC
+upload + review with real object storage (Session 4), and the contract
+e-signature gate wired into the `APPROVED → ACTIVE` triple-AND guard
+(Session 5, `apps/api/src/agreements`) are all done — every major PRD
+§7.1/§7.2 P0 flow now has both a working API and reachable UI, and the
+booking activation guard is no longer stubbed on any of its three
+conditions. Next highest-leverage chunks, in rough priority order:
 
-1. **Contract e-signature (wet-sign PDF upload)** — the last piece of the
-   `APPROVED → ACTIVE` triple-AND guard that's still hardcoded off
-   (`contractRequired: false`). The KYC module built this session is a
-   near-direct template: same `StorageProvider`, same multer upload
-   pattern, same "staff reviews and confirms" shape.
-2. Wire proof-of-payment uploads (manual payment recording) through the
+1. Wire proof-of-payment uploads (manual payment recording) through the
    same `StorageProvider` instead of a raw text URL field.
-3. Automatic replacement invoice after a credit note (see "What's
+2. Automatic replacement invoice after a credit note (see "What's
    explicitly NOT done").
-4. Work down PRD §13 Phase 2's remaining items: unit map, swap requests,
+3. Work down PRD §13 Phase 2's remaining items: unit map, swap requests,
    accounting export, month-end view.
+4. Real e-signature provider (Privy/e-Meterai) as an `ESignProvider` port
+   if a tenant needs legally-binding stamping beyond wet-sign PDF (v1
+   scope per PRD §11 — see "Architectural decisions log").
 
 Before writing new code:
 1. `docker compose up` (or run each service manually per README "Local development") in an environment with real network access, to confirm the Dockerfiles actually work — this is unverified debt, still outstanding from Session 1.
@@ -149,7 +183,7 @@ Before writing new code:
 
 ## Known shortcuts (intentional, not bugs)
 
-- `BookingService.handleInvoicePaid` hardcodes `contractRequired: false` — the triple-AND `APPROVED → ACTIVE` guard in `packages/domain` genuinely checks all three conditions, but contract e-sign enforcement has no real gate feeding it yet (no e-sign UI/upload exists). When contract upload ships, wire `contractRequired`/`contractSigned` from real `Contract` rows instead.
+- Contract sign-off and invoice payment are two independent async gates that can complete in either order (`BookingService.computeActivationContext`/`finalizeActivation`, `apps/api/src/booking/booking.service.ts`). `handleInvoicePaid` catches `GuardFailedError` and returns quietly when payment lands before the contract is signed (booking stays `APPROVED`); `AgreementsService.sign()` calls `tryActivateAfterContractSigned` after a signature lands, which is a no-op if the invoice isn't paid yet. Whichever gate closes second is the one that actually fires the `ACTIVATE` transition. Verified live for all three cases: `contract_required` flag off, pay-then-sign, and sign-then-pay.
 - `nextInvoiceNumber` (`packages/database/src/invoice-number.ts`) derives the sequence from a per-tenant monthly `COUNT(*)` inside the same transaction as invoice creation. Correct at demo scale; races under concurrent invoice creation for the same tenant. A dedicated Postgres sequence per tenant is the real fix (Phase 2).
 - The dunning ladder (`apps/worker/src/jobs/dunning-ladder.job.ts`) hardcodes H-7/H-3/H-0/D+1/D+3/D+7/D+14 uniformly across tenants. `AutomationSetting` rows exist in schema for per-tenant override but the worker doesn't read them yet.
 - Payment idempotency keys are generated server-side per `initiate()` call, not accepted from the client. True request-level idempotency (retry-safe from the storefront) is a TODO; webhook-level idempotency (the important one, preventing double-processing a gateway retry) IS implemented via the `WebhookEvent` unique `(provider, externalId)` constraint.

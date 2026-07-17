@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { BookingDto } from "@rentos/contracts";
 
@@ -87,7 +88,9 @@ export default function BookingsPage() {
             <div key={b.id} className="rounded-lg border border-brand-600/10 bg-white p-5">
               <div className="flex items-start justify-between">
                 <div>
-                  <p className="font-medium">{b.customer.fullName ?? b.customer.phone}</p>
+                  <Link href={`/bookings/${b.id}`} className="font-medium hover:underline">
+                    {b.customer.fullName ?? b.customer.phone}
+                  </Link>
                   <p className="text-sm text-brand-700/60">{b.customer.phone}</p>
                   <p className="mt-2 text-sm">
                     {b.assetType.name} {b.asset ? `— unit ${b.asset.code}` : ""}
