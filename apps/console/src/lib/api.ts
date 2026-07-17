@@ -59,6 +59,17 @@ export async function apiFetchBlob(path: string, token: string | null): Promise<
   return res.blob();
 }
 
+/** CSV/report exports — fetch the blob (to carry the Bearer token) then trigger a save-as download with a real filename. */
+export async function apiDownload(path: string, token: string | null, filename: string): Promise<void> {
+  const blob = await apiFetchBlob(path, token);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 /** File uploads (signed contract on the customer's behalf) — no Content-Type set so the browser adds the multipart boundary. */
 export async function apiUpload<T>(path: string, token: string | null, formData: FormData): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
