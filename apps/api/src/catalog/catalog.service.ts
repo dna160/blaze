@@ -43,4 +43,36 @@ export class CatalogService {
   listLocations(tenantId: string) {
     return this.prisma.runInTenantContext(tenantId, (tx) => tx.location.findMany({ orderBy: { name: "asc" } }));
   }
+
+  /**
+   * Staff-only — includes occupant PII (customer name/phone), unlike
+   * `listAssets` above which backs the unauthenticated storefront catalog.
+   * Combines PRD §7.2.2's "visual unit map (grid/floor layout)" (P1) with
+   * "occupancy view: who's in which unit, since when, paid-through date"
+   * (P0) into one query: for each OCCUPIED asset, its current ACTIVE/
+   * RENEWING/SUSPENDED booking (there's at most one, per the booking FSM)
+   * gives move-in date, and that booking's most recently PAID invoice's
+   * `periodEnd` gives paid-through date.
+   */
+  unitMap(tenantId: string, filters: { locationId?: string }) {
+    return this.prisma.runInTenantContext(tenantId, (tx) =>
+      tx.asset.findMany({
+        where: { locationId: filters.locationId },
+        include: {
+          assetType: { select: { name: true } },
+          location: { select: { id: true, name: true } },
+          bookings: {
+            where: { status: { in: ["ACTIVE", "RENEWING", "SUSPENDED"] } },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            include: {
+              customer: { select: { fullName: true, phone: true } },
+              invoices: { where: { status: "PAID" }, orderBy: { periodEnd: "desc" }, take: 1, select: { periodEnd: true } },
+            },
+          },
+        },
+        orderBy: [{ locationId: "asc" }, { code: "asc" }],
+      }),
+    );
+  }
 }

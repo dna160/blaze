@@ -16,7 +16,7 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 |---|---|---|
 | **0 — Foundation** | Tenancy + RLS, auth/RBAC, domain model, asset registry, Xendit/WA sandbox | ✅ Done (auth: staff JWT + customer OTP; RLS verified; provider seams in place, sandbox keys not yet supplied) |
 | **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (Session 3), KYC upload + review (Session 4), and the contract e-sign gate (Session 5). 🚧 Remaining gaps: request-info/customer-reply UI, unit reassignment on approve UI |
-| **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | 🚧 In progress. ✅ Done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow (console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only). ⬜ Still missing: unit map, swap requests, e-sign, partial deposit application against damages |
+| **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | 🚧 In progress. ✅ Done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow (console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only), visual unit map + occupancy view (Session 9, console UI, staff-only). ⬜ Still missing: swap requests, e-sign, partial deposit application against damages |
 | **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | ⬜ Not started. `BookingModelStrategy` seam exists and is proven (typed stubs for NIGHTLY/DURATION_ORDER/HOURLY_SLOT throw `BookingModelNotImplementedError`) — Phase 3 is implementing their real math, not inventing the seam |
 | **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | ⬜ Not started, deliberately deferred per PRD |
 
@@ -215,6 +215,43 @@ three "Export ... .csv" buttons (visible only to
 blob — to carry the Bearer token, same reasoning as `apiFetchBlob` — and
 triggers a real save-as via a temporary anchor's `download` attribute.
 
+**Session 9 (visual unit map + occupancy view):** PRD §7.2.2's "visual
+unit map (grid/floor layout) with status colors" (P1) and "occupancy
+view: who's in which unit, since when, paid-through date" (P0), combined
+into one staff-only view instead of two. Deliberately did **not** add a
+new `GET /catalog/assets` response shape for this — that endpoint is
+unauthenticated by design (the public storefront catalog, PRD §7.1.1
+"prices visible without login"), and the occupancy view needs customer
+name/phone, which is PII that must never ride an unauthenticated route.
+Added a separate `GET /catalog/assets/unit-map`
+(`apps/api/src/catalog/catalog.controller.ts`) gated with
+`JwtAuthGuard`+`RolesGuard` (`SUPER_ADMIN`/`OPS_ADMIN`/`FINANCE_ADMIN`/`VIEWER`)
+at the method level, on the *same controller* as the public list — the
+existing `listAssets` endpoint and its response shape are untouched.
+`CatalogService.unitMap` joins each asset to its current ACTIVE/RENEWING/
+SUSPENDED booking (at most one, per the booking FSM) and that booking's
+most recently `PAID` invoice, giving occupant name, move-in date, and
+paid-through date in one query — no new schema needed. The grid itself
+groups by location, then by each unit code's leading letters ("A-01" →
+row "A") — a pragmatic reading of "grid/floor layout" that needs zero new
+x/y-coordinate fields, since v1's seeded codes (and presumably real
+storage facilities) already encode row/section in the code prefix.
+Console's `/assets` page now has a Unit map / List toggle over the same
+staff-only data; clicking a tile opens a detail panel with occupant,
+move-in date, and paid-through date for occupied units.
+
+Verified live: the public `/catalog/assets` endpoint still returns zero
+PII with no `Authorization` header (confirmed by inspecting the raw
+response); `/catalog/assets/unit-map` correctly 401s with no token;
+logged-in `OPS_ADMIN` sees occupant/paid-through data for occupied
+units and `null` for non-occupied ones; `locationId` filtering works.
+One incidental finding, not a bug in this session's code: asset `A-01`
+is `OCCUPIED` in the seed/test data but has no active booking — leftover
+drift from earlier sessions' live-testing that the new view correctly
+surfaces as "No active tenant" rather than crashing or fabricating data;
+worth a manual `asset.status` correction if it's ever noticed live,
+not a code fix.
+
 ### What's explicitly NOT done (don't assume it exists)
 
 - Real e-signature providers (Privy/e-Meterai) — PRD explicitly scopes wet-sign PDF upload as v1-acceptable (§11); that's what's built. `ESignProvider` as its own port/adapter (matching Payment/Messaging/Storage) is Phase 2 if a tenant needs legally-binding e-Meterai stamping.
@@ -238,31 +275,33 @@ upload + review with real object storage (Session 4), the contract
 e-signature gate wired into the `APPROVED → ACTIVE` triple-AND guard
 (Session 5, `apps/api/src/agreements`), proof-of-payment as a real
 `StorageProvider` upload instead of a text field (Session 6), the
-automatic credit-note replacement invoice (Session 7), and month-end
-close + CSV accounting export (Session 8) are all done — every major PRD
-§7.1/§7.2 P0 flow now has both a working API and reachable UI, the
-booking activation guard is no longer stubbed on any of its three
-conditions, every document-bearing flow (KYC, contracts, manual payments)
-uses the same upload/preview pattern, invoice corrections match the PRD's
-documented lifecycle exactly (§8.2), and Phase 2's own success criterion
-("finance closes a month in < 1 day") has a real view + export to close
-against. Only three items remain on PRD §13 Phase 2's list. Next
-highest-leverage chunks, in rough priority order:
+automatic credit-note replacement invoice (Session 7), month-end close +
+CSV accounting export (Session 8), and the visual unit map + occupancy
+view (Session 9) are all done — every major PRD §7.1/§7.2 P0 flow now has
+both a working API and reachable UI, the booking activation guard is no
+longer stubbed on any of its three conditions, every document-bearing
+flow (KYC, contracts, manual payments) uses the same upload/preview
+pattern, invoice corrections match the PRD's documented lifecycle exactly
+(§8.2), and Phase 2's own success criterion ("finance closes a month in
+< 1 day") has a real view + export to close against. Only two items
+remain on PRD §13 Phase 2's list — swap requests and e-sign — plus
+partial deposit application, which was never on that list but is a
+related gap. Next highest-leverage chunks, in rough priority order:
 
-1. Unit map (visual grid) — the asset registry is list-view-only today;
-   this is a pure-UI addition over the existing `/catalog/assets` data,
-   no new API needed beyond maybe a location/floor grouping field.
-2. Swap/upgrade requests — schema exists (PRD §7.1.4 "request
+1. Swap/upgrade requests — schema exists (PRD §7.1.4 "request
    upgrade/downsize... creates a swap request routed to admin"), zero
    application logic. Needs a new `SwapRequest`-shaped flow: customer
    requests → admin approves → prorated invoice adjustment → asset
    reassignment, most naturally built as a sibling to the booking
    approval workbench rather than bolted onto `BookingService`.
-3. Real e-signature provider (Privy/e-Meterai) as an `ESignProvider` port
+2. Real e-signature provider (Privy/e-Meterai) as an `ESignProvider` port
    if a tenant needs legally-binding stamping beyond wet-sign PDF (v1
    scope per PRD §11 — see "Architectural decisions log").
-4. Partial deposit application against damages (schema exists, unused —
+3. Partial deposit application against damages (schema exists, unused —
    see "What's explicitly NOT done").
+4. Once the above land, Phase 2 is functionally complete — next up is
+   Phase 3 (NIGHTLY/DURATION_ORDER real logic, pooled inventory, seasonal
+   pricing, a second tenant in a different vertical) per PRD §13.
 
 Before writing new code:
 1. `docker compose up` (or run each service manually per README "Local development") in an environment with real network access, to confirm the Dockerfiles actually work — this is unverified debt, still outstanding from Session 1.

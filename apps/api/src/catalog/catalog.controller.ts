@@ -1,7 +1,10 @@
-import { Controller, Get, Param, Query } from "@nestjs/common";
+import { Controller, Get, Param, Query, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 
 import { CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
+import { Roles } from "../common/decorators/roles.decorator.js";
+import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
+import { RolesGuard } from "../common/guards/roles.guard.js";
 
 import { CatalogService } from "./catalog.service.js";
 
@@ -40,5 +43,13 @@ export class CatalogController {
     @Query("status") status?: string,
   ) {
     return this.catalog.listAssets(tenantId, { locationId, assetTypeId, status });
+  }
+
+  /** Staff-only — includes occupant PII, unlike the public asset list above. See CatalogService.unitMap. */
+  @Get("assets/unit-map")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN", "VIEWER")
+  unitMap(@CurrentTenantId() tenantId: string, @Query("locationId") locationId?: string) {
+    return this.catalog.unitMap(tenantId, { locationId });
   }
 }
