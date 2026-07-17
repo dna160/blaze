@@ -16,27 +16,45 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 |---|---|---|
 | **0 — Foundation** | Tenancy + RLS, auth/RBAC, domain model, asset registry, Xendit/WA sandbox | ✅ Done (auth: staff JWT + customer OTP; RLS verified; provider seams in place, sandbox keys not yet supplied) |
 | **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below). 🚧 Gaps: KYC upload UI, contract e-sign gate, request-info/customer-reply UI, unit reassignment on approve UI |
-| **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | ⬜ Not started. Schema exists (`deposits`, `credit_notes`, maker/checker columns on `payments`) but no workflow endpoints beyond deposit-creation-on-activation |
+| **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | 🚧 In progress. ✅ Done: double-entry ledger (accrual basis, verified balanced live), manual payment recording + maker-checker verification, deposit refund request/approve workflow, credit note issuance, nightly ledger-balance-check worker job. ⬜ Still missing: unit map, swap requests, e-sign, accounting export, month-end view, partial deposit application against damages |
 | **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | ⬜ Not started. `BookingModelStrategy` seam exists and is proven (typed stubs for NIGHTLY/DURATION_ORDER/HOURLY_SLOT throw `BookingModelNotImplementedError`) — Phase 3 is implementing their real math, not inventing the seam |
 | **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | ⬜ Not started, deliberately deferred per PRD |
 
-### What's proven end-to-end (this session, verified live against local Postgres/Redis)
+### What's proven end-to-end (verified live against local Postgres/Redis)
 
-Catalog browse → booking submit (soft-reserve TTL) → console approval →
-invoice generation (proration + PPN 11% + deposit line, correct to the
-rupiah) → OTP login → mock payment → booking ACTIVE → asset OCCUPIED →
-deposit HELD → occupancy report → give-notice → final settlement invoice.
-Both `apps/worker` jobs (recurring invoice generator, dunning ladder) ran
-clean against real RLS-scoped data. 33 unit tests in `packages/domain`
-cover the state machines and proration/tax math. All 4 apps + 3 packages
-typecheck and build clean.
+**Session 1:** Catalog browse → booking submit (soft-reserve TTL) → console
+approval → invoice generation (proration + PPN 11% + deposit line, correct
+to the rupiah) → OTP login → mock payment → booking ACTIVE → asset
+OCCUPIED → deposit HELD → occupancy report → give-notice → final
+settlement invoice. Both `apps/worker` jobs (recurring invoice generator,
+dunning ladder) ran clean against real RLS-scoped data.
+
+**Session 2 (finance depth):** Manual payment recorded by one staff user
+(`OPS_ADMIN`) → same user blocked from verifying their own recording (403,
+maker-checker) → different staff user (`FINANCE_ADMIN`) verifies →
+booking activates. Deposit refund requested by ops → approval blocked for
+`OPS_ADMIN` (403) → approved by `FINANCE_ADMIN` → mock payout ref
+generated. Credit note issued against an unpaid invoice → invoice
+transitions to `CREDITED`. **Ledger balance verified after every single
+step**: `SELECT entry_type, sum(amount) FROM ledger_entries GROUP BY
+entry_type` returned identical DEBIT/CREDIT totals (4,202,725.81 =
+4,202,725.81) after invoice-issue, payment, deposit-hold, deposit-refund,
+and credit-note entries all landed. The `ledger-balance-check` worker job
+independently confirmed `balanced: true` reading the same data.
+
+33 unit tests in `packages/domain` cover the state machines and
+proration/tax math. All 4 apps + 3 packages typecheck, build, and pass
+`turbo run typecheck test build` clean.
 
 ### What's explicitly NOT done (don't assume it exists)
 
 - KYC document upload flow (schema + `SubmitKycDocumentRequestSchema` exist; no storefront UI, no S3-compatible storage wired up — `KycDocument.storageKey` has nowhere real to point yet)
 - Contract e-signature / wet-sign PDF upload (schema exists; `contractRequired` is hardcoded `false` in `BookingService.handleInvoicePaid` — see "Known shortcuts" below)
 - Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
-- Refunds, credit notes, maker-checker verification step, deposit payout/refund workflow: DB schema only, no endpoints
+- Partial deposit application against damages (`Deposit.appliedAmount` / `PARTIALLY_APPLIED` / `APPLIED` states exist in schema, unused — v1 refund workflow only handles the full-amount HELD → REFUND_REQUESTED → REFUNDED path)
+- Automatic replacement invoice after a credit note (PRD: "superseded by CREDIT_NOTE + new invoice") — v1 marks the original invoice CREDITED and stops there; issuing the corrected replacement invoice is a manual follow-up action, not automatic
+- Invoice-payment refunds (as opposed to deposit refunds) — no endpoint; `PaymentProvider.refund()` is only called from the deposit-refund flow today
+- No console/storefront UI yet for any of the new finance endpoints (manual payment recording/verification, deposit refund, credit notes) — verified via direct API calls only, same as Session 1's approach
 - Unit map (visual grid) — list view only (P1 in PRD anyway)
 - Swap/upgrade requests, promo codes, duration discounts — schema exists, zero application logic
 - Platform admin console (multi-tenant switcher, tenant provisioning wizard) — out of scope until Phase 4; today, provisioning a tenant means writing rows directly (see `packages/database/prisma/seed.ts` as the template)
@@ -47,13 +65,23 @@ typecheck and build clean.
 
 ## Resume here
 
-Pick the next item from "What's explicitly NOT done" based on what the user
-asks for, or work down PRD §13 Phase 2 in order: refund/credit-note
-endpoints are the highest-leverage next chunk (deposit-related tables and
-the `PaymentsService`/`FinanceService` seams already exist to build on).
+Refunds/credit-notes/maker-checker/ledger are now done (Session 2). Next
+highest-leverage chunks, in rough priority order:
+
+1. **Console/storefront UI for the new finance endpoints** — `POST
+   /payments/manual`, `POST /payments/:id/verify`, `POST
+   /deposits/:id/request-refund`, `POST /deposits/:id/approve-refund`,
+   `POST /invoices/:id/credit-notes` all exist and are verified working,
+   but nobody can reach them except via direct API calls. This is
+   probably the single highest-leverage next task — the backend
+   capability outpacing the UI is now the gap, not the reverse.
+2. Automatic replacement invoice after a credit note (see "What's
+   explicitly NOT done").
+3. Work down PRD §13 Phase 2's remaining items: unit map, swap requests,
+   e-sign, accounting export, month-end view.
 
 Before writing new code:
-1. `docker compose up` (or run each service manually per README "Local development") in an environment with real network access, to confirm the Dockerfiles actually work — this is unverified debt from this session.
+1. `docker compose up` (or run each service manually per README "Local development") in an environment with real network access, to confirm the Dockerfiles actually work — this is unverified debt, still outstanding from Session 1.
 2. Re-read "Known shortcuts" below so you don't accidentally treat a deliberate simplification as a bug to "fix" without understanding why it's there.
 
 ---
@@ -67,6 +95,8 @@ Before writing new code:
 - **`@rentos/database` depends on `@rentos/domain`** (not the reverse), and owns the shared invoice-generation orchestration (`packages/database/src/invoicing.ts`) — not `apps/api`. This is specifically so `apps/worker`'s recurring-invoice and dunning jobs call the *exact* code path `apps/api` uses on booking approval, instead of a second hand-rolled copy that could drift.
 - **`apps/worker` is a plain Node/BullMQ process, not a second NestJS app.** It re-implements a small `notify()` helper (`apps/worker/src/notify.ts`) mirroring `apps/api`'s `NotificationsService` rather than sharing NestJS DI across two deployables — the worker has no HTTP surface and pulling in Nest would buy nothing.
 - **Console v1 is one Next.js deployment per tenant** (`NEXT_PUBLIC_TENANT_SLUG` baked in at build time), not the PRD's eventual "single console URL with tenant switcher for platform admins" (§6) — that's explicitly Phase 4 platform-admin scope, premature for tenant #1.
+- **The ledger is accrual-basis, not cash-basis** (`packages/database/src/ledger.ts`): AR is debited and Revenue/TaxPayable credited at invoice *issue*, not at payment. This is why the schema's `ACCOUNTS_RECEIVABLE` account exists at all — a cash-basis ledger would never need it. Deposits never touch Revenue or AR at any point (they're a liability from the moment cash lands, per PRD §7.2.4). `recordInvoiceIssuedEntries` lives in `packages/database/src/invoicing.ts`'s `persistInvoice`, so both `apps/api` (console-approved invoices) and `apps/worker` (recurring-cycle invoices) get identical ledger treatment automatically — one code path, not two.
+- **Ledger writes are paired helper functions, not a generic "post a journal entry" API.** Every call site (`recordInvoiceIssuedEntries`, `recordPaymentReceivedEntries`, `recordDepositHeldEntries`, `recordDepositRefundedEntries`, `recordCreditNoteEntries`) writes both sides of its entry in one function — there is no way to call code that debits without also crediting. This is why the ledger balance-checked cleanly on the first try in live verification; a generic single-entry API would have made an unbalanced write a routine typo away.
 
 ## Known shortcuts (intentional, not bugs)
 
@@ -75,6 +105,8 @@ Before writing new code:
 - The dunning ladder (`apps/worker/src/jobs/dunning-ladder.job.ts`) hardcodes H-7/H-3/H-0/D+1/D+3/D+7/D+14 uniformly across tenants. `AutomationSetting` rows exist in schema for per-tenant override but the worker doesn't read them yet.
 - Payment idempotency keys are generated server-side per `initiate()` call, not accepted from the client. True request-level idempotency (retry-safe from the storefront) is a TODO; webhook-level idempotency (the important one, preventing double-processing a gateway retry) IS implemented via the `WebhookEvent` unique `(provider, externalId)` constraint.
 - Runtime Docker images copy the *full* installed `node_modules` (including devDependencies) from the build stage rather than doing a second prod-only `pnpm install`. Simpler and more robust for a pnpm workspace with symlinked local packages; costs image size. Revisit once there's a real build environment to validate a leaner runtime install against.
+- Credit notes treat the entire credited amount as a Revenue reversal against AR (`recordCreditNoteEntries`), not split proportionally across Revenue/TaxPayable. Correct for crediting a whole remaining balance; approximate for a partial credit on a taxed invoice (the TaxPayable account will be very slightly overstated in that specific case). Exact proportional splitting is a small, contained fix if it ever matters — `FinanceService.createCreditNote` is the one call site.
+- Deposit refunds always call `PaymentProvider.refund()` against the *original* payment's `providerRef` (best-effort lookup by booking + DEPOSIT line), never a manual-disbursement-only path. `MockPaymentProvider.refund()` doesn't validate the ref at all, so this was never exercised against a picky real gateway — when wiring real Xendit payouts, double check Xendit's refund API actually accepts a ref from an *invoice* payment for what's conceptually a *deposit* payout (PRD says deposit refunds go out via "Xendit payout," which is a different Xendit product/endpoint than a payment refund — this may need its own adapter method, not reuse of `refund()`).
 
 ## Open PRD questions still unanswered (§15)
 

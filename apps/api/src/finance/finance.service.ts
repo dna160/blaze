@@ -1,12 +1,14 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import {
   generateFinalSettlement,
   generateInitialInvoice,
   generateNextCycleInvoice,
   markInvoicePaid,
+  recordCreditNoteEntries,
   type BookingForInvoicing,
   type Prisma,
 } from "@rentos/database";
+import { invoiceFsm } from "@rentos/domain";
 
 import { PrismaService } from "../prisma/prisma.service.js";
 
@@ -78,5 +80,39 @@ export class FinanceService {
         orderBy: { issueDate: "desc" },
       }),
     );
+  }
+
+  /**
+   * PRD §7.2.4: "corrections happen via credit note, never edit-in-place."
+   * v1 scope: marks the invoice CREDITED and records the ledger reversal.
+   * Issuing a replacement invoice for the corrected amount (if one is
+   * needed) is a separate, manual follow-up action today — the PRD's
+   * "superseded by CREDIT_NOTE + new invoice" isn't auto-wired yet
+   * (tracked in docs/HANDOFF.md).
+   */
+  async createCreditNote(tenantId: string, issuedByUserId: string, invoiceId: string, amount: string, reason: string) {
+    return this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
+      if (!invoice) throw new NotFoundException("Invoice not found.");
+      if (Number(amount) <= 0 || Number(amount) > Number(invoice.totalAmount.toString())) {
+        throw new BadRequestException("Credit note amount must be positive and not exceed the invoice total.");
+      }
+      if (invoice.status !== "ISSUED" && invoice.status !== "OVERDUE") {
+        throw new ConflictException(`Invoice is ${invoice.status} — only ISSUED/OVERDUE invoices can be credited.`);
+      }
+
+      const { to: status } = await invoiceFsm.fire(invoice.status, "ADJUST", undefined);
+      await tx.invoice.update({ where: { id: invoiceId }, data: { status } });
+
+      const creditNote = await tx.creditNote.create({
+        data: { tenantId, invoiceId, amount, reason, issuedByUserId },
+      });
+      await recordCreditNoteEntries(tx, tenantId, creditNote.id, invoiceId, amount);
+      return creditNote;
+    });
+  }
+
+  listCreditNotesForInvoice(tenantId: string, invoiceId: string) {
+    return this.prisma.runInTenantContext(tenantId, (tx) => tx.creditNote.findMany({ where: { invoiceId } }));
   }
 }

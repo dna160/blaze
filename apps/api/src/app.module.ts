@@ -9,6 +9,7 @@ import { HttpExceptionFilter } from "./common/filters/http-exception.filter.js";
 import { TenantMiddleware } from "./common/middleware/tenant.middleware.js";
 import { RedisModule } from "./common/redis/redis.module.js";
 import { CrmModule } from "./crm/crm.module.js";
+import { DepositsModule } from "./deposits/deposits.module.js";
 import { FinanceModule } from "./finance/finance.module.js";
 import { HealthController } from "./health/health.controller.js";
 import { NotificationsModule } from "./notifications/notifications.module.js";
@@ -29,6 +30,7 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     BookingModule,
     FinanceModule,
     PaymentsModule,
+    DepositsModule,
     NotificationsModule,
     ReportingModule,
   ],

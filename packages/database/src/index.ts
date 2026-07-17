@@ -10,3 +10,10 @@ export {
   markInvoiceOverdue,
   type BookingForInvoicing,
 } from "./invoicing.js";
+export {
+  recordPaymentReceivedEntries,
+  recordDepositHeldEntries,
+  recordDepositRefundedEntries,
+  recordCreditNoteEntries,
+  computeLedgerBalance,
+} from "./ledger.js";

@@ -24,6 +24,6 @@ import { XenditPaymentProvider } from "./providers/xendit-payment.provider.js";
     },
     PaymentsService,
   ],
-  exports: [PaymentsService],
+  exports: [PaymentsService, PAYMENT_PROVIDER],
 })
 export class PaymentsModule {}

@@ -1,6 +1,7 @@
-import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { money } from "@rentos/domain";
+import { recordPaymentReceivedEntries } from "@rentos/database";
 
 import { BookingService } from "../booking/booking.service.js";
 import { FinanceService } from "../finance/finance.service.js";
@@ -56,7 +57,7 @@ export class PaymentsService {
     // rather than waiting for a webhook that will never arrive. Real async providers (Xendit VA/QRIS)
     // stay PENDING here and finalize exclusively through the webhook endpoint below.
     if (result.status === "SUCCEEDED") {
-      await this.finalizePaidInvoice(tenant, invoiceId);
+      await this.finalizePaidInvoice(tenant, invoiceId, payment.id);
     }
 
     return { paymentId: payment.id, status: payment.status, instructions: result.instructions };
@@ -96,7 +97,7 @@ export class PaymentsService {
       await this.prisma.runInTenantContext(tenant.id, (tx) =>
         tx.payment.update({ where: { id: payment.id }, data: { status: "SUCCEEDED", paidAt: new Date() } }),
       );
-      await this.finalizePaidInvoice(tenant, payment.invoiceId);
+      await this.finalizePaidInvoice(tenant, payment.invoiceId, payment.id);
     }
 
     await this.prisma.runInTenantContext(tenant.id, (tx) =>
@@ -108,15 +109,85 @@ export class PaymentsService {
     return { status: "processed" };
   }
 
-  private async finalizePaidInvoice(tenant: ResolvedTenant, invoiceId: string) {
+  /**
+   * PRD §7.2.4: "manual payment entry (cash/transfer) with proof upload
+   * and maker-checker (recorder != verifier)". Recording alone never
+   * transitions the invoice/booking — only verify() does, and only when
+   * performed by someone other than the recorder.
+   */
+  async recordManual(
+    tenant: ResolvedTenant,
+    recordedByUserId: string,
+    invoiceId: string,
+    method: "CASH" | "MANUAL_TRANSFER",
+    proofUrl: string,
+  ) {
+    const invoice = await this.prisma.runInTenantContext(tenant.id, (tx) =>
+      tx.invoice.findUnique({ where: { id: invoiceId } }),
+    );
+    if (!invoice) throw new NotFoundException("Invoice not found.");
+    if (invoice.status !== "ISSUED" && invoice.status !== "OVERDUE") {
+      throw new ConflictException(`Invoice is ${invoice.status}, not payable.`);
+    }
+
+    return this.prisma.runInTenantContext(tenant.id, (tx) =>
+      tx.payment.create({
+        data: {
+          tenantId: tenant.id,
+          invoiceId,
+          provider: "MANUAL",
+          idempotencyKey: randomUUID(),
+          method,
+          status: "PENDING",
+          amount: invoice.totalAmount,
+          recordedByUserId,
+          proofUrl,
+        },
+      }),
+    );
+  }
+
+  async verifyManual(tenant: ResolvedTenant, verifiedByUserId: string, paymentId: string) {
+    const payment = await this.prisma.runInTenantContext(tenant.id, (tx) =>
+      tx.payment.findUnique({ where: { id: paymentId } }),
+    );
+    if (!payment) throw new NotFoundException("Payment not found.");
+    if (payment.provider !== "MANUAL" || !payment.recordedByUserId) {
+      throw new BadRequestException("Only manually-recorded payments require verification.");
+    }
+    if (payment.status !== "PENDING") {
+      throw new ConflictException(`Payment is ${payment.status}, not awaiting verification.`);
+    }
+    if (payment.recordedByUserId === verifiedByUserId) {
+      throw new ForbiddenException("Maker-checker: the person who recorded a payment cannot verify it.");
+    }
+
+    await this.prisma.runInTenantContext(tenant.id, (tx) =>
+      tx.payment.update({
+        where: { id: paymentId },
+        data: { status: "SUCCEEDED", verifiedByUserId, paidAt: new Date() },
+      }),
+    );
+    await this.finalizePaidInvoice(tenant, payment.invoiceId, payment.id);
+    return { status: "verified" };
+  }
+
+  private async finalizePaidInvoice(tenant: ResolvedTenant, invoiceId: string, paymentId: string) {
     const { bookingId, hasDeposit, depositAmount } = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
       await this.finance.markPaid(tx, invoiceId);
       const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { lines: true } });
       const depositLine = invoice.lines.find((l) => l.lineType === "DEPOSIT");
+      const depositAmt = depositLine?.amount.toString();
+
+      // The AR closed here is only the revenue portion — the deposit was never
+      // in AR/Revenue to begin with (see packages/database/src/ledger.ts).
+      const revenuePortion = (Number(invoice.totalAmount.toString()) - Number(depositAmt ?? 0)).toFixed(2);
+      await recordPaymentReceivedEntries(tx, tenant.id, paymentId, invoiceId, revenuePortion);
+
       return {
         bookingId: invoice.bookingId,
         hasDeposit: Boolean(depositLine),
-        depositAmount: depositLine?.amount.toString(),
+        depositAmount: depositAmt,
       };
     });
 

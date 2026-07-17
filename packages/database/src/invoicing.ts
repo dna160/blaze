@@ -9,6 +9,7 @@ import {
 
 import type { Prisma } from "../generated/client/index.js";
 import { nextInvoiceNumber } from "./invoice-number.js";
+import { recordInvoiceIssuedEntries } from "./ledger.js";
 
 /**
  * Shared invoice-generation orchestration — combines @rentos/domain's pure
@@ -64,7 +65,7 @@ async function persistInvoice(
   const issueDate = new Date();
   const { to: status } = await invoiceFsm.fire("SCHEDULED", "ISSUE", undefined);
 
-  return tx.invoice.create({
+  const invoice = await tx.invoice.create({
     data: {
       tenantId,
       bookingId: booking.id,
@@ -92,6 +93,16 @@ async function persistInvoice(
     },
     include: { lines: true },
   });
+
+  // Revenue is recognized at issue (accrual), deposit lines excluded — they're
+  // a liability, never revenue/AR (see ledger.ts header comment).
+  const revenueAmount = draft.lines
+    .filter((l) => l.lineType !== "DEPOSIT" && l.lineType !== "TAX")
+    .reduce((sum, l) => sum + Number(l.amount.toString()), 0)
+    .toFixed(2);
+  await recordInvoiceIssuedEntries(tx, tenantId, invoice.id, invoiceNumber, revenueAmount, draft.taxAmount.toString());
+
+  return invoice;
 }
 
 export async function generateInitialInvoice(

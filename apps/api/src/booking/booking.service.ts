@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { assetFsm } from "@rentos/domain";
-import type { Prisma } from "@rentos/database";
+import { recordDepositHeldEntries, type Prisma } from "@rentos/database";
 
 import { AuditService } from "../audit/audit.service.js";
 import { CrmService } from "../crm/crm.service.js";
@@ -285,9 +285,10 @@ export class BookingService {
         await tx.asset.update({ where: { id: booking.assetId }, data: { status: "OCCUPIED" } });
 
         if (invoiceHasDeposit && depositAmount) {
-          await tx.deposit.create({
+          const deposit = await tx.deposit.create({
             data: { tenantId: tenant.id, bookingId, amount: depositAmount, status: "HELD" },
           });
+          await recordDepositHeldEntries(tx, tenant.id, deposit.id, depositAmount);
         }
       }
 

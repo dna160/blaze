@@ -72,3 +72,36 @@ export const InitiatePaymentResponseSchema = z.object({
   instructions: z.record(z.unknown()),
 });
 export type InitiatePaymentResponse = z.infer<typeof InitiatePaymentResponseSchema>;
+
+/**
+ * Manual payment entry (PRD §7.2.4: "manual payment entry (cash/transfer)
+ * with proof upload and maker-checker"). Recording never finalizes the
+ * invoice by itself — a second, different staff member must verify via
+ * POST /payments/:id/verify before the invoice/booking transitions.
+ */
+export const RecordManualPaymentRequestSchema = z.object({
+  invoiceId: z.string().uuid(),
+  method: z.enum(["CASH", "MANUAL_TRANSFER"]),
+  proofUrl: z.string().min(1),
+});
+export type RecordManualPaymentRequest = z.infer<typeof RecordManualPaymentRequestSchema>;
+
+/** PRD §7.2.4 deposit refund: request -> approval (role-gated) -> disbursement -> ledger entry. */
+export const DepositStatusSchema = z.enum(["HELD", "PARTIALLY_APPLIED", "APPLIED", "REFUND_REQUESTED", "REFUNDED"]);
+
+export const DepositDtoSchema = z.object({
+  id: z.string().uuid(),
+  bookingId: z.string().uuid(),
+  amount: MoneyStringSchema,
+  status: DepositStatusSchema,
+  appliedAmount: MoneyStringSchema,
+  refundedAt: z.string().datetime().nullable(),
+});
+export type DepositDto = z.infer<typeof DepositDtoSchema>;
+
+/** PRD §7.2.4 credit notes — corrections happen via credit note, never edit-in-place. */
+export const CreateCreditNoteRequestSchema = z.object({
+  amount: MoneyStringSchema,
+  reason: z.string().min(1).max(500),
+});
+export type CreateCreditNoteRequest = z.infer<typeof CreateCreditNoteRequestSchema>;
