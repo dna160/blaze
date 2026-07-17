@@ -38,6 +38,8 @@ export type BookingStatusValue = z.infer<typeof BookingStatusSchema>;
 export const CreateBookingRequestSchema = z.object({
   assetTypeId: z.string().uuid(),
   startDate: z.string().datetime(),
+  /** Required for NIGHTLY (checkout date) — nights x rate needs both ends of the stay. Ignored for RECURRING_LEASE. */
+  endDate: z.string().datetime().optional(),
   customerPhone: z.string().min(8).max(20),
   customerFullName: z.string().min(1).max(200),
   promoCode: z.string().optional(),

@@ -27,6 +27,8 @@ export interface BookingForInvoicing {
   bookingModel: "RECURRING_LEASE" | "NIGHTLY" | "DURATION_ORDER" | "HOURLY_SLOT";
   customerId: string;
   startDate: Date;
+  /** NIGHTLY checkout date — required for that model's nights x rate math, unused otherwise. */
+  endDate?: Date | null;
   anchorDay: number | null;
   priceSnapshot: unknown;
 }
@@ -170,7 +172,7 @@ export async function generateInitialInvoice(
   booking: BookingForInvoicing,
 ) {
   const strategy = getBookingModelStrategy(booking.bookingModel);
-  const window: BookingWindow = { startDate: booking.startDate };
+  const window: BookingWindow = { startDate: booking.startDate, endDate: booking.endDate ?? undefined };
   const draft = strategy.computeInitialInvoice(window, toPricingConfig(booking.priceSnapshot), { isTenantPkp });
   return persistInvoice(tx, tenantId, tenantSlug, booking, draft);
 }

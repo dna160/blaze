@@ -1,55 +1,9 @@
-import { Decimal, roundMoney, sumMoney } from "../money.js";
+import { Decimal, roundMoney } from "../money.js";
 import { computeDeposit } from "../pricing/deposit.js";
 import { nextAnchorDate, periodEndFor, prorateFirstPeriod } from "../pricing/proration.js";
-import { computeTax } from "../pricing/tax.js";
 
-import type {
-  BookingModelStrategy,
-  BookingWindow,
-  InvoiceDraft,
-  InvoiceLineDraft,
-  PricingConfig,
-  TenantTaxContext,
-} from "./types.js";
-
-function buildInvoice(
-  rentLine: InvoiceLineDraft,
-  extraLines: InvoiceLineDraft[],
-  tax: TenantTaxContext,
-  pricing: PricingConfig,
-  periodStart: Date,
-  periodEnd: Date,
-): InvoiceDraft {
-  // Deposits are a balance-sheet liability, never revenue, so they never enter the tax base (PRD §7.2.4).
-  const taxableLines = [rentLine, ...extraLines.filter((l) => l.lineType !== "DEPOSIT")];
-  const taxableSubtotal = sumMoney(taxableLines.map((l) => l.amount));
-  const { taxAmount, grossAmount } = computeTax(taxableSubtotal, {
-    isTenantPkp: tax.isTenantPkp,
-    taxInclusive: pricing.taxInclusive,
-  });
-
-  const lines = [...extraLines, rentLine];
-  if (taxAmount.greaterThan(0)) {
-    lines.push({
-      description: "PPN 11%",
-      quantity: new Decimal(1),
-      unitPrice: taxAmount,
-      amount: taxAmount,
-      lineType: "TAX",
-    });
-  }
-
-  const depositTotal = sumMoney(extraLines.filter((l) => l.lineType === "DEPOSIT").map((l) => l.amount));
-
-  return {
-    lines,
-    subtotal: roundMoney(taxableSubtotal.plus(depositTotal)),
-    taxAmount,
-    totalAmount: roundMoney(grossAmount.plus(depositTotal)),
-    periodStart,
-    periodEnd,
-  };
-}
+import { buildInvoiceDraft } from "./invoice-builder.js";
+import type { BookingModelStrategy, BookingWindow, InvoiceDraft, InvoiceLineDraft, PricingConfig, TenantTaxContext } from "./types.js";
 
 class RecurringLeaseStrategy implements BookingModelStrategy {
   readonly kind = "RECURRING_LEASE" as const;
@@ -89,7 +43,7 @@ class RecurringLeaseStrategy implements BookingModelStrategy {
     }
 
     const periodEnd = periodEndFor(window.startDate, proration.anchorDay);
-    return buildInvoice(rentLine, extraLines, tax, pricing, window.startDate, periodEnd);
+    return buildInvoiceDraft(rentLine, extraLines, tax, pricing, window.startDate, periodEnd);
   }
 
   computeNextCycleInvoice(cycleStart: Date, pricing: PricingConfig, tax: TenantTaxContext): InvoiceDraft {
@@ -101,7 +55,7 @@ class RecurringLeaseStrategy implements BookingModelStrategy {
       lineType: "RENT",
     };
     const periodEnd = periodEndFor(cycleStart, cycleStart.getDate());
-    return buildInvoice(rentLine, [], tax, pricing, cycleStart, periodEnd);
+    return buildInvoiceDraft(rentLine, [], tax, pricing, cycleStart, periodEnd);
   }
 
   nextCycleDate(anchorDay: number, from: Date): Date {
@@ -136,7 +90,7 @@ class RecurringLeaseStrategy implements BookingModelStrategy {
     };
 
     const periodStart = new Date(effectiveEndDate.getFullYear(), effectiveEndDate.getMonth(), 1);
-    return buildInvoice(rentLine, [], tax, pricing, periodStart, effectiveEndDate);
+    return buildInvoiceDraft(rentLine, [], tax, pricing, periodStart, effectiveEndDate);
   }
 }
 

@@ -18,6 +18,8 @@ const DEFAULT_RESERVATION_TTL_HOURS = 48;
 export interface CreateBookingInput {
   assetTypeId: string;
   startDate: Date;
+  /** Checkout date — required for NIGHTLY, ignored otherwise. */
+  endDate?: Date;
   customerPhone: string;
   customerFullName: string;
 }
@@ -40,6 +42,15 @@ export class BookingService {
       const assetType = await tx.assetType.findUnique({ where: { id: input.assetTypeId } });
       if (!assetType || !assetType.isPublished) throw new NotFoundException("AssetType not found.");
 
+      if (assetType.bookingModel === "NIGHTLY") {
+        if (!input.endDate) {
+          throw new BadRequestException("A checkout date is required for this booking.");
+        }
+        if (input.endDate.getTime() <= input.startDate.getTime()) {
+          throw new BadRequestException("Checkout date must be after the check-in date.");
+        }
+      }
+
       const availableAsset = await tx.asset.findFirst({
         where: { assetTypeId: assetType.id, status: "AVAILABLE" },
         orderBy: { code: "asc" },
@@ -60,6 +71,7 @@ export class BookingService {
           bookingModel: assetType.bookingModel,
           status: "DRAFT",
           startDate: input.startDate,
+          endDate: assetType.bookingModel === "NIGHTLY" ? input.endDate : undefined,
           priceSnapshot: assetType.pricing as Prisma.InputJsonValue,
           reservedUntil,
         },
@@ -152,6 +164,7 @@ export class BookingService {
         bookingModel: updated.bookingModel,
         customerId: updated.customerId,
         startDate: updated.startDate,
+        endDate: updated.endDate,
         anchorDay: updated.anchorDay,
         priceSnapshot: updated.priceSnapshot,
       });
@@ -289,14 +302,7 @@ export class BookingService {
     }
 
     if (depositLine) {
-      const existingDeposit = await tx.deposit.findFirst({ where: { bookingId: booking.id } });
-      if (!existingDeposit) {
-        const amount = depositLine.amount.toString();
-        const deposit = await tx.deposit.create({
-          data: { tenantId: tenant.id, bookingId: booking.id, amount, status: "HELD" },
-        });
-        await recordDepositHeldEntries(tx, tenant.id, deposit.id, amount);
-      }
+      await this.recordDepositIfNeeded(tx, tenant.id, booking.id, depositLine.amount.toString());
     }
 
     await tx.bookingEvent.create({
@@ -321,9 +327,15 @@ export class BookingService {
       const booking = await tx.booking.findUnique({ where: { id: bookingId } });
       if (!booking) throw new NotFoundException("Booking not found.");
 
+      // RECURRING_LEASE has the triple-AND-gated APPROVED -> ACTIVE transition.
+      // NIGHTLY/DURATION_ORDER have no such gate — first payment just moves
+      // APPROVED -> PAID; a separate staff check-in action moves the unit
+      // into service later (see checkIn()).
+      const isFirstPaymentActivation = booking.status === "APPROVED";
       let event: "ACTIVATE" | "CYCLE_PAYMENT_RECEIVED" | "PAYMENT_RECEIVED";
-      if (booking.status === "APPROVED") event = "ACTIVATE";
-      else if (booking.status === "RENEWING") event = "CYCLE_PAYMENT_RECEIVED";
+      if (isFirstPaymentActivation) {
+        event = booking.bookingModel === "RECURRING_LEASE" ? "ACTIVATE" : "PAYMENT_RECEIVED";
+      } else if (booking.status === "RENEWING") event = "CYCLE_PAYMENT_RECEIVED";
       else if (booking.status === "SUSPENDED") event = "PAYMENT_RECEIVED";
       else return; // idempotent no-op for statuses that don't expect a payment transition
 
@@ -355,9 +367,88 @@ export class BookingService {
       }
 
       await tx.booking.update({ where: { id: bookingId }, data: { status: to } });
+      // NIGHTLY/DURATION_ORDER's first payment (APPROVED -> PAID) is the
+      // equivalent "money landed" moment RECURRING_LEASE's finalizeActivation
+      // handles for ACTIVATE — deposit locks in here, the unit stays RESERVED
+      // until check-in.
+      if (isFirstPaymentActivation && invoiceHasDeposit && depositAmount) {
+        await this.recordDepositIfNeeded(tx, tenant.id, bookingId, depositAmount);
+      }
       await tx.bookingEvent.create({
         data: { tenantId: tenant.id, bookingId, fromStatus: booking.status, toStatus: to, actorType: "WEBHOOK", reason: "Payment confirmed" },
       });
+    });
+  }
+
+  private async recordDepositIfNeeded(tx: Prisma.TransactionClient, tenantId: string, bookingId: string, amount: string) {
+    const existingDeposit = await tx.deposit.findFirst({ where: { bookingId } });
+    if (existingDeposit) return;
+    const deposit = await tx.deposit.create({ data: { tenantId, bookingId, amount, status: "HELD" } });
+    await recordDepositHeldEntries(tx, tenantId, deposit.id, amount);
+  }
+
+  /**
+   * Staff check-in action (PRD Appendix B, NIGHTLY): PAID -> CHECKED_IN,
+   * moves the unit into service. DURATION_ORDER's equivalent pickup step
+   * isn't wired yet — out of scope for this pass (docs/HANDOFF.md).
+   */
+  async checkIn(tenant: ResolvedTenant, bookingId: string, actorUserId: string) {
+    return this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const booking = await tx.booking.findUnique({ where: { id: bookingId } });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      if (booking.bookingModel !== "NIGHTLY") {
+        throw new BadRequestException(`Check-in is not implemented for ${booking.bookingModel} bookings yet.`);
+      }
+
+      const fsm = bookingFsmFor(booking.bookingModel);
+      const { to } = await fsm.fire(booking.status as never, "ACTIVATE", {} as BookingActivationContext);
+
+      const updated = await tx.booking.update({ where: { id: bookingId }, data: { status: to } });
+
+      if (booking.assetId) {
+        await assetFsm.fire("RESERVED", "MOVE_IN", undefined);
+        await tx.asset.update({ where: { id: booking.assetId }, data: { status: "OCCUPIED" } });
+      }
+
+      await tx.bookingEvent.create({
+        data: { tenantId: tenant.id, bookingId, fromStatus: booking.status, toStatus: to, actorType: "USER", actorId: actorUserId, reason: "Checked in" },
+      });
+
+      return updated;
+    });
+  }
+
+  /**
+   * Staff check-out action: CHECKED_IN -> CHECKED_OUT -> CLOSED in one
+   * call — NIGHTLY's stay is paid in full upfront (no final settlement
+   * invoice), so there's nothing to wait on between the two transitions.
+   * Deposit refund, if any, is a separate manual staff action via the
+   * existing deposits workflow (DepositsService) — not automated here.
+   */
+  async checkOut(tenant: ResolvedTenant, bookingId: string, actorUserId: string) {
+    return this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const booking = await tx.booking.findUnique({ where: { id: bookingId } });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      if (booking.bookingModel !== "NIGHTLY") {
+        throw new BadRequestException(`Check-out is not implemented for ${booking.bookingModel} bookings yet.`);
+      }
+
+      const fsm = bookingFsmFor(booking.bookingModel);
+      const { to: checkedOut } = await fsm.fire(booking.status as never, "SETTLE", {} as BookingActivationContext);
+      const { to: closed } = await fsm.fire(checkedOut, "END_DATE_REACHED", {} as BookingActivationContext);
+
+      const updated = await tx.booking.update({ where: { id: bookingId }, data: { status: closed } });
+
+      if (booking.assetId) {
+        await assetFsm.fire("OCCUPIED", "MOVE_OUT", undefined);
+        await tx.asset.update({ where: { id: booking.assetId }, data: { status: "AVAILABLE" } });
+      }
+
+      await tx.bookingEvent.create({
+        data: { tenantId: tenant.id, bookingId, fromStatus: booking.status, toStatus: closed, actorType: "USER", actorId: actorUserId, reason: "Checked out" },
+      });
+
+      return updated;
     });
   }
 

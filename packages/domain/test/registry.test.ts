@@ -10,7 +10,16 @@ describe("getBookingModelStrategy", () => {
     expect(strategy.lifecycleVerbs).toContain("move_in");
   });
 
-  it.each(["NIGHTLY", "DURATION_ORDER", "HOURLY_SLOT"] as const)(
+  it("resolves NIGHTLY to a working strategy whose computeFinalSettlement is still a typed stub", () => {
+    const strategy = getBookingModelStrategy("NIGHTLY");
+    expect(strategy.kind).toBe("NIGHTLY");
+    expect(strategy.lifecycleVerbs.length).toBeGreaterThan(0);
+    expect(() => strategy.computeFinalSettlement({} as never, {} as never, {} as never, new Date())).toThrow(
+      BookingModelNotImplementedError,
+    );
+  });
+
+  it.each(["DURATION_ORDER", "HOURLY_SLOT"] as const)(
     "resolves %s to a typed stub that satisfies the interface but is not implemented",
     (kind) => {
       const strategy = getBookingModelStrategy(kind);

@@ -7,11 +7,14 @@ import { apiFetch, ApiError } from "@/lib/api";
 interface BookingFormProps {
   tenantSlug: string;
   assetTypeId: string;
+  bookingModel: string;
 }
 
-/** PRD §7.1.2 booking flow steps 1-3: pick a start date, identify by phone, submit. OTP/KYC happen after submission in this v1 flow. */
-export function BookingForm({ tenantSlug, assetTypeId }: BookingFormProps) {
+/** PRD §7.1.2 booking flow steps 1-3: pick date(s), identify by phone, submit. OTP/KYC happen after submission in this v1 flow. */
+export function BookingForm({ tenantSlug, assetTypeId, bookingModel }: BookingFormProps) {
+  const isNightly = bookingModel === "NIGHTLY";
   const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
   const [phone, setPhone] = useState("");
   const [fullName, setFullName] = useState("");
   const [status, setStatus] = useState<"idle" | "submitting" | "done" | "error">("idle");
@@ -20,6 +23,11 @@ export function BookingForm({ tenantSlug, assetTypeId }: BookingFormProps) {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (isNightly && endDate && new Date(endDate) <= new Date(startDate)) {
+      setError("Checkout date must be after check-in.");
+      setStatus("error");
+      return;
+    }
     setStatus("submitting");
     setError(null);
     try {
@@ -29,6 +37,7 @@ export function BookingForm({ tenantSlug, assetTypeId }: BookingFormProps) {
         body: {
           assetTypeId,
           startDate: new Date(startDate).toISOString(),
+          ...(isNightly ? { endDate: new Date(endDate).toISOString() } : {}),
           customerPhone: phone,
           customerFullName: fullName,
         },
@@ -57,7 +66,7 @@ export function BookingForm({ tenantSlug, assetTypeId }: BookingFormProps) {
     <form onSubmit={onSubmit} className="space-y-4 rounded-xl border border-brand-600/10 bg-white p-6">
       <h3 className="font-medium">Request this unit</h3>
       <div>
-        <label className="block text-sm text-brand-700/70">Move-in date</label>
+        <label className="block text-sm text-brand-700/70">{isNightly ? "Check-in date" : "Move-in date"}</label>
         <input
           type="date"
           required
@@ -66,6 +75,19 @@ export function BookingForm({ tenantSlug, assetTypeId }: BookingFormProps) {
           className="mt-1 w-full rounded border border-brand-600/20 px-3 py-2"
         />
       </div>
+      {isNightly && (
+        <div>
+          <label className="block text-sm text-brand-700/70">Checkout date</label>
+          <input
+            type="date"
+            required
+            min={startDate || undefined}
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            className="mt-1 w-full rounded border border-brand-600/20 px-3 py-2"
+          />
+        </div>
+      )}
       <div>
         <label className="block text-sm text-brand-700/70">Full name</label>
         <input

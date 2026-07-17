@@ -23,6 +23,7 @@ export default function BookingDetailPage() {
   const [signedByName, setSignedByName] = useState("");
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stayActionBusy, setStayActionBusy] = useState(false);
 
   async function load() {
     const token = authClient.getToken();
@@ -65,6 +66,21 @@ export default function BookingDetailPage() {
     }
   }
 
+  async function performStayAction(action: "check-in" | "check-out") {
+    const token = authClient.getToken();
+    if (!token) return;
+    setStayActionBusy(true);
+    setError(null);
+    try {
+      await apiFetch(`/bookings/${id}/${action}`, { token, method: "POST" });
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : `Failed to ${action.replace("-", " ")}.`);
+    } finally {
+      setStayActionBusy(false);
+    }
+  }
+
   if (!booking) {
     return (
       <ConsoleShell>
@@ -82,6 +98,36 @@ export default function BookingDetailPage() {
       <p className="mt-1 text-sm text-brand-700/60">
         {booking.assetType.name} {booking.asset ? `— unit ${booking.asset.code}` : ""} · Status: {booking.status}
       </p>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+
+      {booking.bookingModel === "NIGHTLY" && (booking.status === "PAID" || booking.status === "CHECKED_IN") && (
+        <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">
+          <h2 className="font-medium">Stay</h2>
+          {booking.status === "PAID" ? (
+            <>
+              <p className="mt-2 text-sm text-brand-700/60">Paid in full — ready for the guest to check in.</p>
+              <button
+                onClick={() => performStayAction("check-in")}
+                disabled={stayActionBusy}
+                className="mt-3 rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {stayActionBusy ? "Checking in..." : "Check in"}
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="mt-2 text-sm text-brand-700/60">Guest is checked in. Check out to close this stay.</p>
+              <button
+                onClick={() => performStayAction("check-out")}
+                disabled={stayActionBusy}
+                className="mt-3 rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {stayActionBusy ? "Checking out..." : "Check out"}
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {contract && (
         <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">

@@ -28,7 +28,9 @@ export default async function AssetTypeDetailPage({ params }: { params: Promise<
         </p>
         <p className="mt-4 text-2xl font-semibold text-accent-500">
           {formatIDR(assetType.pricing.basePrice)}
-          <span className="text-base font-normal text-brand-700/60">/month</span>
+          <span className="text-base font-normal text-brand-700/60">
+            {assetType.bookingModel === "NIGHTLY" ? "/night" : "/month"}
+          </span>
         </p>
         <p className="mt-2 text-sm text-brand-700/70">
           {availability.availableCount > 0
@@ -44,14 +46,18 @@ export default async function AssetTypeDetailPage({ params }: { params: Promise<
             <dt className="text-brand-700/60">Security deposit</dt>
             <dd>
               {assetType.pricing.depositRule?.type === "MULTIPLE_OF_RENT"
-                ? `${assetType.pricing.depositRule.multiple}× monthly rent`
+                ? `${assetType.pricing.depositRule.multiple}× ${assetType.bookingModel === "NIGHTLY" ? "nightly rate" : "monthly rent"}`
                 : formatIDR(assetType.pricing.depositRule && "amount" in assetType.pricing.depositRule ? assetType.pricing.depositRule.amount : 0)}
             </dd>
           </div>
         </dl>
       </div>
 
-      <div>{availability.availableCount > 0 && <BookingForm tenantSlug={tenantSlug} assetTypeId={assetType.id} />}</div>
+      <div>
+        {availability.availableCount > 0 && (
+          <BookingForm tenantSlug={tenantSlug} assetTypeId={assetType.id} bookingModel={assetType.bookingModel} />
+        )}
+      </div>
     </div>
   );
 }

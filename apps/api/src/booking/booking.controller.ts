@@ -28,6 +28,7 @@ export class BookingController {
     return this.booking.createBooking(tenant, {
       assetTypeId: body.assetTypeId,
       startDate: new Date(body.startDate),
+      endDate: body.endDate ? new Date(body.endDate) : undefined,
       customerPhone: body.customerPhone,
       customerFullName: body.customerFullName,
     });
@@ -75,6 +76,22 @@ export class BookingController {
     @Body(new ZodValidationPipe(RejectBookingRequestSchema)) body: ReturnType<typeof RejectBookingRequestSchema.parse>,
   ) {
     return this.booking.reject(tenant, id, user.id, body.reason);
+  }
+
+  /** Staff check-in (PRD Appendix B, NIGHTLY): PAID -> CHECKED_IN. */
+  @Post(":id/check-in")
+  @UseGuards(JwtAuthGuard, RolesGuard, TenantMatchGuard)
+  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  checkIn(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
+    return this.booking.checkIn(tenant, id, user.id);
+  }
+
+  /** Staff check-out (PRD Appendix B, NIGHTLY): CHECKED_IN -> CHECKED_OUT -> CLOSED. */
+  @Post(":id/check-out")
+  @UseGuards(JwtAuthGuard, RolesGuard, TenantMatchGuard)
+  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  checkOut(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
+    return this.booking.checkOut(tenant, id, user.id);
   }
 
   @Post(":id/notice")
