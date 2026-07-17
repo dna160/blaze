@@ -40,6 +40,16 @@ export default function PortalPage() {
 
   return (
     <div className="space-y-10">
+      <section className="flex items-center justify-between rounded-lg border border-brand-600/10 bg-white p-4">
+        <div>
+          <h2 className="font-medium">Identity verification</h2>
+          <p className="text-sm text-brand-700/60">Upload your KTP and a selfie to get bookings approved faster.</p>
+        </div>
+        <Link href="/portal/kyc" className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white">
+          Manage
+        </Link>
+      </section>
+
       <section>
         <h1 className="text-2xl font-semibold">My rentals</h1>
         <div className="mt-4 space-y-3">

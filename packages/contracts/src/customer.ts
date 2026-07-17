@@ -12,18 +12,24 @@ export const CustomerDtoSchema = z.object({
 });
 export type CustomerDto = z.infer<typeof CustomerDtoSchema>;
 
+export const KycDocumentTypeSchema = z.enum(["KTP", "SELFIE"]);
+
 /**
- * v1 KYC upload is two steps: the client uploads the file directly to
- * object storage via a presigned URL (not modeled here — infra concern),
- * then calls this endpoint with the resulting storage key so the API
- * never proxies the raw KTP/selfie bytes (PRD §10 Security: "encrypted PII
- * at rest").
+ * v1 upload is a single proxied multipart POST (not a presigned-URL
+ * direct-to-storage flow) — the API receives the file via multer, then
+ * calls StorageProvider.save() server-side. Simpler to get right at this
+ * scale than a presigned-URL/token dance, and the raw bytes only ever
+ * transit our own API over TLS, never a second hop the client controls.
+ * See apps/api/src/kyc/kyc.controller.ts.
  */
-export const SubmitKycDocumentRequestSchema = z.object({
-  documentType: z.enum(["KTP", "SELFIE"]),
-  storageKey: z.string().min(1),
+export const KycDocumentDtoSchema = z.object({
+  id: z.string().uuid(),
+  documentType: KycDocumentTypeSchema,
+  status: KycStatusSchema,
+  createdAt: z.string().datetime(),
+  reviewedAt: z.string().datetime().nullable(),
 });
-export type SubmitKycDocumentRequest = z.infer<typeof SubmitKycDocumentRequestSchema>;
+export type KycDocumentDto = z.infer<typeof KycDocumentDtoSchema>;
 
 export const ReviewKycDocumentRequestSchema = z.object({
   status: z.enum(["VERIFIED", "REJECTED"]),

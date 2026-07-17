@@ -12,6 +12,7 @@ import { CrmModule } from "./crm/crm.module.js";
 import { DepositsModule } from "./deposits/deposits.module.js";
 import { FinanceModule } from "./finance/finance.module.js";
 import { HealthController } from "./health/health.controller.js";
+import { KycModule } from "./kyc/kyc.module.js";
 import { NotificationsModule } from "./notifications/notifications.module.js";
 import { PaymentsModule } from "./payments/payments.module.js";
 import { PrismaModule } from "./prisma/prisma.module.js";
@@ -31,6 +32,7 @@ import { TenancyModule } from "./tenancy/tenancy.module.js";
     FinanceModule,
     PaymentsModule,
     DepositsModule,
+    KycModule,
     NotificationsModule,
     ReportingModule,
   ],

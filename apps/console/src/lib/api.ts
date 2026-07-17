@@ -43,3 +43,18 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
+
+/**
+ * Binary responses (KYC document preview) — a plain `<a href>` new-tab
+ * open wouldn't carry the Bearer token (browsers don't attach
+ * localStorage-based auth to navigations), so callers fetch the blob
+ * client-side and open an object URL instead. See app/kyc/page.tsx.
+ */
+export async function apiFetchBlob(path: string, token: string | null): Promise<Blob> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { "X-Tenant-Slug": TENANT_SLUG, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    cache: "no-store",
+  });
+  if (!res.ok) throw new ApiError(res.statusText, res.status);
+  return res.blob();
+}

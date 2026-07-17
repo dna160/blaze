@@ -36,3 +36,23 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions): Promi
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
+
+/** File uploads (KYC documents) — deliberately not JSON, no Content-Type set so the browser adds the multipart boundary. */
+export async function apiUpload<T>(
+  path: string,
+  options: { tenantSlug: string; token: string; formData: FormData },
+): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: {
+      "X-Tenant-Slug": options.tenantSlug,
+      Authorization: `Bearer ${options.token}`,
+    },
+    body: options.formData,
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({ message: res.statusText }));
+    throw new ApiError(payload.message ?? "Upload failed", res.status);
+  }
+  return res.json() as Promise<T>;
+}

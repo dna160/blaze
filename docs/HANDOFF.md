@@ -15,7 +15,7 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 | Phase | Scope | Status |
 |---|---|---|
 | **0 — Foundation** | Tenancy + RLS, auth/RBAC, domain model, asset registry, Xendit/WA sandbox | ✅ Done (auth: staff JWT + customer OTP; RLS verified; provider seams in place, sandbox keys not yet supplied) |
-| **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (added Session 3). 🚧 Gaps: KYC upload UI, contract e-sign gate, request-info/customer-reply UI, unit reassignment on approve UI |
+| **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (Session 3) and KYC upload + review (Session 4). 🚧 Gaps: contract e-sign gate, request-info/customer-reply UI, unit reassignment on approve UI |
 | **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | 🚧 In progress. ✅ Done: double-entry ledger (accrual basis, verified balanced live), manual payment recording + maker-checker verification (now with console UI), deposit refund request/approve workflow (now with console UI), credit note issuance (now with console UI), nightly ledger-balance-check worker job. ⬜ Still missing: unit map, swap requests, e-sign, accounting export, month-end view, partial deposit application against damages |
 | **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | ⬜ Not started. `BookingModelStrategy` seam exists and is proven (typed stubs for NIGHTLY/DURATION_ORDER/HOURLY_SLOT throw `BookingModelNotImplementedError`) — Phase 3 is implementing their real math, not inventing the seam |
 | **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | ⬜ Not started, deliberately deferred per PRD |
@@ -64,6 +64,26 @@ not its own `build` — harmless for NestJS/library packages, but Next.js's
 this exact failure once. Fixed by adding `"build"` to typecheck's
 `dependsOn` alongside `"^build"`.
 
+**Session 4 (KYC upload + review):** Added a `StorageProvider` port
+(`apps/api/src/storage/`) following the same pattern as
+`PaymentProvider`/`MessagingProvider` — `LocalDiskStorageProvider` default
+(zero config), `S3StorageProvider` coded against the real AWS SDK
+(S3-compatible: works with AWS S3, Cloudflare R2, MinIO via `S3_ENDPOINT`),
+selected via `STORAGE_PROVIDER=local_disk|s3`. Built the KYC module
+(`apps/api/src/kyc/`) as a proxied multipart upload (not a presigned-URL
+direct-to-storage flow — simpler to get right at this scale; see
+"Architectural decisions"). **Verified live end-to-end**: customer uploads
+a KTP → staff reviews queue → previews the file (byte-for-byte roundtrip
+confirmed with `diff` against the original) → verifies KTP alone →
+customer's overall `kycStatus` correctly stays `PENDING_REVIEW` (selfie
+still outstanding) → verifies selfie too → customer flips to `VERIFIED`
+only once *every* submitted document is approved. Added
+`GET /customers/me` (new endpoint) for the storefront profile page. Built
+`apps/storefront/portal/kyc` (upload UI, per-document status) and
+`apps/console/kyc` (review queue, in-app document preview via
+blob-fetch-then-object-URL since a plain `<a href>` new-tab open can't
+carry the Bearer token a protected file endpoint requires).
+
 33 unit tests in `packages/domain` cover the state machines and
 proration/tax math. All 4 apps + 3 packages typecheck, build, and pass
 `turbo run typecheck test build` clean (verified with `--force` after the
@@ -71,13 +91,13 @@ turbo.json fix, to rule out stale-cache false positives).
 
 ### What's explicitly NOT done (don't assume it exists)
 
-- KYC document upload flow (schema + `SubmitKycDocumentRequestSchema` exist; no storefront UI, no S3-compatible storage wired up — `KycDocument.storageKey` has nowhere real to point yet)
-- Contract e-signature / wet-sign PDF upload (schema exists; `contractRequired` is hardcoded `false` in `BookingService.handleInvoicePaid` — see "Known shortcuts" below)
+- Contract e-signature / wet-sign PDF upload (schema exists; `contractRequired` is hardcoded `false` in `BookingService.handleInvoicePaid` — see "Known shortcuts" below). Could now reuse the KYC upload's `StorageProvider`/multer pattern almost directly — that's the templated path if you pick this up next.
 - Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
 - Partial deposit application against damages (`Deposit.appliedAmount` / `PARTIALLY_APPLIED` / `APPLIED` states exist in schema, unused — v1 refund workflow only handles the full-amount HELD → REFUND_REQUESTED → REFUNDED path)
 - Automatic replacement invoice after a credit note (PRD: "superseded by CREDIT_NOTE + new invoice") — v1 marks the original invoice CREDITED and stops there; issuing the corrected replacement invoice is a manual follow-up action, not automatic
 - Invoice-payment refunds (as opposed to deposit refunds) — no endpoint; `PaymentProvider.refund()` is only called from the deposit-refund flow today
-- Proof-of-payment upload for manual payments is a plain text URL field (`proofUrl`) in the console form — no actual file upload widget or object storage integration, same gap as KYC documents (see above). Staff paste a reference/URL by hand.
+- Proof-of-payment upload for manual payments is still a plain text URL field (`proofUrl`) in the console form, unlike KYC documents which now do a real upload — the `StorageProvider` this session added could back this too but hasn't been wired in yet.
+- Automated KYC verification (Verihubs or similar) — PRD explicitly scopes this to P2; v1 review is 100% manual, by design.
 - Unit map (visual grid) — list view only (P1 in PRD anyway)
 - Swap/upgrade requests, promo codes, duration discounts — schema exists, zero application logic
 - Platform admin console (multi-tenant switcher, tenant provisioning wizard) — out of scope until Phase 4; today, provisioning a tenant means writing rows directly (see `packages/database/prisma/seed.ts` as the template)
@@ -88,21 +108,23 @@ turbo.json fix, to rule out stale-cache false positives).
 
 ## Resume here
 
-Refunds/credit-notes/maker-checker/ledger (Session 2) and their console +
-storefront UI, plus the storefront pay-now flow (Session 3), are all done.
-Next highest-leverage chunks, in rough priority order:
+Refunds/credit-notes/maker-checker/ledger (Session 2) with their console +
+storefront UI (Session 3), the storefront pay-now flow (Session 3), and
+KYC upload + review with real object storage (Session 4) are all done —
+every major PRD §7.1/§7.2 P0 flow now has both a working API and reachable
+UI. Next highest-leverage chunks, in rough priority order:
 
-1. **KYC upload flow** (storefront upload UI + object storage integration
-   + console review queue) — this is the last major P0 gap from PRD §7.1.2
-   with zero UI today, and it blocks the "auto-approve if KYC verified"
-   approval policy from ever being meaningfully exercised.
-2. Real file/object storage for proof-of-payment and KYC documents — both
-   currently take a raw text URL with no actual upload widget or backing
-   storage. One S3-compatible integration would unblock both.
+1. **Contract e-signature (wet-sign PDF upload)** — the last piece of the
+   `APPROVED → ACTIVE` triple-AND guard that's still hardcoded off
+   (`contractRequired: false`). The KYC module built this session is a
+   near-direct template: same `StorageProvider`, same multer upload
+   pattern, same "staff reviews and confirms" shape.
+2. Wire proof-of-payment uploads (manual payment recording) through the
+   same `StorageProvider` instead of a raw text URL field.
 3. Automatic replacement invoice after a credit note (see "What's
    explicitly NOT done").
 4. Work down PRD §13 Phase 2's remaining items: unit map, swap requests,
-   e-sign, accounting export, month-end view.
+   accounting export, month-end view.
 
 Before writing new code:
 1. `docker compose up` (or run each service manually per README "Local development") in an environment with real network access, to confirm the Dockerfiles actually work — this is unverified debt, still outstanding from Session 1.
@@ -121,6 +143,9 @@ Before writing new code:
 - **Console v1 is one Next.js deployment per tenant** (`NEXT_PUBLIC_TENANT_SLUG` baked in at build time), not the PRD's eventual "single console URL with tenant switcher for platform admins" (§6) — that's explicitly Phase 4 platform-admin scope, premature for tenant #1.
 - **The ledger is accrual-basis, not cash-basis** (`packages/database/src/ledger.ts`): AR is debited and Revenue/TaxPayable credited at invoice *issue*, not at payment. This is why the schema's `ACCOUNTS_RECEIVABLE` account exists at all — a cash-basis ledger would never need it. Deposits never touch Revenue or AR at any point (they're a liability from the moment cash lands, per PRD §7.2.4). `recordInvoiceIssuedEntries` lives in `packages/database/src/invoicing.ts`'s `persistInvoice`, so both `apps/api` (console-approved invoices) and `apps/worker` (recurring-cycle invoices) get identical ledger treatment automatically — one code path, not two.
 - **Ledger writes are paired helper functions, not a generic "post a journal entry" API.** Every call site (`recordInvoiceIssuedEntries`, `recordPaymentReceivedEntries`, `recordDepositHeldEntries`, `recordDepositRefundedEntries`, `recordCreditNoteEntries`) writes both sides of its entry in one function — there is no way to call code that debits without also crediting. This is why the ledger balance-checked cleanly on the first try in live verification; a generic single-entry API would have made an unbalanced write a routine typo away.
+- **KYC upload is a proxied multipart POST, not a presigned-URL direct-to-storage flow** — deliberately simpler than the two-step "presign, then PUT to storage, then tell the API the key" dance many production systems use. The original `packages/contracts/src/customer.ts` comment described the presigned-URL approach before this session actually built the upload; that comment was wrong and has been corrected. Bytes transit our own API over TLS once, server-side, and `StorageProvider.save()` handles the rest — correct and simple at this scale. Revisit only if upload volume/size ever makes proxying through the API a real bottleneck.
+- **A customer is `VERIFIED` only when every KYC document they've submitted is `VERIFIED`** (`KycService.review`), not just the most recently reviewed one — checked by re-querying all of that customer's `KycDocument` rows after each review and requiring both a KTP and a SELFIE to exist and all be `VERIFIED`. A fresh upload always reopens `PENDING_REVIEW` even if other documents were already verified. Verified live: verifying KTP alone left the customer `PENDING_REVIEW`; verifying the selfie too flipped them to `VERIFIED`.
+- **`LocalDiskStorageProvider` is dev/demo-only, not Railway-production-safe as configured** — container filesystems are ephemeral across deploys/restarts unless a persistent Volume is explicitly mounted at `UPLOAD_DIR`. Real KTP/selfie images (actual PII, PRD §10 "encrypted PII at rest") must go through `S3StorageProvider` (`STORAGE_PROVIDER=s3`) before this touches production, or a Volume needs to be attached to the api service on Railway. This is flagged loudly in the provider's own doc comment specifically so it isn't missed.
 
 ## Known shortcuts (intentional, not bugs)
 
