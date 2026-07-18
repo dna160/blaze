@@ -13,10 +13,22 @@
  * credential — swap immediately for anything resembling production):
  * "RentOS!Demo2026". The hash below is that password at bcrypt cost 10.
  */
+import { createHash } from "node:crypto";
 import { PrismaClient, BookingModel, AssetStatus, BookingStatus, type GlobalRole } from "../generated/client/index.js";
 
 const prisma = new PrismaClient();
 const DEMO_PASSWORD_HASH = "$2a$10$EvHMo0YpEy8LGcSzJL3DaOr26EZsqN/PuPBclcDWdyDU/b2eD1I.K";
+
+// Fixed (not randomly generated) demo credentials — same convention as
+// DEMO_PASSWORD_HASH above: a stable, documented, reseedable demo value,
+// not a real secret. Re-running `seed` must not rotate these out from
+// under anyone who copied them from a prior run.
+const DEMO_API_KEY_PLAINTEXT = "rok_demo_gudang_aman_2026";
+const DEMO_WEBHOOK_SECRET = "whsec_demo_gudang_aman_2026";
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
 
 async function seedStaffUser(tenantId: string, email: string, displayName: string, roles: GlobalRole[]) {
   const user = await prisma.user.upsert({
@@ -34,6 +46,48 @@ async function seedStaffUser(tenantId: string, email: string, displayName: strin
   return user;
 }
 
+/**
+ * PRD Phase 4 tenant-facing API + outbound webhooks (docs/HANDOFF.md
+ * Session 20) — demo-only, gudang-aman is the sole tenant with
+ * featureFlags.api_access_enabled set. Uses fixed plaintext/secret so the
+ * demo credentials survive re-seeding (see DEMO_API_KEY_PLAINTEXT's
+ * comment); upserts on the resulting hash so re-running seed is a no-op.
+ */
+async function seedApiAccessDemo(tenantId: string, createdByUserId: string) {
+  const keyHash = sha256Hex(DEMO_API_KEY_PLAINTEXT);
+  await prisma.tenantApiKey.upsert({
+    where: { keyHash },
+    update: {},
+    create: {
+      tenantId,
+      label: "Demo integration key",
+      keyPrefix: DEMO_API_KEY_PLAINTEXT.slice(0, 12),
+      keyHash,
+      createdByUserId,
+    },
+  });
+
+  const existingSubscription = await prisma.tenantWebhookSubscription.findFirst({
+    where: { tenantId, url: "https://example.com/webhooks/rentos" },
+  });
+  if (!existingSubscription) {
+    await prisma.tenantWebhookSubscription.create({
+      data: {
+        tenantId,
+        url: "https://example.com/webhooks/rentos",
+        secret: DEMO_WEBHOOK_SECRET,
+        eventTypes: ["booking.approved", "invoice.paid", "payment.received"],
+        createdByUserId,
+      },
+    });
+  }
+
+  // eslint-disable-next-line no-console
+  console.log(
+    `Seeded API access demo for tenant ${tenantId} — key "${DEMO_API_KEY_PLAINTEXT}", webhook secret "${DEMO_WEBHOOK_SECRET}".`,
+  );
+}
+
 async function seedStorageTenant() {
   const tenant = await prisma.tenant.upsert({
     where: { slug: "gudang-aman" },
@@ -46,7 +100,18 @@ async function seedStorageTenant() {
       defaultLocale: "id",
       timezone: "Asia/Jakarta",
       branding: { primaryColor: "#0F172A", accentColor: "#F59E0B" },
-      featureFlags: { deposits_enabled: true, kyc_required: true, auto_approve: false, contract_required: false },
+      // api_access_enabled is Phase 4's tenant-facing API + outbound webhooks
+      // (docs/HANDOFF.md Session 20) — deliberately on for this ONE tenant
+      // only in the demo, per instruction; griya-nginap and sewa-alat leave
+      // it unset (falsy) so ApiKeysService/TenantWebhooksService's
+      // assertEnabled() 403s there, same code path either way.
+      featureFlags: {
+        deposits_enabled: true,
+        kyc_required: true,
+        auto_approve: false,
+        contract_required: false,
+        api_access_enabled: true,
+      },
     },
   });
 
@@ -70,6 +135,11 @@ async function seedStorageTenant() {
 
   await seedStaffUser(tenant.id, "admin@gudang-aman.test", "Ops Admin", ["OPS_ADMIN"]);
   await seedStaffUser(tenant.id, "finance@gudang-aman.test", "Finance Admin", ["FINANCE_ADMIN"]);
+  // SUPER_ADMIN gates ApiKeysController/TenantWebhooksController (API Access
+  // console page) — no tenant had a SUPER_ADMIN staff user before this
+  // (Phase 4 is the first module to require it), so one is seeded here.
+  const superAdmin = await seedStaffUser(tenant.id, "superadmin@gudang-aman.test", "Super Admin", ["SUPER_ADMIN"]);
+  await seedApiAccessDemo(tenant.id, superAdmin.id);
 
   const assetTypeSmall = await prisma.assetType.upsert({
     where: { tenantId_slug: { tenantId: tenant.id, slug: "unit-1-5x2" } },

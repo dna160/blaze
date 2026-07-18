@@ -14,6 +14,7 @@ const NAV = [
   { href: "/invoices", label: "Finance" },
   { href: "/deposits", label: "Deposits" },
   { href: "/reports", label: "Reports" },
+  { href: "/api-access", label: "API Access" },
 ];
 
 /** Console shell — sidebar nav + top bar, shown once staff is authenticated. */

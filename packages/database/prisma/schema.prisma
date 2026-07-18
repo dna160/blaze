@@ -158,17 +158,19 @@ model Tenant {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  domains            TenantDomain[]
-  locations          Location[]
-  users              User[]
-  customers          Customer[]
-  assetTypes         AssetType[]
-  assets             Asset[]
-  bookings           Booking[]
-  invoices           Invoice[]
-  payments           Payment[]
-  automationSettings AutomationSetting[]
-  promoCodes         PromoCode[]
+  domains              TenantDomain[]
+  locations            Location[]
+  users                User[]
+  customers            Customer[]
+  assetTypes           AssetType[]
+  assets               Asset[]
+  bookings             Booking[]
+  invoices             Invoice[]
+  payments             Payment[]
+  automationSettings   AutomationSetting[]
+  promoCodes           PromoCode[]
+  apiKeys              TenantApiKey[]
+  webhookSubscriptions TenantWebhookSubscription[]
 
   @@map("tenants")
 }
@@ -668,4 +670,80 @@ model WebhookEvent {
 
   @@unique([provider, externalId])
   @@map("webhook_events")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — tenant-facing API + outbound webhooks (PRD §13, Session 20)
+// ---------------------------------------------------------------------------
+
+/// Credentials a tenant's own systems use to call the read-only external API
+/// (see ExternalApiModule). Gated per tenant by
+/// `Tenant.featureFlags.api_access_enabled` — the key existing is not
+/// itself sufficient, the flag must also be on. Only the SHA-256 hash of
+/// the secret is stored; the plaintext is shown exactly once, at creation.
+model TenantApiKey {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @db.Uuid @map("tenant_id")
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  label     String
+  /// First 8 chars of the plaintext key — lets staff tell keys apart in the console without ever storing the secret itself.
+  keyPrefix String    @map("key_prefix")
+  keyHash   String    @unique @map("key_hash")
+  createdByUserId String? @db.Uuid @map("created_by_user_id")
+  lastUsedAt DateTime? @map("last_used_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@map("tenant_api_keys")
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+/// A tenant's own system, registered to receive event notifications
+/// (booking.approved, invoice.paid, payment.received — see
+/// packages/contracts/src/platform-api.ts's WEBHOOK_EVENT_TYPES).
+model TenantWebhookSubscription {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @db.Uuid @map("tenant_id")
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  url             String
+  /// Shared secret used to HMAC-SHA256-sign delivered payloads (X-RentOS-Signature header) — shown once, at creation.
+  secret          String
+  eventTypes      String[] @map("event_types")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdByUserId String?  @db.Uuid @map("created_by_user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  deliveries TenantWebhookDelivery[]
+
+  @@index([tenantId])
+  @@map("tenant_webhook_subscriptions")
+}
+
+/// One delivery attempt record per (subscription, event) — created PENDING
+/// when WebhookDispatcherService enqueues it, updated by apps/worker's
+/// delivery job once the HTTP POST resolves (or exhausts BullMQ's retries).
+model TenantWebhookDelivery {
+  id             String                    @id @default(uuid()) @db.Uuid
+  tenantId       String                    @db.Uuid @map("tenant_id")
+  subscriptionId String                    @db.Uuid @map("subscription_id")
+  subscription   TenantWebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  eventType      String                    @map("event_type")
+  payload        Json
+  status         WebhookDeliveryStatus     @default(PENDING)
+  httpStatus     Int?                      @map("http_status")
+  attempt        Int                       @default(0)
+  error          String?
+  createdAt      DateTime                  @default(now()) @map("created_at")
+  deliveredAt    DateTime?                 @map("delivered_at")
+
+  @@index([tenantId])
+  @@index([subscriptionId])
+  @@map("tenant_webhook_deliveries")
 }

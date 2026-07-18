@@ -8,6 +8,7 @@ import { FinanceService } from "../finance/finance.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { STORAGE_PROVIDER, type StorageProvider } from "../storage/storage-provider.interface.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
+import { WebhookDispatcherService } from "../webhook-dispatch/webhook-dispatch.service.js";
 
 import { PAYMENT_PROVIDER, type PaymentMethodValue, type PaymentProvider } from "./payment-provider.interface.js";
 
@@ -22,6 +23,7 @@ export class PaymentsService {
     @Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider,
     private readonly booking: BookingService,
     private readonly finance: FinanceService,
+    private readonly webhooks: WebhookDispatcherService,
   ) {}
 
   /** Storefront checkout (PRD §7.1.3). */
@@ -198,22 +200,34 @@ export class PaymentsService {
   }
 
   private async finalizePaidInvoice(tenant: ResolvedTenant, invoiceId: string, paymentId: string) {
-    const { bookingId, hasDeposit, depositAmount } = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
-      await this.finance.markPaid(tx, invoiceId);
-      const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { lines: true } });
-      const depositLine = invoice.lines.find((l) => l.lineType === "DEPOSIT");
-      const depositAmt = depositLine?.amount.toString();
+    const { bookingId, hasDeposit, depositAmount, invoiceNumber, totalAmount, paymentAmount } =
+      await this.prisma.runInTenantContext(tenant.id, async (tx) => {
+        await this.finance.markPaid(tx, invoiceId);
+        const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { lines: true } });
+        const depositLine = invoice.lines.find((l) => l.lineType === "DEPOSIT");
+        const depositAmt = depositLine?.amount.toString();
 
-      // The AR closed here is only the revenue portion — the deposit was never
-      // in AR/Revenue to begin with (see packages/database/src/ledger.ts).
-      const revenuePortion = (Number(invoice.totalAmount.toString()) - Number(depositAmt ?? 0)).toFixed(2);
-      await recordPaymentReceivedEntries(tx, tenant.id, paymentId, invoiceId, revenuePortion);
+        // The AR closed here is only the revenue portion — the deposit was never
+        // in AR/Revenue to begin with (see packages/database/src/ledger.ts).
+        const revenuePortion = (Number(invoice.totalAmount.toString()) - Number(depositAmt ?? 0)).toFixed(2);
+        await recordPaymentReceivedEntries(tx, tenant.id, paymentId, invoiceId, revenuePortion);
+        const payment = await tx.payment.findUniqueOrThrow({ where: { id: paymentId } });
 
-      return {
-        bookingId: invoice.bookingId,
-        hasDeposit: Boolean(depositLine),
-        depositAmount: depositAmt,
-      };
+        return {
+          bookingId: invoice.bookingId,
+          hasDeposit: Boolean(depositLine),
+          depositAmount: depositAmt,
+          invoiceNumber: invoice.invoiceNumber,
+          totalAmount: invoice.totalAmount.toString(),
+          paymentAmount: payment.amount.toString(),
+        };
+      });
+
+    await this.webhooks.dispatch(tenant, "invoice.paid", { invoiceId, invoiceNumber, totalAmount, bookingId });
+    await this.webhooks.dispatch(tenant, "payment.received", {
+      paymentId,
+      invoiceId,
+      amount: paymentAmount,
     });
 
     if (bookingId) {

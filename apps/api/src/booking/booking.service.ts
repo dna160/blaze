@@ -8,6 +8,7 @@ import { FinanceService } from "../finance/finance.service.js";
 import { NotificationsService } from "../notifications/notifications.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
+import { WebhookDispatcherService } from "../webhook-dispatch/webhook-dispatch.service.js";
 
 import { bookingFsmFor, GuardFailedError, type BookingActivationContext, type BookingStatus } from "./booking-fsm.util.js";
 
@@ -35,6 +36,7 @@ export class BookingService {
     private readonly finance: FinanceService,
     private readonly notifications: NotificationsService,
     private readonly audit: AuditService,
+    private readonly webhooks: WebhookDispatcherService,
   ) {}
 
   /** PRD §7.1.2 booking flow steps 1-5: pick AssetType, soft-reserve a unit, submit for approval. */
@@ -238,6 +240,15 @@ export class BookingService {
       action: "BOOKING_APPROVED",
       entityType: "Booking",
       entityId: bookingId,
+    });
+    await this.webhooks.dispatch(tenant, "booking.approved", {
+      bookingId: booking.id,
+      bookingModel: booking.bookingModel,
+      assetId: booking.assetId,
+      customerId: booking.customerId,
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      totalAmount: invoice.totalAmount.toString(),
     });
 
     return { booking, invoice };

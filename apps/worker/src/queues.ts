@@ -1,6 +1,7 @@
 import { Queue, Worker, type Job } from "bullmq";
 import IORedis from "ioredis";
 
+import { deliverTenantWebhook, markWebhookDeliveryFailed, type WebhookDeliveryJobPayload } from "./jobs/deliver-tenant-webhook.job.js";
 import { runDunningLadder } from "./jobs/dunning-ladder.job.js";
 import { runGenerateRecurringInvoices } from "./jobs/generate-recurring-invoices.job.js";
 import { runLedgerBalanceCheck } from "./jobs/ledger-balance-check.job.js";
@@ -8,6 +9,8 @@ import { runLedgerBalanceCheck } from "./jobs/ledger-balance-check.job.js";
 export const INVOICE_GENERATION_QUEUE = "invoice-generation";
 export const DUNNING_LADDER_QUEUE = "dunning-ladder";
 export const LEDGER_BALANCE_CHECK_QUEUE = "ledger-balance-check";
+/** Must match apps/api/src/webhook-dispatch/webhook-dispatch.service.ts's TENANT_WEBHOOK_DELIVERY_QUEUE exactly — that's the producer, this file's Worker is the consumer. */
+export const TENANT_WEBHOOK_DELIVERY_QUEUE = "tenant-webhook-delivery";
 
 export function createRedisConnection(): IORedis {
   const url = process.env.REDIS_URL;
@@ -81,9 +84,25 @@ export function startWorkers(connection: IORedis): Worker[] {
     { connection },
   );
 
+  const webhookDeliveryWorker = new Worker<WebhookDeliveryJobPayload>(
+    TENANT_WEBHOOK_DELIVERY_QUEUE,
+    async (job: Job<WebhookDeliveryJobPayload>) => {
+      await deliverTenantWebhook(job.data, job.attemptsMade + 1);
+    },
+    { connection },
+  );
+  webhookDeliveryWorker.on("failed", async (job, err) => {
+    console.error(`Job ${job?.id} in ${job?.queueName} failed:`, err);
+    if (job && job.attemptsMade >= (job.opts.attempts ?? 1)) {
+      await markWebhookDeliveryFailed(job.data, err.message).catch((markErr) =>
+        console.error(`Failed to mark delivery ${job.data.deliveryId} permanently FAILED:`, markErr),
+      );
+    }
+  });
+
   for (const worker of [invoiceWorker, dunningWorker, ledgerWorker]) {
     worker.on("failed", (job, err) => console.error(`Job ${job?.id} in ${job?.queueName} failed:`, err));
   }
 
-  return [invoiceWorker, dunningWorker, ledgerWorker];
+  return [invoiceWorker, dunningWorker, ledgerWorker, webhookDeliveryWorker];
 }

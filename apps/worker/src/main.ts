@@ -6,7 +6,7 @@ async function main() {
   const connection = createRedisConnection();
   await scheduleRepeatableJobs(connection);
   const workers = startWorkers(connection);
-  console.log("RentOS worker started — invoice-generation and dunning-ladder queues active.");
+  console.log("RentOS worker started — invoice-generation, dunning-ladder, ledger-balance-check, and tenant-webhook-delivery queues active.");
 
   // Railway healthcheck target — the worker has no HTTP API, but Railway's
   // Dockerfile-builder services still expect a TCP healthcheck endpoint.

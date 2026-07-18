@@ -6,3 +6,4 @@ export * from "./finance.js";
 export * from "./customer.js";
 export * from "./contract.js";
 export * from "./swap-request.js";
+export * from "./platform-api.js";

@@ -18,7 +18,7 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 | **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (Session 3), KYC upload + review (Session 4), and the contract e-sign gate (Session 5). 🚧 Remaining gaps: request-info/customer-reply UI, unit reassignment on approve UI |
 | **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | ✅ **Complete** — every named item on PRD §13's list plus every gap found along the way is done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow with partial-application support (Session 12, console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only), visual unit map + occupancy view (Session 9, console UI, staff-only), swap/upgrade requests with computed mid-cycle proration (Sessions 10 + 13, storefront + console UI), and a real ESignProvider port (Session 11, Privy adapter coded-but-unconfigured, MockESignProvider is the zero-regression default). Phase 3 is next. |
 | **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | ✅ **Every named item on PRD §13's Phase 3 list is done**, and the extensibility thesis has now been proven twice over. NIGHTLY (Session 14) and DURATION_ORDER (Session 15) are both real end-to-end. Two additional tenants are live with zero application code changes: `griya-nginap`/NIGHTLY (Session 16 — also found and fixed a real cross-tenant data leak) and `sewa-alat`/DURATION_ORDER (Session 19 — re-verified the Session 16 security fix holds at 3 tenants, not just 2). Pooled inventory (Session 17) drives genuine date-range-overlap capacity checking. Seasonal/dynamic pricing (Session 18) gives real per-night rate overrides. `HOURLY_SLOT` (venue/studio) is the one booking model still a stub, but it was never on Phase 3's named list — it's explicitly Phase-3-and-beyond, lowest priority, PRD's own "furthest out on the roadmap." |
-| **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | ⬜ Not started, deliberately deferred per PRD |
+| **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | 🚧 Started (Session 20): tenant-facing read API + outbound webhooks are done, live-verified, enabled for `gudang-aman` only. Self-serve signup, billing/metering, the automation builder, OTA sync, and KYC automation are still not started. |
 
 ### What's proven end-to-end (verified live against local Postgres/Redis)
 
@@ -828,6 +828,123 @@ cleanup, checked across all three tenants combined. Full
 packages (no domain-package changes this session — this was a
 database-seed + live-verification session, same shape as Session 16).
 
+**Session 20 (Phase 4 kickoff — tenant-facing API + outbound webhooks):**
+Self-directed the Phase 4 sub-feature choice (user said "let's move on to
+phase 4, but only 1 tenant has it on the demo version" and explicitly
+rejected an `AskUserQuestion` scoping prompt, so this session proceeded
+without asking). Chose tenant-facing read API + outbound webhooks over
+self-serve signup/billing/automation-builder/OTA-sync — best-bounded
+engineering scope, reuses existing auth/RLS/BullMQ patterns, and fits
+"one tenant only" as a `featureFlags.api_access_enabled` gate. Built:
+
+- `TenantApiKey` / `TenantWebhookSubscription` / `TenantWebhookDelivery`
+  (new RLS-covered tables, same `ENABLE`/`FORCE`/`CREATE POLICY` pattern as
+  every other tenant-scoped table — `TenantApiKey` is deliberately **not**
+  excluded from RLS like `tenants`/`tenant_domains` are, see the guard
+  design below).
+- `packages/contracts/src/platform-api.ts` — request/response schemas plus
+  `WEBHOOK_EVENT_TYPES = ["booking.approved", "invoice.paid",
+  "payment.received"]` as the single source of truth for valid event types.
+- `WebhookDispatcherService` (`apps/api/src/webhook-dispatch/`) — a
+  dedicated BullMQ producer (its own `IORedis` connection,
+  `maxRetriesPerRequest: null`, separate from the existing OTP-tuned
+  `RedisService`). `dispatch(tenant, eventType, data)` is a silent no-op
+  unless the tenant has the feature flag AND an active matching
+  subscription exists, so callers never gate it themselves — just call it
+  unconditionally at the point the real event happens. Wired into
+  `BookingService.approve` (`booking.approved`) and
+  `PaymentsService.finalizePaidInvoice` (`invoice.paid` +
+  `payment.received`, fired from the one method all three payment-finalize
+  paths funnel through).
+- `ApiKeysModule` / `TenantWebhooksModule` — console-facing CRUD,
+  `SUPER_ADMIN`-only. Plaintext API key/webhook secret shown exactly once,
+  at creation; list/get responses never include the key hash or secret
+  (a real leak was caught and fixed during this session's own live
+  verification — `ApiKeysService.list()` originally returned the raw
+  Prisma row including `keyHash`; now uses an explicit `select`, matching
+  the pattern `TenantWebhooksService` already used for its secret).
+- `ExternalApiModule` — `GET /external/bookings` and `GET
+  /external/invoices`, cursor-paginated, behind `ApiKeyGuard`.
+- `apps/worker`'s `deliver-tenant-webhook.job.ts` — HMAC-SHA256 signs the
+  payload with the subscription's secret, POSTs with a 10s timeout,
+  records `httpStatus`/`error`/`attempt` on every try. Failure throws so
+  BullMQ's `attempts: 5` + exponential backoff retries; the delivery row
+  only flips to terminal `FAILED` once retries are exhausted (checked via
+  `job.attemptsMade === job.opts.attempts` in the `Worker`'s `"failed"`
+  handler), not on every transient failure.
+- `apps/console/src/app/api-access` — key/subscription management +
+  delivery-history view. Doesn't hide itself from tenants without the
+  flag (console is one deployment per tenant anyway); shows a clear
+  "not enabled for this tenant" message instead, backed by the real
+  403 from the service layer.
+- Seed: `gudang-aman` gets `featureFlags.api_access_enabled: true` (the
+  other two tenants don't), a `SUPER_ADMIN` staff user
+  (`superadmin@gudang-aman.test` — no tenant had one before this, since
+  no prior module required it), a demo API key (`rok_demo_gudang_aman_2026`,
+  fixed plaintext so it survives reseeding, same convention as
+  `DEMO_PASSWORD_HASH`), and a demo webhook subscription pointing at the
+  placeholder `https://example.com/webhooks/rentos` (deliberately
+  non-functional — it exists so the console has something to show, not to
+  actually deliver anywhere; see "Known shortcuts").
+
+**Design decision — `ApiKeyGuard` and the RLS boundary**: the natural
+question is how a request can be authenticated by API key before its
+tenant is known, when RLS requires `app.tenant_id` set first. Rejected
+excluding `TenantApiKey` from RLS (mirroring `tenants`/`tenant_domains`)
+because that would reopen the exact unscoped-lookup risk surface Session
+16's cross-tenant IDOR bug came from. Instead, `ApiKeyGuard` requires the
+tenant already resolved by the existing `TenantMiddleware`
+(`X-Tenant-Slug` header or Host — runs before every guard, for every
+route) and looks the key up via `runInTenantContext(req.tenant.id, ...)`,
+exactly like every other tenant-scoped query in this codebase. A caller
+cannot probe whether a key exists under a tenant it didn't declare via
+the header — verified live: a real `gudang-aman` key presented with
+`X-Tenant-Slug: griya-nginap` gets the same 401 as no key at all (the
+flag check fails first; even past that, the RLS-scoped lookup in
+`griya-nginap`'s context would never see `gudang-aman`'s key row).
+
+**Live verification** (real HTTP against local Postgres/Redis, plus a
+throwaway local HTTP receiver on `:4500` for real webhook delivery):
+`GET /external/bookings|invoices` with a valid key → 200 with real,
+RLS-scoped data; invalid key → 401; revoked key → 401; valid key +
+wrong `X-Tenant-Slug` → 401 ("not enabled", since the other two tenants
+don't have the flag); no key → 401. Created a live booking, approved it
+(`booking.approved` delivered to the local receiver, HTTP 200,
+`X-RentOS-Signature` independently recomputed in Python and matched
+byte-for-byte), then paid its invoice (`invoice.paid` and
+`payment.received` both delivered, both signatures verified). The seeded
+placeholder subscription to `https://example.com/webhooks/rentos` failed
+and retried as expected — that's the intended behavior of a demo
+placeholder URL, not a bug. `griya-nginap`/`sewa-alat` both correctly
+rejected external-API calls regardless of key validity (flag off).
+Ledger balance summed to exactly 0.00 across all three tenants
+throughout, and again after test-data cleanup (temp asset, customer,
+booking, invoice, payment, ledger entries, and the verification-only
+webhook subscription/API key were all deleted — the seeded demo key and
+demo subscription were left in place). Full
+`turbo run typecheck test build --force` passes clean across all 8
+packages (note: this environment's shared `.env` sets
+`NODE_ENV=development`, which breaks Next.js's static `/404` prerender
+with an unrelated `<Html> should not be imported outside of
+pages/_document` error — build with `NODE_ENV=production` explicitly, a
+pre-existing environment quirk unrelated to this session's changes, not
+a regression).
+
+**Also caught mid-session**: re-running `seed.ts` against an
+**already-seeded** database does not retroactively apply new
+`Tenant.featureFlags` keys — `tenant.upsert`'s `update: {}` is a
+deliberate no-op on existing rows (see the file's own top comment: it
+never overwrites a tenant that already exists), so `api_access_enabled`
+only lands via the `create` branch on a genuinely fresh database. This
+local environment's DB predated the seed.ts edit, so the flag had to be
+patched in directly via SQL to unblock verification. Not a bug in the
+upsert pattern itself (retroactively overwriting tenant state on every
+reseed would be worse — it'd clobber real config changes made through
+the console), just something to know: **a fresh `docker compose up` +
+first-ever seed run gets this correctly out of the box; an
+already-seeded local DB from a prior session does not** and needs either
+a fresh DB or a manual flag patch.
+
 ### What's explicitly NOT done (don't assume it exists)
 
 - Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
@@ -843,36 +960,47 @@ database-seed + live-verification session, same shape as Session 16).
 
 ## Resume here
 
-**Phase 2 is complete. Phase 3 is complete** — every named item on PRD
-§13's Phase 3 list is done: NIGHTLY (Session 14) and DURATION_ORDER
-(Session 15) real logic, pooled inventory (Session 17), seasonal
-pricing (Session 18), and a second tenant in a different vertical
-onboarded with **zero application code changes** (Session 16) — the
-PRD's core extensibility thesis is validated with real evidence, not
-just a clean interface. Session 16 also closed a real cross-tenant
-security gap that every single-tenant verification in Sessions 1-15
-structurally could not have caught — read that entry before touching
-any `@CurrentTenant()`/`@UseGuards` code, since the fix (folding the
-tenant-match check into `JwtAuthGuard`) is now load-bearing for every
-authenticated route, not an opt-in you need to remember.
+**Phases 0-3 are complete.** Phase 4 (SaaS-ready) is **started, not
+finished** — Session 20 built and live-verified tenant-facing API keys +
+outbound webhooks (the "read API + webhooks" slice), self-directed per
+the user's "let's move on to phase 4" + explicit rejection of a
+scoping question, gated to `gudang-aman` only per "only 1 tenant has it."
+**Still not started, in priority order per PRD §13**: self-serve tenant
+signup, tenant billing/metering, a visual automation builder, OTA
+channel sync (hotel), KYC automation. Each of those is its own
+business-shaped decision (pricing model, which OTA to integrate first,
+etc.) more than the API/webhooks slice was — if continuing Phase 4
+autonomously, self-direct the next sub-feature the same way Session 20
+did (pick the most engineering-bounded one, document the reasoning),
+unless the user gives more specific direction.
 
-**Next up is Phase 4** per PRD §13 — explicitly marked "(optional)" in
-the PRD, gated on a monetization decision the owner deliberately
-deferred ("Phases 0–3 are architected so that gate is a pricing
-decision, not a rebuild"). Its scope: self-serve tenant signup,
-tenant billing/metering, a visual automation builder, OTA channel sync
-(hotel), tenant-facing API/webhooks, and KYC automation. **Do not
-start Phase 4 without explicit direction** — it's the one phase the
-PRD itself frames as a business decision, not a default next sprint,
-unlike Phases 1-3 which were unconditionally "build these."
+Read Session 20's full entry above before touching
+`apps/api/src/webhook-dispatch/`, `apps/api/src/api-keys/`,
+`apps/api/src/tenant-webhooks/`, or `apps/api/src/external-api/` — in
+particular the `ApiKeyGuard` design rationale (why `TenantApiKey` stays
+RLS-covered, unlike `tenants`/`tenant_domains`) and the seed-upsert
+gotcha (an already-seeded DB doesn't retroactively pick up new
+`featureFlags` keys from `seed.ts` — only a fresh DB's first seed run
+does).
 
-**Three tenants are now live** (`gudang-aman`/RECURRING_LEASE,
-`griya-nginap`/NIGHTLY, `sewa-alat`/DURATION_ORDER, Session 19) — the
-extensibility thesis has been proven twice over now, and the
-cross-tenant security fix from Session 16 has been re-verified holding
-at N=3, not just N=2. Login credentials for all three tenants'
-seeded staff: `ops@<tenant>.test` / `finance@<tenant>.test`, password
-`RentOS!Demo2026` for every one of them.
+**Phase 3 recap** (Sessions 14-19): NIGHTLY and DURATION_ORDER real
+logic, pooled inventory, seasonal pricing, two additional tenants in
+different verticals onboarded with **zero application code changes** —
+the PRD's core extensibility thesis is validated with real evidence.
+Session 16 also closed a real cross-tenant security gap (folded into
+`JwtAuthGuard`, now load-bearing for every authenticated route) —
+re-verified holding at N=3 tenants in Session 19, and Session 20's new
+`ApiKeyGuard` was deliberately designed to not reopen that same bug
+class for the new API-key auth path.
+
+**Three tenants are live** (`gudang-aman`/RECURRING_LEASE,
+`griya-nginap`/NIGHTLY, `sewa-alat`/DURATION_ORDER). Login credentials
+for all three tenants' seeded staff (`admin@gudang-aman.test` /
+`ops@griya-nginap.test` / `ops@sewa-alat.test`, plus `finance@<tenant>.test`
+for every tenant), password `RentOS!Demo2026` for every one of them.
+`gudang-aman` additionally has `superadmin@gudang-aman.test` (same
+password) — the only `SUPER_ADMIN` seeded anywhere so far, needed for
+the new `/api-access` console page.
 
 Low-priority polish left over from Phase 3, worth doing opportunistically
 but none of it blocks anything:
@@ -923,6 +1051,10 @@ Before writing new code:
 - **Ledger writes are paired helper functions, not a generic "post a journal entry" API.** Every call site (`recordInvoiceIssuedEntries`, `recordPaymentReceivedEntries`, `recordDepositHeldEntries`, `recordDepositRefundedEntries`, `recordCreditNoteEntries`) writes both sides of its entry in one function — there is no way to call code that debits without also crediting. This is why the ledger balance-checked cleanly on the first try in live verification; a generic single-entry API would have made an unbalanced write a routine typo away.
 - **KYC upload is a proxied multipart POST, not a presigned-URL direct-to-storage flow** — deliberately simpler than the two-step "presign, then PUT to storage, then tell the API the key" dance many production systems use. The original `packages/contracts/src/customer.ts` comment described the presigned-URL approach before this session actually built the upload; that comment was wrong and has been corrected. Bytes transit our own API over TLS once, server-side, and `StorageProvider.save()` handles the rest — correct and simple at this scale. Revisit only if upload volume/size ever makes proxying through the API a real bottleneck.
 - **A customer is `VERIFIED` only when every KYC document they've submitted is `VERIFIED`** (`KycService.review`), not just the most recently reviewed one — checked by re-querying all of that customer's `KycDocument` rows after each review and requiring both a KTP and a SELFIE to exist and all be `VERIFIED`. A fresh upload always reopens `PENDING_REVIEW` even if other documents were already verified. Verified live: verifying KTP alone left the customer `PENDING_REVIEW`; verifying the selfie too flipped them to `VERIFIED`.
+- **`ApiKeyGuard` (`apps/api/src/external-api/api-key.guard.ts`, Session 20) requires the tenant already resolved by `TenantMiddleware` before it runs** — `TenantApiKey` stays fully RLS-covered (not excluded like `tenants`/`tenant_domains`), and the key lookup always runs via `runInTenantContext(req.tenant.id, ...)`. Deliberately avoids reopening the Session 16 cross-tenant-lookup bug class for a brand-new auth path; see Session 20's HANDOFF entry for the full reasoning.
+- **API keys are hashed with SHA-256, not bcrypt** (`apps/api/src/api-keys/api-key.util.ts`): bcrypt's slow-hash design defends against brute-forcing low-entropy human-chosen passwords. An API key is a 24-byte random secret — there's nothing for a slow hash to buy here, and it would add real CPU cost to every external-API request (the hash is recomputed on every call, not just at login).
+- **Webhook signing secrets are stored in plaintext, not hashed** (`TenantWebhookSubscription.secret`) — unlike API keys, `apps/worker`'s delivery job needs the actual secret value to compute each delivery's HMAC, so hashing it would make delivery impossible. The console still only shows it once, at creation (same UX convention as Stripe/GitHub webhook secrets), even though it technically could be re-displayed.
+- **`WebhookDispatcherService.dispatch()` is a no-op by default, not a guarded call site** — it checks the feature flag and subscription match internally and returns early if either is absent, so `BookingService`/`PaymentsService` call it unconditionally at the point a real event happens rather than wrapping every call site in an `if (tenant.featureFlags.api_access_enabled)` check that would need to be remembered at every future event-emitting call site too.
 - **`LocalDiskStorageProvider` is dev/demo-only, not Railway-production-safe as configured** — container filesystems are ephemeral across deploys/restarts unless a persistent Volume is explicitly mounted at `UPLOAD_DIR`. Real KTP/selfie images (actual PII, PRD §10 "encrypted PII at rest") must go through `S3StorageProvider` (`STORAGE_PROVIDER=s3`) before this touches production, or a Volume needs to be attached to the api service on Railway. This is flagged loudly in the provider's own doc comment specifically so it isn't missed.
 
 ## Known shortcuts (intentional, not bugs)
@@ -946,6 +1078,11 @@ Before writing new code:
 - NIGHTLY deposit refunds after checkout, and DURATION_ORDER deposit refunds/damage deductions after inspection, are **not automated** — `checkOut()`/`completeInspection()` only transition the booking/asset; staff process deposit refunds via the existing, unrelated `DepositsService.requestRefund`/`approveRefund`/`applyToDamages` flow (Session 2/12) exactly as they would for a RECURRING_LEASE move-out. This mirrors how RECURRING_LEASE already works (deposit settlement is a separate finance-module concern from the booking FSM), not a gap specific to either newer vertical.
 - `DurationOrderStrategy.computeFinalSettlement` (`packages/domain/src/booking-model/duration-order.strategy.ts`) still throws `BookingModelNotImplementedError` — deliberately, same reasoning as `NightlyStrategy`'s: no early-return path exists on `durationOrderBookingFsm` yet (`RETURNED` only goes forward through `INSPECTION` to `CLOSED`).
 - DURATION_ORDER's `returnEquipment()` routes the asset through `MAINTENANCE` during the `INSPECTION` window (via `assetFsm`'s existing `SET_MAINTENANCE`/`RETURN_TO_SERVICE` transitions) rather than adding a new asset status — a deliberate reuse of `MAINTENANCE`'s existing meaning ("off-market, not bookable") rather than growing the `AssetStatus` enum for one vertical's inspection step. If a tenant ever needs to distinguish "genuinely broken, needs repair" from "routine post-rental inspection" at the asset-status level, that's a real reason to add a dedicated status — not needed yet.
+
+- The seeded demo webhook subscription (`gudang-aman`, Session 20) points at `https://example.com/webhooks/rentos` — a deliberately non-functional placeholder, not a real endpoint. It exists so the `/api-access` console page has something to show out of the box; every delivery to it fails and retries per BullMQ's backoff, eventually landing `FAILED` once attempts exhaust. This is expected, not a bug — point a subscription at a real receiver to see an actual `SUCCEEDED` delivery.
+- Webhook delivery has no manual "retry" or "redeliver" action in the console yet (Stripe/GitHub-style) — once BullMQ's 5 attempts exhaust, a `FAILED` delivery stays `FAILED`; the only way to get the event redelivered today is to trigger the underlying event again (re-approve isn't possible, but e.g. re-paying isn't either since payment is one-shot) or manually re-enqueue via `WebhookDispatcherService` from a script. Small, contained addition if it's ever needed.
+- No API key or webhook secret rotation/expiry — keys and secrets are valid until manually revoked/deleted, no TTL, no "rotate and keep the old one valid for N days" grace period.
+- `ExternalApiModule`'s two endpoints (`GET /external/bookings`, `GET /external/invoices`) are read-only and unfiltered beyond cursor pagination — no date-range/status query params, no webhook-event-type-specific payload shaping beyond what `WebhookDispatcherService`'s call sites already construct by hand. Sufficient for "connect your own systems" v1; a tenant wanting e.g. "only PAID invoices since date X" needs to filter client-side today.
 
 ## Open PRD questions still unanswered (§15)
 
