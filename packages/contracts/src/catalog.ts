@@ -32,6 +32,8 @@ export const AssetTypeDtoSchema = z.object({
   attributesSchema: z.record(z.unknown()),
   pricing: PricingConfigSchema,
   photos: z.array(z.string()),
+  /** Interchangeable inventory (e.g. shared dorm beds) — availability is a capacity count over a date range rather than one specific Asset held per booking. See docs/HANDOFF.md Session 17. */
+  isPooled: z.boolean(),
   isPublished: z.boolean(),
 });
 export type AssetTypeDto = z.infer<typeof AssetTypeDtoSchema>;

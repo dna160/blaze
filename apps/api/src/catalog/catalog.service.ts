@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
+import { computePooledAvailableCount } from "@rentos/database";
 
 import { PrismaService } from "../prisma/prisma.service.js";
 
@@ -20,11 +21,29 @@ export class CatalogService {
     return assetType;
   }
 
-  /** Availability = count of AVAILABLE assets for this AssetType (PRD §7.1.1). v1 has no date-range calendar yet — RECURRING_LEASE availability is a point-in-time count, not a range query. */
-  async availableCount(tenantId: string, assetTypeId: string): Promise<number> {
-    return this.prisma.runInTenantContext(tenantId, (tx) =>
-      tx.asset.count({ where: { assetTypeId, status: "AVAILABLE" } }),
-    );
+  /**
+   * Non-pooled: count of AVAILABLE assets for this AssetType (PRD
+   * §7.1.1) — v1 has no date-range calendar for these; RECURRING_LEASE
+   * availability is a point-in-time count, not a range query.
+   *
+   * Pooled (`AssetType.isPooled`): a real capacity-over-a-window count
+   * via `computePooledAvailableCount` (`@rentos/database`, Session 17).
+   * `window` defaults to "right now" (a zero-length window) when the
+   * caller has no specific dates yet — e.g. the storefront asset-type
+   * page, shown before a customer picks dates. The number that actually
+   * gates a booking is recomputed against the customer's real requested
+   * dates at submission time (`BookingService.createBooking`); this is
+   * a display estimate.
+   */
+  async availableCount(tenantId: string, assetTypeId: string, window?: { startDate: Date; endDate: Date }): Promise<number> {
+    return this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const assetType = await tx.assetType.findUniqueOrThrow({ where: { id: assetTypeId } });
+      if (!assetType.isPooled) {
+        return tx.asset.count({ where: { assetTypeId, status: "AVAILABLE" } });
+      }
+      const now = new Date();
+      return computePooledAvailableCount(tx, assetType, window?.startDate ?? now, window?.endDate ?? now);
+    });
   }
 
   listAssets(tenantId: string, filters: { locationId?: string; assetTypeId?: string; status?: string }) {

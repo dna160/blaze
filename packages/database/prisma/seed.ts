@@ -283,12 +283,45 @@ async function seedHomestayTenant() {
     },
   });
 
+  /**
+   * Pooled inventory demo (Session 17, PRD §5.2 `AssetType.isPooled`):
+   * identical dorm beds where a guest doesn't care which specific bed,
+   * only that one is free for their dates — availability is a capacity
+   * count over a date window, not "is this one exact Asset AVAILABLE
+   * right now" (see `computePooledAvailableCount` in @rentos/database).
+   * Small pool (2 beds) deliberately, so the overlap/exhaustion behavior
+   * is easy to exercise in live verification.
+   */
+  const dormBed = await prisma.assetType.upsert({
+    where: { tenantId_slug: { tenantId: tenant.id, slug: "dorm-bed" } },
+    update: {},
+    create: {
+      tenantId: tenant.id,
+      name: "Dorm Bed (Shared Room)",
+      slug: "dorm-bed",
+      bookingModel: BookingModel.NIGHTLY,
+      isPooled: true,
+      attributesSchema: { sizeM2: 4, climateControlled: true },
+      pricing: {
+        basePrice: 120000,
+        currency: "IDR",
+        adminFee: 5000,
+        depositRule: { type: "FIXED", amount: 50000 },
+        taxInclusive: false,
+      },
+      photos: [],
+      isPublished: true,
+    },
+  });
+
   const assetCodes: Array<{ code: string; assetTypeId: string; status: AssetStatus }> = [
     { code: "R-01", assetTypeId: roomStandard.id, status: AssetStatus.AVAILABLE },
     { code: "R-02", assetTypeId: roomStandard.id, status: AssetStatus.AVAILABLE },
     { code: "R-03", assetTypeId: roomStandard.id, status: AssetStatus.MAINTENANCE },
     { code: "D-01", assetTypeId: roomDeluxe.id, status: AssetStatus.OCCUPIED },
     { code: "D-02", assetTypeId: roomDeluxe.id, status: AssetStatus.AVAILABLE },
+    { code: "BED-01", assetTypeId: dormBed.id, status: AssetStatus.AVAILABLE },
+    { code: "BED-02", assetTypeId: dormBed.id, status: AssetStatus.AVAILABLE },
   ];
 
   const assets = [];

@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { assetFsm } from "@rentos/domain";
-import { recordDepositHeldEntries, type Prisma } from "@rentos/database";
+import { computePooledAvailableCount, findAvailablePooledAsset, recordDepositHeldEntries, type Prisma } from "@rentos/database";
 
 import { AuditService } from "../audit/audit.service.js";
 import { CrmService } from "../crm/crm.service.js";
@@ -54,12 +54,26 @@ export class BookingService {
         }
       }
 
-      const availableAsset = await tx.asset.findFirst({
-        where: { assetTypeId: assetType.id, status: "AVAILABLE" },
-        orderBy: { code: "asc" },
-      });
-      if (!availableAsset) {
-        throw new ConflictException("No units of this type are currently available.");
+      // Pooled AssetTypes (isPooled: true, e.g. shared dorm beds) don't
+      // hold one specific Asset per booking — capacity is checked as a
+      // count over the requested date window instead, and a concrete
+      // unit only gets assigned at approval time (see approve()). See
+      // docs/HANDOFF.md Session 17.
+      let availableAssetId: string | null = null;
+      if (assetType.isPooled) {
+        const capacity = await computePooledAvailableCount(tx, assetType, input.startDate, input.endDate!);
+        if (capacity < 1) {
+          throw new ConflictException("No units of this type are currently available for the requested dates.");
+        }
+      } else {
+        const availableAsset = await tx.asset.findFirst({
+          where: { assetTypeId: assetType.id, status: "AVAILABLE" },
+          orderBy: { code: "asc" },
+        });
+        if (!availableAsset) {
+          throw new ConflictException("No units of this type are currently available.");
+        }
+        availableAssetId = availableAsset.id;
       }
 
       const fsm = bookingFsmFor(assetType.bookingModel);
@@ -70,7 +84,7 @@ export class BookingService {
           tenantId: tenant.id,
           customerId: customer.id,
           assetTypeId: assetType.id,
-          assetId: availableAsset.id,
+          assetId: availableAssetId,
           bookingModel: assetType.bookingModel,
           status: "DRAFT",
           startDate: input.startDate,
@@ -81,22 +95,22 @@ export class BookingService {
       });
 
       const { to } = await fsm.fire("DRAFT", "SUBMIT", {} as BookingActivationContext);
-      await assetFsm.fire("AVAILABLE", "RESERVE", undefined);
+      if (availableAssetId) {
+        await assetFsm.fire("AVAILABLE", "RESERVE", undefined);
+        await tx.asset.update({ where: { id: availableAssetId }, data: { status: "RESERVED" } });
+      }
 
-      const [updated] = await Promise.all([
-        tx.booking.update({ where: { id: created.id }, data: { status: to } }),
-        tx.asset.update({ where: { id: availableAsset.id }, data: { status: "RESERVED" } }),
-        tx.bookingEvent.create({
-          data: {
-            tenantId: tenant.id,
-            bookingId: created.id,
-            toStatus: to,
-            actorType: "CUSTOMER",
-            actorId: customer.id,
-            reason: "Booking submitted via storefront",
-          },
-        }),
-      ]);
+      const updated = await tx.booking.update({ where: { id: created.id }, data: { status: to } });
+      await tx.bookingEvent.create({
+        data: {
+          tenantId: tenant.id,
+          bookingId: created.id,
+          toStatus: to,
+          actorType: "CUSTOMER",
+          actorId: customer.id,
+          reason: "Booking submitted via storefront",
+        },
+      });
       return updated;
     });
 
@@ -152,9 +166,24 @@ export class BookingService {
       const fsm = bookingFsmFor(existing.bookingModel);
       const { to } = await fsm.fire(existing.status as never, "APPROVE", {} as BookingActivationContext);
 
-      const finalAssetId = assetId ?? existing.assetId;
+      let finalAssetId = assetId ?? existing.assetId;
       if (!finalAssetId) {
-        throw new BadRequestException("An asset must be assigned before a booking can be approved.");
+        // Pooled bookings never reserve a specific unit at submission
+        // (see createBooking) — this is the first point a concrete
+        // Asset gets attached. Auto-pick from the pool unless staff
+        // passed an explicit assetId above.
+        const assetType = await tx.assetType.findUnique({ where: { id: existing.assetTypeId } });
+        if (assetType?.isPooled && existing.endDate) {
+          const pooledAssetId = await findAvailablePooledAsset(tx, assetType, existing.startDate, existing.endDate);
+          if (!pooledAssetId) {
+            throw new ConflictException("No units of this type are available for the requested dates.");
+          }
+          finalAssetId = pooledAssetId;
+          await assetFsm.fire("AVAILABLE", "RESERVE", undefined);
+          await tx.asset.update({ where: { id: finalAssetId }, data: { status: "RESERVED" } });
+        } else {
+          throw new BadRequestException("An asset must be assigned before a booking can be approved.");
+        }
       }
 
       const updated = await tx.booking.update({

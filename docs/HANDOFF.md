@@ -17,7 +17,7 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 | **0 — Foundation** | Tenancy + RLS, auth/RBAC, domain model, asset registry, Xendit/WA sandbox | ✅ Done (auth: staff JWT + customer OTP; RLS verified; provider seams in place, sandbox keys not yet supplied) |
 | **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (Session 3), KYC upload + review (Session 4), and the contract e-sign gate (Session 5). 🚧 Remaining gaps: request-info/customer-reply UI, unit reassignment on approve UI |
 | **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | ✅ **Complete** — every named item on PRD §13's list plus every gap found along the way is done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow with partial-application support (Session 12, console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only), visual unit map + occupancy view (Session 9, console UI, staff-only), swap/upgrade requests with computed mid-cycle proration (Sessions 10 + 13, storefront + console UI), and a real ESignProvider port (Session 11, Privy adapter coded-but-unconfigured, MockESignProvider is the zero-regression default). Phase 3 is next. |
-| **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | 🚧 In progress. NIGHTLY (Session 14) and DURATION_ORDER (Session 15) are both real end-to-end. **A second tenant in the NIGHTLY vertical is now live (Session 16)** — the extensibility thesis is validated: zero application code changes were needed, only seed rows. That exercise also found and fixed a real cross-tenant data leak (see below) — arguably the more important outcome of this item. HOURLY_SLOT is still a typed stub. Pooled inventory and seasonal pricing not started. |
+| **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | 🚧 In progress. NIGHTLY (Session 14) and DURATION_ORDER (Session 15) are both real end-to-end. A second tenant in the NIGHTLY vertical is live (Session 16) — the extensibility thesis is validated: zero application code changes were needed, only seed rows; that exercise also found and fixed a real cross-tenant data leak. **Pooled inventory is now real (Session 17)** — `AssetType.isPooled` drives genuine date-range-overlap capacity checking instead of the flag sitting unused. Only seasonal pricing and HOURLY_SLOT remain unstarted in this phase. |
 | **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | ⬜ Not started, deliberately deferred per PRD |
 
 ### What's proven end-to-end (verified live against local Postgres/Redis)
@@ -654,6 +654,79 @@ one tenant's staff token could not have caught this** — it's a direct,
 concrete payoff of actually onboarding a second tenant with its own
 real credentials, not just seeding more data under the same one.
 
+**Session 17 (pooled inventory — `AssetType.isPooled` is now real):**
+PRD §5.2's "pooled" flag existed in schema from Session 1 but nothing
+ever read it — every booking assigned one specific `Asset` regardless.
+New `packages/database/src/pooled-availability.ts`
+(`computePooledAvailableCount`, `findAvailablePooledAsset`) implements
+real date-range-overlap capacity math: available slots = in-service
+units (excludes `RETIRED`/`MAINTENANCE`) minus bookings already
+committed to an overlapping window, using the standard half-open
+interval overlap test (`existing.startDate < windowEnd &&
+existing.endDate > windowStart`). "Committed" status sets are
+booking-model-specific (`NIGHTLY`: `PENDING_APPROVAL` through
+`CHECKED_IN`; `DURATION_ORDER`: `PENDING_APPROVAL` through
+`INSPECTION`) — terminal/dead statuses free the slot immediately.
+Pooled `RECURRING_LEASE` is explicitly unsupported (an indefinite
+lease has no window to overlap against) and throws a clear error if
+ever configured, rather than silently doing the wrong thing.
+
+`BookingService.createBooking` branches on `assetType.isPooled`: pooled
+bookings validate capacity against the *real requested date range* and
+leave `Booking.assetId` **null** — no specific unit is held at
+submission, which is the entire point of a pool (two non-overlapping
+bookings share the same physical inventory instead of the first one
+locking a specific `Asset` for its whole lifecycle regardless of
+dates). `BookingService.approve` is where a concrete unit first gets
+attached: if the booking has no `assetId` and staff didn't pass one
+explicitly, it auto-picks the lowest-code eligible unit via
+`findAvailablePooledAsset` and reserves it (`assetFsm`
+`AVAILABLE → RESERVED`) — a 409 if the pool is exhausted for those
+exact dates by the time of approval (a real race is possible between
+submission and approval; this is the correct place to catch it, not an
+error). Everything downstream (check-in/check-out, deposit, ledger) is
+completely unaffected — by approval time a pooled booking looks
+identical to a non-pooled one, same `Asset` row, same FSM.
+`CatalogService.availableCount` also branches on `isPooled`;
+`GET /catalog/asset-types/:id/availability` gained optional
+`startDate`/`endDate` query params (defaulting to "right now" — a
+zero-length window — when omitted, e.g. the storefront asset-type page
+shown before a customer picks dates) so pooled types can show a
+real-ish "available now" figure. The number that actually gates a
+booking is always recomputed against the customer's real requested
+window at submission time; the display count is an estimate only.
+Added `AssetType.isPooled` to `AssetTypeDtoSchema` (it existed in the
+Prisma model and was already silently present in raw JSON responses,
+just untyped for frontend consumers — a small, harmless gap closed in
+passing). No storefront/console UI changes were needed — the existing
+date-range booking form and asset-type detail page work unchanged for
+a pooled type; only the backend's availability math is different.
+
+Seeded a live demo: `griya-nginap` gained a third `AssetType`, "Dorm
+Bed (Shared Room)" (`isPooled: true`, `NIGHTLY`, 2 physical beds
+`BED-01`/`BED-02`) — a small pool deliberately, to make exhaustion easy
+to exercise. Verified live: two bookings for the identical Aug 1-4
+window both succeeded (`assetId: null` on both, pool has capacity 2);
+a third for the same window correctly 409'd ("no units... available
+for the requested dates"); a booking for a non-overlapping window
+(Aug 10-12) succeeded even though the pool was "full" for Aug 1-4,
+proving this is genuine date-range overlap logic, not a naive
+total-booking-count check; a booking partially overlapping the full
+window (Aug 3-6) correctly still 409'd. Approving both Aug 1-4
+bookings auto-assigned them to the two different physical beds
+(confirmed via response `assetId`s and both beds flipping to
+`RESERVED`). Full pay → check-in → check-out on one of them correctly
+walked its assigned bed through `RESERVED → OCCUPIED → AVAILABLE`,
+identical to a non-pooled NIGHTLY booking. A regression check
+confirmed non-pooled `Kamar Standard` bookings still get a specific
+`assetId` immediately at submission, unchanged from before this
+session. Ledger balance summed to exactly 0.00 after the full flow and
+again after test-data cleanup. Full `turbo run typecheck test build
+--force` passes clean across all 8 packages (no new unit tests this
+session — `packages/database` has no vitest suite, consistent with
+`ledger.ts`/`invoicing.ts`; correctness here is proven by live
+verification against real overlapping bookings instead).
+
 ### What's explicitly NOT done (don't assume it exists)
 
 - Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
@@ -683,26 +756,35 @@ tenant-match check into `JwtAuthGuard`) is now load-bearing for every
 authenticated route, not an opt-in you need to remember. What's left
 in Phase 3, in priority order:
 
-1. Pooled inventory flag (`AssetType.isPooled` already exists in
-   schema, unused) — availability becomes a count against a shared
-   pool rather than one specific asset per booking. Not required for
-   either seeded tenant today (both assign one specific `Asset` per
-   booking), but real for some equipment/hotel setups where
-   interchangeable inventory is tracked as a count rather than
-   individually.
-2. Seasonal/dynamic pricing (needed for the hotel vertical per PRD
+Pooled inventory (`AssetType.isPooled`) is now real too (Session 17) —
+`griya-nginap`'s "Dorm Bed" AssetType is a live demo. What's left in
+Phase 3, in priority order:
+
+1. Seasonal/dynamic pricing (needed for the hotel vertical per PRD
    §7.1.3) — today `AssetType.pricing.basePrice` is a single flat rate
    regardless of date; weekday/weekend or peak-season rates aren't
-   modeled at all.
-3. `HOURLY_SLOT` (venue/studio vertical) is still a typed stub —
+   modeled at all. This is the last named item on Phase 3's PRD §13
+   list that isn't done.
+2. `HOURLY_SLOT` (venue/studio vertical) is still a typed stub —
    furthest out on the roadmap per its own doc comment, lowest priority
    of what's left in Phase 3. A third tenant on this vertical would be
-   the next extensibility data point if it's ever built.
-4. A DURATION_ORDER or third-vertical tenant, if there's ever a
-   concrete reason to onboard one — the thesis is already validated
-   with two tenants across two non-RECURRING_LEASE verticals (NIGHTLY
-   twice over doesn't add new evidence; a DURATION_ORDER tenant would).
-   Not urgent on its own.
+   the next extensibility data point if it's ever built — see
+   `packages/database/src/pooled-availability.ts`'s doc comment before
+   assuming pooled inventory automatically works for it; today only
+   `NIGHTLY`/`DURATION_ORDER` are wired into the committed-status map.
+3. A DURATION_ORDER or third-vertical tenant, if there's ever a
+   concrete reason to onboard one — the extensibility thesis is already
+   validated with two tenants across two non-RECURRING_LEASE verticals
+   (a second NIGHTLY tenant doesn't add new evidence; a DURATION_ORDER
+   one would). Not urgent on its own.
+4. Console/storefront UI has no pooled-aware affordances yet (no "N of
+   M beds available" display distinct from the existing count, no way
+   for staff to pick a specific pooled unit at approval time instead of
+   accepting the auto-assigned one) — functionally complete without it
+   (auto-assignment is a reasonable default, and the existing "X units
+   available" text already reads correctly for pooled types), but a
+   real UX gap if pooled inventory becomes a primary use case rather
+   than a proof-of-concept.
 
 DURATION_ORDER's implementation (`packages/domain/src/booking-model/duration-order.strategy.ts`,
 `BookingService.pickUp`/`returnEquipment`/`completeInspection` in
@@ -740,6 +822,9 @@ Before writing new code:
 ## Known shortcuts (intentional, not bugs)
 
 - Every seeded staff user (both tenants, `packages/database/prisma/seed.ts`) shares one demo password, `RentOS!Demo2026`, hardcoded as a bcrypt hash in the seed file. Fine for local dev/demo; if this seed ever runs against a real deployment, every seeded account needs a real, unique password set immediately — the seed is not a safe way to provision production credentials.
+- Pooled inventory (`AssetType.isPooled`, `packages/database/src/pooled-availability.ts`, Session 17) only supports `NIGHTLY` and `DURATION_ORDER` — both always carry an `endDate`, which the date-range overlap check needs. Marking a `RECURRING_LEASE` `AssetType` as pooled throws a plain `Error` ("Pooled inventory is not supported for RECURRING_LEASE bookings") rather than computing something wrong; this surfaces as a 500 via the generic exception filter, not a clean 400, since it's a data-configuration mistake rather than a reachable user flow. `HOURLY_SLOT` isn't wired in either (it's still a typed stub with no bookings to overlap-check in the first place).
+- Auto-assignment of a specific unit from a pool (`BookingService.approve`, when a pooled booking has no `assetId`) always picks the lowest-code eligible unit — there's no way for staff to pick a *specific* pooled unit at approval time short of passing an explicit `assetId` directly via the API (no console UI for it). Fine for interchangeable inventory where the specific unit genuinely doesn't matter (the whole premise of pooling); would need a real picker if a tenant's pooled units ever aren't actually interchangeable in practice (e.g. a bed near a window vs. one by the door).
+- Pooled availability's "available now" display number (`CatalogService.availableCount` with no `startDate`/`endDate`) uses a zero-length "right now" window as its default — a reasonable estimate for a walk-in customer, but it's never what actually gates a booking. The real check always runs against the customer's actual requested date range at submission time (`BookingService.createBooking`), so the display number can legitimately be optimistic or pessimistic relative to a specific future date range the customer hasn't picked yet. This is documented behavior, not a bug — no different in spirit from RECURRING_LEASE's pre-existing "point-in-time count, not a range query" shortcut.
 - Contract sign-off and invoice payment are two independent async gates that can complete in either order (`BookingService.computeActivationContext`/`finalizeActivation`, `apps/api/src/booking/booking.service.ts`). `handleInvoicePaid` catches `GuardFailedError` and returns quietly when payment lands before the contract is signed (booking stays `APPROVED`); `AgreementsService.sign()` calls `tryActivateAfterContractSigned` after a signature lands, which is a no-op if the invoice isn't paid yet. Whichever gate closes second is the one that actually fires the `ACTIVATE` transition. Verified live for all three cases: `contract_required` flag off, pay-then-sign, and sign-then-pay.
 - `nextInvoiceNumber` (`packages/database/src/invoice-number.ts`) derives the sequence from a per-tenant monthly `COUNT(*)` inside the same transaction as invoice creation. Correct at demo scale; races under concurrent invoice creation for the same tenant. A dedicated Postgres sequence per tenant is the real fix (Phase 2).
 - The dunning ladder (`apps/worker/src/jobs/dunning-ladder.job.ts`) hardcodes H-7/H-3/H-0/D+1/D+3/D+7/D+14 uniformly across tenants. `AutomationSetting` rows exist in schema for per-tenant override but the worker doesn't read them yet.

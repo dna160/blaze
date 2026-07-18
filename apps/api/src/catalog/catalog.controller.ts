@@ -25,8 +25,14 @@ export class CatalogController {
   }
 
   @Get("asset-types/:id/availability")
-  async availability(@CurrentTenantId() tenantId: string, @Param("id") id: string) {
-    const availableCount = await this.catalog.availableCount(tenantId, id);
+  async availability(
+    @CurrentTenantId() tenantId: string,
+    @Param("id") id: string,
+    @Query("startDate") startDate?: string,
+    @Query("endDate") endDate?: string,
+  ) {
+    const window = startDate && endDate ? { startDate: new Date(startDate), endDate: new Date(endDate) } : undefined;
+    const availableCount = await this.catalog.availableCount(tenantId, id, window);
     return { assetTypeId: id, availableCount };
   }
 

@@ -21,3 +21,4 @@ export {
   recordCreditNoteEntries,
   computeLedgerBalance,
 } from "./ledger.js";
+export { computePooledAvailableCount, findAvailablePooledAsset, type PooledAssetType } from "./pooled-availability.js";
