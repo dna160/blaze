@@ -1,6 +1,7 @@
 import type { Decimal } from "../money.js";
 import type { DepositRule } from "../pricing/deposit.js";
 import type { ProrationRule } from "../pricing/proration.js";
+import type { SeasonalRate } from "../pricing/seasonal.js";
 
 export type BookingModelKind = "RECURRING_LEASE" | "NIGHTLY" | "DURATION_ORDER" | "HOURLY_SLOT";
 
@@ -11,6 +12,8 @@ export interface PricingConfig {
   depositRule?: DepositRule;
   prorationRule?: ProrationRule;
   taxInclusive: boolean;
+  /** NIGHTLY only (PRD §7.2.3 P2) — date-range rate overrides, e.g. peak season. See pricing/seasonal.ts. */
+  seasonalRates?: SeasonalRate[];
 }
 
 export interface BookingWindow {

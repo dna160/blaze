@@ -1,5 +1,6 @@
 import { Decimal, roundMoney } from "../money.js";
 import { computeDeposit } from "../pricing/deposit.js";
+import { computeNightlyRateBreakdown } from "../pricing/seasonal.js";
 
 import { buildInvoiceDraft } from "./invoice-builder.js";
 import { BookingModelNotImplementedError } from "./not-implemented.js";
@@ -26,15 +27,21 @@ class NightlyStrategy implements BookingModelStrategy {
       throw new Error("NIGHTLY booking endDate must be at least one night after startDate.");
     }
 
-    const nightlyRate = roundMoney(pricing.basePrice);
-    const amount = roundMoney(nightlyRate.mul(nights));
-    const rentLine: InvoiceLineDraft = {
-      description: `Room rate (${nights} night${nights === 1 ? "" : "s"} × ${nightlyRate.toString()})`,
-      quantity: new Decimal(nights),
-      unitPrice: nightlyRate,
-      amount,
+    // One RENT line per contiguous seasonal-rate group (PRD §7.2.3 P2)
+    // rather than a single blended nights x rate figure, so a stay that
+    // crosses a seasonal boundary shows the customer exactly which
+    // nights cost what. With no seasonalRates configured this collapses
+    // to the same single nights x rate line as before.
+    const breakdown = computeNightlyRateBreakdown(window.startDate, window.endDate, roundMoney(pricing.basePrice), pricing.seasonalRates);
+    const rentLines: InvoiceLineDraft[] = breakdown.map((g) => ({
+      description: g.label
+        ? `Room rate (${g.nights} night${g.nights === 1 ? "" : "s"} × ${g.rate.toString()} — ${g.label})`
+        : `Room rate (${g.nights} night${g.nights === 1 ? "" : "s"} × ${g.rate.toString()})`,
+      quantity: new Decimal(g.nights),
+      unitPrice: g.rate,
+      amount: roundMoney(g.rate.mul(g.nights)),
       lineType: "RENT",
-    };
+    }));
 
     const extraLines: InvoiceLineDraft[] = [];
     if (pricing.adminFee && pricing.adminFee.greaterThan(0)) {
@@ -57,7 +64,7 @@ class NightlyStrategy implements BookingModelStrategy {
       });
     }
 
-    return buildInvoiceDraft(rentLine, extraLines, tax, pricing, window.startDate, window.endDate);
+    return buildInvoiceDraft(rentLines, extraLines, tax, pricing, window.startDate, window.endDate);
   }
 
   /**

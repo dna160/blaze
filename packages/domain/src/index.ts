@@ -19,6 +19,12 @@ export {
   type SwapProrationParams,
   type SwapProrationResult,
 } from "./pricing/swap-proration.js";
+export {
+  computeNightlyRateBreakdown,
+  sumNightlyRateBreakdown,
+  type SeasonalRate,
+  type NightlyRateGroup,
+} from "./pricing/seasonal.js";
 
 export type {
   BookingModelStrategy,

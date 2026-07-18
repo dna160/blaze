@@ -277,6 +277,11 @@ async function seedHomestayTenant() {
         adminFee: 25000,
         depositRule: { type: "FIXED", amount: 400000 },
         taxInclusive: false,
+        // Seasonal pricing demo (Session 17, PRD §7.2.3 P2): peak
+        // Christmas/New Year rate. A stay crossing into this window
+        // gets a real per-night breakdown, not a blended average — see
+        // NightlyStrategy.computeInitialInvoice.
+        seasonalRates: [{ startDate: "2026-12-24", endDate: "2027-01-01", basePrice: 950000, label: "Christmas & New Year" }],
       },
       photos: [],
       isPublished: true,

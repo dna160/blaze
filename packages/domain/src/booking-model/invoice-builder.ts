@@ -10,22 +10,24 @@ import type { InvoiceDraft, InvoiceLineDraft, PricingConfig, TenantTaxContext } 
  * a second hand-copied version drifting out of sync.
  */
 export function buildInvoiceDraft(
-  primaryLine: InvoiceLineDraft,
+  primaryLines: InvoiceLineDraft | InvoiceLineDraft[],
   extraLines: InvoiceLineDraft[],
   tax: TenantTaxContext,
   pricing: PricingConfig,
   periodStart: Date,
   periodEnd: Date,
 ): InvoiceDraft {
+  const primary = Array.isArray(primaryLines) ? primaryLines : [primaryLines];
+
   // Deposits are a balance-sheet liability, never revenue, so they never enter the tax base (PRD §7.2.4).
-  const taxableLines = [primaryLine, ...extraLines.filter((l) => l.lineType !== "DEPOSIT")];
+  const taxableLines = [...primary, ...extraLines.filter((l) => l.lineType !== "DEPOSIT")];
   const taxableSubtotal = sumMoney(taxableLines.map((l) => l.amount));
   const { taxAmount, grossAmount } = computeTax(taxableSubtotal, {
     isTenantPkp: tax.isTenantPkp,
     taxInclusive: pricing.taxInclusive,
   });
 
-  const lines = [...extraLines, primaryLine];
+  const lines = [...extraLines, ...primary];
   if (taxAmount.greaterThan(0)) {
     lines.push({
       description: "PPN 11%",

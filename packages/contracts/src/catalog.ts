@@ -20,6 +20,10 @@ export const PricingConfigSchema = z.object({
   adminFee: z.number().optional(),
   prorationRule: z.enum(["ANCHOR_DATE", "FULL_FIRST_PERIOD"]).optional(),
   taxInclusive: z.boolean().default(false),
+  /** NIGHTLY only (PRD §7.2.3 P2) — date-range rate overrides, e.g. peak season. `startDate`/`endDate` are inclusive YYYY-MM-DD calendar dates. */
+  seasonalRates: z
+    .array(z.object({ startDate: z.string(), endDate: z.string(), basePrice: z.number(), label: z.string().optional() }))
+    .optional(),
 });
 export type PricingConfig = z.infer<typeof PricingConfigSchema>;
 

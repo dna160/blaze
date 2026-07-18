@@ -17,7 +17,7 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 | **0 — Foundation** | Tenancy + RLS, auth/RBAC, domain model, asset registry, Xendit/WA sandbox | ✅ Done (auth: staff JWT + customer OTP; RLS verified; provider seams in place, sandbox keys not yet supplied) |
 | **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (Session 3), KYC upload + review (Session 4), and the contract e-sign gate (Session 5). 🚧 Remaining gaps: request-info/customer-reply UI, unit reassignment on approve UI |
 | **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | ✅ **Complete** — every named item on PRD §13's list plus every gap found along the way is done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow with partial-application support (Session 12, console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only), visual unit map + occupancy view (Session 9, console UI, staff-only), swap/upgrade requests with computed mid-cycle proration (Sessions 10 + 13, storefront + console UI), and a real ESignProvider port (Session 11, Privy adapter coded-but-unconfigured, MockESignProvider is the zero-regression default). Phase 3 is next. |
-| **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | 🚧 In progress. NIGHTLY (Session 14) and DURATION_ORDER (Session 15) are both real end-to-end. A second tenant in the NIGHTLY vertical is live (Session 16) — the extensibility thesis is validated: zero application code changes were needed, only seed rows; that exercise also found and fixed a real cross-tenant data leak. **Pooled inventory is now real (Session 17)** — `AssetType.isPooled` drives genuine date-range-overlap capacity checking instead of the flag sitting unused. Only seasonal pricing and HOURLY_SLOT remain unstarted in this phase. |
+| **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | ✅ **Every named item on PRD §13's Phase 3 list is done.** NIGHTLY (Session 14) and DURATION_ORDER (Session 15) are both real end-to-end. A second tenant in the NIGHTLY vertical is live (Session 16) — the extensibility thesis is validated with zero application code changes, and that exercise also found and fixed a real cross-tenant data leak. Pooled inventory (Session 17) drives genuine date-range-overlap capacity checking. **Seasonal/dynamic pricing (Session 18)** closes the list — real per-night rate overrides with a live demo. `HOURLY_SLOT` (venue/studio) is the one booking model still a stub, but it was never on Phase 3's named list — it's explicitly Phase-3-and-beyond, lowest priority, PRD's own "furthest out on the roadmap." |
 | **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | ⬜ Not started, deliberately deferred per PRD |
 
 ### What's proven end-to-end (verified live against local Postgres/Redis)
@@ -727,6 +727,63 @@ session — `packages/database` has no vitest suite, consistent with
 `ledger.ts`/`invoicing.ts`; correctness here is proven by live
 verification against real overlapping bookings instead).
 
+**Session 18 (seasonal/dynamic pricing — closes out Phase 3's named
+PRD §13 list):** `AssetType.pricing.basePrice` was a single flat rate
+regardless of date until this session. New
+`packages/domain/src/pricing/seasonal.ts` (`computeNightlyRateBreakdown`,
+`sumNightlyRateBreakdown`, 7 new unit tests) breaks a NIGHTLY stay into
+contiguous rate groups from an optional `PricingConfig.seasonalRates`
+array (`{startDate, endDate, basePrice, label}[]`, both dates inclusive
+`YYYY-MM-DD` calendar strings — deliberately not ISO datetimes, so a
+"season" is an unambiguous set of calendar dates, not a set of
+instants tied to a timezone). A stay crossing a seasonal boundary
+produces one `RENT` invoice line per contiguous rate run instead of a
+single blended nights-×-rate figure, so the customer sees exactly
+which nights cost what — e.g. "1 night × 650000" + "3 nights × 950000
+— Christmas & New Year" rather than one opaque total. With no
+`seasonalRates` configured this collapses to the exact same single
+nights-×-rate line NIGHTLY has always produced — zero behavior change
+for every AssetType that doesn't use the feature.
+
+`buildInvoiceDraft` (`packages/domain/src/booking-model/invoice-builder.ts`)
+was generalized to accept either one line or an array
+(`InvoiceLineDraft | InvoiceLineDraft[]`) for its "primary lines"
+parameter, normalizing internally — a deliberately non-breaking change
+so `RecurringLeaseStrategy`/`DurationOrderStrategy`'s existing
+single-line call sites needed zero edits; only `NightlyStrategy` now
+passes an array. `PricingConfig` (domain), `PricingConfigSchema`
+(contracts), and `toPricingConfig()` (`packages/database/src/invoicing.ts`)
+all gained the optional `seasonalRates` field to thread it end to end.
+Scoped to NIGHTLY only, matching the PRD's own framing ("needed for
+hotel vertical," §7.2.3 P2) — DURATION_ORDER/RECURRING_LEASE are
+untouched. No storefront/console UI changes were needed: the existing
+date-range booking form and invoice line rendering already display
+however many `RENT` lines an invoice has: this was a pure pricing-math
+change with UI-visible effects, not a UI change.
+
+Added a live demo: `griya-nginap`'s "Kamar Deluxe" `AssetType` gained a
+Christmas/New Year seasonal rate (650,000 → 950,000/night,
+Dec 24 – Jan 1). Verified live: a booking spanning Dec 23 → Dec 27
+correctly produced two `RENT` lines — "1 night × 650000" (650,000) and
+"3 nights × 950000 — Christmas & New Year" (2,850,000) — summing to
+exactly 3,500,000 rent, hand-verified against the seasonal boundary by
+inspection; full invoice total 3,925,000 (+25,000 admin fee +400,000
+deposit, tax 0 since `griya-nginap` is non-PKP). A regression booking
+on "Kamar Standard" (no `seasonalRates` configured) over the identical
+date range correctly produced a single `RENT` line
+(4 × 350,000 = 1,400,000), confirming zero behavior change for
+non-seasonal AssetTypes. Ledger balance summed to exactly 0.00 after
+both bookings and again after test-data cleanup. Full
+`turbo run typecheck test build --force` passes clean across all 8
+packages (72 domain unit tests, up from 65) — caught and fixed one
+real gap in the process: a new test's array-indexing was only checked
+by `tsc --noEmit`, not by `vitest run` (which transpiles without full
+type-checking), so the turbo pipeline's dedicated `typecheck` step is
+what actually caught it — a good illustration of why `turbo run
+typecheck test build` runs all three, not just `test`.
+
+This closes every named item on PRD §13's Phase 3 list.
+
 ### What's explicitly NOT done (don't assume it exists)
 
 - Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
@@ -742,49 +799,47 @@ verification against real overlapping bookings instead).
 
 ## Resume here
 
-**Phase 2 is complete** (see the Phase status table). **Phase 3 is
-well underway**: NIGHTLY (Session 14) and DURATION_ORDER (Session 15)
-are both real end-to-end, and a second tenant (Session 16,
-`griya-nginap`, NIGHTLY) is now live proving the extensibility thesis
-with **zero application code changes** — the entire multi-vertical
-architecture bet the PRD makes has real evidence behind it, not just a
-clean interface. Session 16 also closed a real cross-tenant security
-gap (see above) that every single-tenant verification in Sessions 1-15
+**Phase 2 is complete. Phase 3 is complete** — every named item on PRD
+§13's Phase 3 list is done: NIGHTLY (Session 14) and DURATION_ORDER
+(Session 15) real logic, pooled inventory (Session 17), seasonal
+pricing (Session 18), and a second tenant in a different vertical
+onboarded with **zero application code changes** (Session 16) — the
+PRD's core extensibility thesis is validated with real evidence, not
+just a clean interface. Session 16 also closed a real cross-tenant
+security gap that every single-tenant verification in Sessions 1-15
 structurally could not have caught — read that entry before touching
 any `@CurrentTenant()`/`@UseGuards` code, since the fix (folding the
 tenant-match check into `JwtAuthGuard`) is now load-bearing for every
-authenticated route, not an opt-in you need to remember. What's left
-in Phase 3, in priority order:
+authenticated route, not an opt-in you need to remember.
 
-Pooled inventory (`AssetType.isPooled`) is now real too (Session 17) —
-`griya-nginap`'s "Dorm Bed" AssetType is a live demo. What's left in
-Phase 3, in priority order:
+**Next up is Phase 4** per PRD §13 — explicitly marked "(optional)" in
+the PRD, gated on a monetization decision the owner deliberately
+deferred ("Phases 0–3 are architected so that gate is a pricing
+decision, not a rebuild"). Its scope: self-serve tenant signup,
+tenant billing/metering, a visual automation builder, OTA channel sync
+(hotel), tenant-facing API/webhooks, and KYC automation. **Do not
+start Phase 4 without explicit direction** — it's the one phase the
+PRD itself frames as a business decision, not a default next sprint,
+unlike Phases 1-3 which were unconditionally "build these."
 
-1. Seasonal/dynamic pricing (needed for the hotel vertical per PRD
-   §7.1.3) — today `AssetType.pricing.basePrice` is a single flat rate
-   regardless of date; weekday/weekend or peak-season rates aren't
-   modeled at all. This is the last named item on Phase 3's PRD §13
-   list that isn't done.
-2. `HOURLY_SLOT` (venue/studio vertical) is still a typed stub —
-   furthest out on the roadmap per its own doc comment, lowest priority
-   of what's left in Phase 3. A third tenant on this vertical would be
-   the next extensibility data point if it's ever built — see
-   `packages/database/src/pooled-availability.ts`'s doc comment before
-   assuming pooled inventory automatically works for it; today only
-   `NIGHTLY`/`DURATION_ORDER` are wired into the committed-status map.
-3. A DURATION_ORDER or third-vertical tenant, if there's ever a
+Low-priority polish left over from Phase 3, worth doing opportunistically
+but none of it blocks anything:
+1. `HOURLY_SLOT` (venue/studio vertical) is still a typed stub —
+   furthest out on the roadmap per its own doc comment, and was never
+   on Phase 3's named PRD §13 list to begin with.
+2. A DURATION_ORDER or third-vertical tenant, if there's ever a
    concrete reason to onboard one — the extensibility thesis is already
-   validated with two tenants across two non-RECURRING_LEASE verticals
-   (a second NIGHTLY tenant doesn't add new evidence; a DURATION_ORDER
-   one would). Not urgent on its own.
-4. Console/storefront UI has no pooled-aware affordances yet (no "N of
+   validated with two tenants across two non-RECURRING_LEASE verticals.
+   Not required.
+3. Console/storefront UI has no pooled-aware affordances yet (no "N of
    M beds available" display distinct from the existing count, no way
    for staff to pick a specific pooled unit at approval time instead of
-   accepting the auto-assigned one) — functionally complete without it
-   (auto-assignment is a reasonable default, and the existing "X units
-   available" text already reads correctly for pooled types), but a
-   real UX gap if pooled inventory becomes a primary use case rather
-   than a proof-of-concept.
+   accepting the auto-assigned one) — functionally complete without it.
+4. No admin UI exists to create/edit `AssetType.pricing` at all
+   (seasonal rates included) — every AssetType in this codebase is
+   seed-data-driven, including the two seeded tenants. A real pricing
+   management UI is genuinely out of scope for what's been asked so
+   far, not an oversight.
 
 DURATION_ORDER's implementation (`packages/domain/src/booking-model/duration-order.strategy.ts`,
 `BookingService.pickUp`/`returnEquipment`/`completeInspection` in
@@ -823,6 +878,8 @@ Before writing new code:
 
 - Every seeded staff user (both tenants, `packages/database/prisma/seed.ts`) shares one demo password, `RentOS!Demo2026`, hardcoded as a bcrypt hash in the seed file. Fine for local dev/demo; if this seed ever runs against a real deployment, every seeded account needs a real, unique password set immediately — the seed is not a safe way to provision production credentials.
 - Pooled inventory (`AssetType.isPooled`, `packages/database/src/pooled-availability.ts`, Session 17) only supports `NIGHTLY` and `DURATION_ORDER` — both always carry an `endDate`, which the date-range overlap check needs. Marking a `RECURRING_LEASE` `AssetType` as pooled throws a plain `Error` ("Pooled inventory is not supported for RECURRING_LEASE bookings") rather than computing something wrong; this surfaces as a 500 via the generic exception filter, not a clean 400, since it's a data-configuration mistake rather than a reachable user flow. `HOURLY_SLOT` isn't wired in either (it's still a typed stub with no bookings to overlap-check in the first place).
+- Seasonal pricing (`packages/domain/src/pricing/seasonal.ts`, Session 18) only applies to `NIGHTLY` — `RecurringLeaseStrategy`/`DurationOrderStrategy` never read `PricingConfig.seasonalRates` even if it's present in a snapshot, matching the PRD's own scoping ("needed for hotel vertical"). A `seasonalRates` entry on a non-NIGHTLY `AssetType` is silently inert, not an error — there was no clean way to reject it at the schema level without also blocking legitimate future reuse, and it's a data-configuration mistake, not a reachable user flow.
+- There is no admin/console UI anywhere to create or edit `AssetType.pricing` (base price, deposit rule, admin fee, seasonal rates, or anything else in that JSON blob) — every `AssetType` in this codebase, across both seeded tenants, is created via `packages/database/prisma/seed.ts` or a direct `psql` edit. This has been true since Session 1 and isn't specific to seasonal pricing; noted here because Session 18 is the first feature where a tenant might plausibly want to self-serve-edit pricing on some regular cadence (adding next year's peak season), and there's genuinely no way to do that today short of editing seed data or the database directly.
 - Auto-assignment of a specific unit from a pool (`BookingService.approve`, when a pooled booking has no `assetId`) always picks the lowest-code eligible unit — there's no way for staff to pick a *specific* pooled unit at approval time short of passing an explicit `assetId` directly via the API (no console UI for it). Fine for interchangeable inventory where the specific unit genuinely doesn't matter (the whole premise of pooling); would need a real picker if a tenant's pooled units ever aren't actually interchangeable in practice (e.g. a bed near a window vs. one by the door).
 - Pooled availability's "available now" display number (`CatalogService.availableCount` with no `startDate`/`endDate`) uses a zero-length "right now" window as its default — a reasonable estimate for a walk-in customer, but it's never what actually gates a booking. The real check always runs against the customer's actual requested date range at submission time (`BookingService.createBooking`), so the display number can legitimately be optimistic or pessimistic relative to a specific future date range the customer hasn't picked yet. This is documented behavior, not a bug — no different in spirit from RECURRING_LEASE's pre-existing "point-in-time count, not a range query" shortcut.
 - Contract sign-off and invoice payment are two independent async gates that can complete in either order (`BookingService.computeActivationContext`/`finalizeActivation`, `apps/api/src/booking/booking.service.ts`). `handleInvoicePaid` catches `GuardFailedError` and returns quietly when payment lands before the contract is signed (booking stays `APPROVED`); `AgreementsService.sign()` calls `tryActivateAfterContractSigned` after a signature lands, which is a no-op if the invoice isn't paid yet. Whichever gate closes second is the one that actually fires the `ACTIVATE` transition. Verified live for all three cases: `contract_required` flag off, pay-then-sign, and sign-then-pay.

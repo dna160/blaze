@@ -85,6 +85,32 @@ describe("nightlyStrategy.computeInitialInvoice", () => {
       ),
     ).toThrow(/at least one night/);
   });
+
+  it("emits one RENT line per seasonal rate group when the stay crosses a peak-season boundary", () => {
+    const seasonalPricing: PricingConfig = {
+      ...pkpPricing,
+      basePrice: money(350_000),
+      seasonalRates: [{ startDate: "2026-12-24", endDate: "2026-12-31", basePrice: 550_000, label: "Christmas & New Year" }],
+    };
+    // Dec 23 -> Dec 26 checkout: 1 night at base rate, 2 nights at the seasonal rate
+    const draft = nightlyStrategy.computeInitialInvoice(
+      { startDate: new Date(2026, 11, 23), endDate: new Date(2026, 11, 26) },
+      seasonalPricing,
+      { isTenantPkp: false },
+    );
+
+    const rentLines = draft.lines.filter((l) => l.lineType === "RENT");
+    expect(rentLines).toHaveLength(2);
+    const [baseNight, seasonalNights] = rentLines;
+    expect(baseNight!.amount.toString()).toBe("350000");
+    expect(baseNight!.quantity.toString()).toBe("1");
+    expect(seasonalNights!.amount.toString()).toBe("1100000");
+    expect(seasonalNights!.quantity.toString()).toBe("2");
+    expect(seasonalNights!.description).toContain("Christmas & New Year");
+
+    const totalRent = rentLines.reduce((sum, l) => sum.plus(l.amount), money(0));
+    expect(totalRent.toString()).toBe("1450000");
+  });
 });
 
 describe("nightlyStrategy.computeFinalSettlement", () => {

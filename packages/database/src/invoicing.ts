@@ -7,6 +7,7 @@ import {
   type InvoiceDraft,
   type InvoiceSnapshot,
   type PricingConfig,
+  type SeasonalRate,
 } from "@rentos/domain";
 
 import type { Prisma } from "../generated/client/index.js";
@@ -41,6 +42,7 @@ function toPricingConfig(priceSnapshot: unknown): PricingConfig {
     depositRule?: { type: "FIXED"; amount: number } | { type: "MULTIPLE_OF_RENT"; multiple: number };
     prorationRule?: "ANCHOR_DATE" | "FULL_FIRST_PERIOD";
     taxInclusive?: boolean;
+    seasonalRates?: SeasonalRate[];
   };
   return {
     basePrice: money(p.basePrice),
@@ -49,6 +51,7 @@ function toPricingConfig(priceSnapshot: unknown): PricingConfig {
     depositRule: p.depositRule,
     prorationRule: p.prorationRule,
     taxInclusive: p.taxInclusive ?? false,
+    seasonalRates: p.seasonalRates,
   };
 }
 
