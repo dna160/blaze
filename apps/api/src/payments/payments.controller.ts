@@ -23,7 +23,6 @@ import { CurrentUser } from "../common/decorators/current-user.decorator.js";
 import { Roles } from "../common/decorators/roles.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
 import { RolesGuard } from "../common/guards/roles.guard.js";
-import { TenantMatchGuard } from "../common/guards/tenant-match.guard.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
 import { TenancyService } from "../tenancy/tenancy.service.js";
@@ -40,7 +39,7 @@ export class PaymentsController {
   ) {}
 
   @Post("initiate")
-  @UseGuards(JwtAuthGuard, TenantMatchGuard)
+  @UseGuards(JwtAuthGuard)
   initiate(
     @CurrentTenant() tenant: ResolvedTenant,
     @CurrentUser() user: AuthenticatedUser,
@@ -52,7 +51,7 @@ export class PaymentsController {
 
   /** PRD §7.2.4: Super Admin / Ops Admin record manual payments with a proof-of-payment upload (RBAC Appendix C). Never finalizes by itself — see verify(). */
   @Post("manual")
-  @UseGuards(JwtAuthGuard, RolesGuard, TenantMatchGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("SUPER_ADMIN", "OPS_ADMIN")
   @UseInterceptors(FileInterceptor("file"))
   recordManual(
@@ -76,7 +75,7 @@ export class PaymentsController {
 
   /** PRD §7.2.4 maker-checker: Finance Admin (or Super Admin) verifies — never the recorder. */
   @Post(":id/verify")
-  @UseGuards(JwtAuthGuard, RolesGuard, TenantMatchGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("SUPER_ADMIN", "FINANCE_ADMIN")
   verifyManual(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
     return this.payments.verifyManual(tenant, user.id, id);
@@ -84,7 +83,7 @@ export class PaymentsController {
 
   /** Staff-only proof-of-payment preview (recorder, verifier, or any Finance/Ops role). */
   @Get(":id/file")
-  @UseGuards(JwtAuthGuard, RolesGuard, TenantMatchGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN")
   async getFile(@CurrentTenant() tenant: ResolvedTenant, @Param("id") id: string, @Res() res: Response) {
     const result = await this.payments.getProofFile(tenant, id);

@@ -8,7 +8,6 @@ import { CurrentUser } from "../common/decorators/current-user.decorator.js";
 import { Roles } from "../common/decorators/roles.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
 import { RolesGuard } from "../common/guards/roles.guard.js";
-import { TenantMatchGuard } from "../common/guards/tenant-match.guard.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
@@ -28,7 +27,6 @@ export class SwapRequestsController {
 
   /** PRD §7.1.4 self-service "request upgrade/downsize". */
   @Post()
-  @UseGuards(TenantMatchGuard)
   create(
     @CurrentTenant() tenant: ResolvedTenant,
     @CurrentUser() user: AuthenticatedUser,
@@ -62,7 +60,7 @@ export class SwapRequestsController {
   }
 
   @Post(":id/approve")
-  @UseGuards(RolesGuard, TenantMatchGuard)
+  @UseGuards(RolesGuard)
   @Roles("SUPER_ADMIN", "OPS_ADMIN")
   approve(
     @CurrentTenant() tenant: ResolvedTenant,
@@ -74,7 +72,7 @@ export class SwapRequestsController {
   }
 
   @Post(":id/reject")
-  @UseGuards(RolesGuard, TenantMatchGuard)
+  @UseGuards(RolesGuard)
   @Roles("SUPER_ADMIN", "OPS_ADMIN")
   reject(
     @CurrentTenant() tenant: ResolvedTenant,

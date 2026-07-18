@@ -17,7 +17,7 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 | **0 — Foundation** | Tenancy + RLS, auth/RBAC, domain model, asset registry, Xendit/WA sandbox | ✅ Done (auth: staff JWT + customer OTP; RLS verified; provider seams in place, sandbox keys not yet supplied) |
 | **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (Session 3), KYC upload + review (Session 4), and the contract e-sign gate (Session 5). 🚧 Remaining gaps: request-info/customer-reply UI, unit reassignment on approve UI |
 | **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | ✅ **Complete** — every named item on PRD §13's list plus every gap found along the way is done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow with partial-application support (Session 12, console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only), visual unit map + occupancy view (Session 9, console UI, staff-only), swap/upgrade requests with computed mid-cycle proration (Sessions 10 + 13, storefront + console UI), and a real ESignProvider port (Session 11, Privy adapter coded-but-unconfigured, MockESignProvider is the zero-regression default). Phase 3 is next. |
-| **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | 🚧 In progress. NIGHTLY (Session 14) and DURATION_ORDER (Session 15) are both real end-to-end: nights/days × rate invoicing, full pickup/return/inspection or check-in/check-out lifecycles, storefront + console UI. HOURLY_SLOT is still a typed stub (furthest-out vertical per PRD, not prioritized). Pooled inventory, seasonal pricing, and second-tenant onboarding not started. |
+| **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | 🚧 In progress. NIGHTLY (Session 14) and DURATION_ORDER (Session 15) are both real end-to-end. **A second tenant in the NIGHTLY vertical is now live (Session 16)** — the extensibility thesis is validated: zero application code changes were needed, only seed rows. That exercise also found and fixed a real cross-tenant data leak (see below) — arguably the more important outcome of this item. HOURLY_SLOT is still a typed stub. Pooled inventory and seasonal pricing not started. |
 | **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | ⬜ Not started, deliberately deferred per PRD |
 
 ### What's proven end-to-end (verified live against local Postgres/Redis)
@@ -578,6 +578,82 @@ still a stub" test case instead of the old blanket "whole strategy
 throws" one. Full `turbo run typecheck test build --force` passes clean
 across all 8 packages (57 domain unit tests, up from 50).
 
+**Session 16 (second-tenant onboarding — validated the extensibility
+thesis, and found a real cross-tenant security bug doing it):**
+Phase 3's last item on the original list, PRD §13: "a second tenant in
+a different vertical onboarded without code changes." `packages/database/prisma/seed.ts`
+now seeds two tenants — refactored into `seedStorageTenant()`
+(`gudang-aman`, unchanged) and a new `seedHomestayTenant()`
+(`griya-nginap`, NIGHTLY, deliberately **not** PKP-registered —
+`isPkp: false` — to exercise `computeTax()`'s non-PKP branch on an
+actually-running tenant, not just a unit test). Also retroactively
+added `seedStaffUser()` and real `User`/`UserRole` rows for **both**
+tenants (gudang-aman's `admin@`/`finance@` accounts existed only as
+manual `psql` edits from earlier sessions, never committed anywhere —
+a fresh clone of this repo had zero login-capable users until this
+session; that gap is now closed). Demo password for every seeded
+account: `RentOS!Demo2026` (bcrypt hash hardcoded in seed.ts, dev/demo
+only). Verified live end-to-end against griya-nginap through real HTTP
+— public catalog browse, booking submit, staff login + approve
+(invoice correctly PPN-free per the non-PKP flag, invoice numbering
+correctly namespaced `GRIYA-NGINAP/...`), OTP + mock payment, check-in,
+check-out — with **zero application code changes**, only the new seed
+rows. `gudang-aman`'s own catalog/assets/ledger were independently
+confirmed untouched throughout.
+
+**The real finding**: testing cross-tenant isolation with two *actual*
+staff accounts (not just "no token" or single-tenant checks, which is
+all any prior session had available) surfaced that a valid JWT for
+tenant A, combined with an `X-Tenant-Slug: <tenant B>` header, could
+read (and in some cases mutate) tenant B's data — confirmed live: a
+`gudang-aman` staff token successfully fetched a `griya-nginap`
+booking's full detail (200, real data) by simply changing the header.
+Root cause: `TenantMatchGuard` (the guard whose whole job is rejecting
+a session/header tenant mismatch) was **opt-in per-route**, and it had
+quietly gone missing from roughly ten authenticated endpoints across
+several modules — anywhere a handler used `@CurrentTenant()` (the raw
+header-resolved tenant) without also listing `TenantMatchGuard`,
+because `@CurrentTenantId()` handlers were incidentally safe already
+(that decorator prefers `req.user.tenantId` from the JWT over the
+header) while `@CurrentTenant()` handlers were not. Confirmed-vulnerable
+before the fix: `BookingController.get`/`mine`/`pending`,
+`DepositsController` in its entirety (**including its three mutating
+routes** — `applyToDamages`, `requestRefund`, `approveRefund`),
+`FinanceController.createCreditNote` (mutating), `CrmController.setBlocklist`
+(mutating) and its list/get routes, `AgreementsController`'s
+booking-access and file-download routes, `KycController.getFile`/`review`
+(actual KTP/selfie PII, per PRD §10), `CatalogController.unitMap`
+(occupant PII), and the entire `ReportingController` (occupancy,
+AR-aging, month-end close, invoice/payment/ledger CSV export — a
+tenant's whole financial picture).
+
+**Fix**: rather than patch each call site (the exact failure mode that
+created this gap — a convention documented in a comment, not enforced
+in code), the tenant-match check was folded directly into
+`JwtAuthGuard` itself (`apps/api/src/common/guards/jwt-auth.guard.ts`)
+— it now overrides `canActivate` to run the passport JWT check first,
+then compares `req.user.tenantId` against `req.tenant.id` exactly as
+the old standalone `TenantMatchGuard` did, throwing the same
+`ForbiddenException` on mismatch. Every authenticated route already
+used `JwtAuthGuard`; none needed a new guard added. The standalone
+`TenantMatchGuard` class and all its now-redundant `@UseGuards(...,
+TenantMatchGuard)` call sites (`booking`, `payments`, `swap-requests`
+controllers) were deleted rather than left as dead weight suggesting a
+separate guard is still needed. A `PLATFORM_ADMIN` token
+(`tenantId: null`) still bypasses the check by design, matching prior
+behavior — that role isn't wired into any controller yet (Phase 4).
+Re-ran the exact exploit after the fix: 403 (`"Session tenant does not
+match the request domain."`). Spot-checked three more of the
+previously-vulnerable routes (`/deposits`, `/catalog/assets/unit-map`,
+`/reports/occupancy`) — all now 403 cross-tenant, still 200 same-tenant.
+Full `turbo run typecheck test build --force` passes clean across all
+8 packages with no regressions from the guard change.
+
+This means **every prior session's live verification that used only
+one tenant's staff token could not have caught this** — it's a direct,
+concrete payoff of actually onboarding a second tenant with its own
+real credentials, not just seeding more data under the same one.
+
 ### What's explicitly NOT done (don't assume it exists)
 
 - Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
@@ -594,38 +670,39 @@ across all 8 packages (57 domain unit tests, up from 50).
 ## Resume here
 
 **Phase 2 is complete** (see the Phase status table). **Phase 3 is
-well underway**: both NIGHTLY (Session 14) and DURATION_ORDER (Session
-15) are now real end-to-end — invoicing, payment, deposit, full
-lifecycle (check-in/check-out or pickup/return/inspection), storefront
-+ console UI, all verified live. What's left in Phase 3, in priority
-order:
+well underway**: NIGHTLY (Session 14) and DURATION_ORDER (Session 15)
+are both real end-to-end, and a second tenant (Session 16,
+`griya-nginap`, NIGHTLY) is now live proving the extensibility thesis
+with **zero application code changes** — the entire multi-vertical
+architecture bet the PRD makes has real evidence behind it, not just a
+clean interface. Session 16 also closed a real cross-tenant security
+gap (see above) that every single-tenant verification in Sessions 1-15
+structurally could not have caught — read that entry before touching
+any `@CurrentTenant()`/`@UseGuards` code, since the fix (folding the
+tenant-match check into `JwtAuthGuard`) is now load-bearing for every
+authenticated route, not an opt-in you need to remember. What's left
+in Phase 3, in priority order:
 
-1. **A second tenant in a different vertical onboarded without code
-   changes** — now the clear next step, and the PRD's extensibility
-   thesis has real material to test against: two working non-RECURRING_LEASE
-   verticals (NIGHTLY for hotel/kost, DURATION_ORDER for equipment
-   rental) exist, not just one. Onboarding means writing rows directly
-   (tenant, users, asset types with `NIGHTLY` or `DURATION_ORDER`
-   pricing, assets) — `packages/database/prisma/seed.ts` is the
-   template — and confirming the full golden path (storefront browse →
-   book → approve → pay → lifecycle actions → closed) works with **zero
-   application code changes**, only config/data. If it doesn't, that's
-   the signal to find and fix the leak, not a second tenant's problem
-   to work around.
-2. Pooled inventory flag (`AssetType.isPooled` already exists in
+1. Pooled inventory flag (`AssetType.isPooled` already exists in
    schema, unused) — availability becomes a count against a shared
-   pool rather than one specific asset per booking. Not required to
-   onboard a second tenant (both NIGHTLY and DURATION_ORDER assign one
-   specific `Asset` per booking, same as RECURRING_LEASE), but real for
-   some equipment/hotel setups where interchangeable inventory is
-   tracked as a count rather than individually.
-3. Seasonal/dynamic pricing (needed for the hotel vertical per PRD
+   pool rather than one specific asset per booking. Not required for
+   either seeded tenant today (both assign one specific `Asset` per
+   booking), but real for some equipment/hotel setups where
+   interchangeable inventory is tracked as a count rather than
+   individually.
+2. Seasonal/dynamic pricing (needed for the hotel vertical per PRD
    §7.1.3) — today `AssetType.pricing.basePrice` is a single flat rate
    regardless of date; weekday/weekend or peak-season rates aren't
    modeled at all.
-4. `HOURLY_SLOT` (venue/studio vertical) is still a typed stub —
+3. `HOURLY_SLOT` (venue/studio vertical) is still a typed stub —
    furthest out on the roadmap per its own doc comment, lowest priority
-   of what's left in Phase 3.
+   of what's left in Phase 3. A third tenant on this vertical would be
+   the next extensibility data point if it's ever built.
+4. A DURATION_ORDER or third-vertical tenant, if there's ever a
+   concrete reason to onboard one — the thesis is already validated
+   with two tenants across two non-RECURRING_LEASE verticals (NIGHTLY
+   twice over doesn't add new evidence; a DURATION_ORDER tenant would).
+   Not urgent on its own.
 
 DURATION_ORDER's implementation (`packages/domain/src/booking-model/duration-order.strategy.ts`,
 `BookingService.pickUp`/`returnEquipment`/`completeInspection` in
@@ -649,7 +726,8 @@ Before writing new code:
 - **Hand-rolled FSM over xstate** (`packages/domain/src/state-machine/fsm.ts`): the PRD's guard rails (Booking `APPROVED → ACTIVE` requires three conditions checked atomically) need async guards reading live DB state. A plain async-predicate FSM fit that more directly than xstate's actor model, without the dependency weight of features (parallel states, spawned actors, visualizer) this codebase doesn't use.
 - **RLS enforcement via a separate `rentos_app` role, not the migrating role** (`packages/database/prisma/migrations/*_enable_rls/migration.sql`): Postgres RLS does not apply to a table's owner by default. `FORCE ROW LEVEL SECURITY` closes that hole for `rentos_app` (no `BYPASSRLS`), while the migrating role gets `BYPASSRLS` explicitly (not assumed via superuser status, which managed Postgres providers often don't grant). Two connection strings: `DATABASE_URL` (migrations/seed only) and `DATABASE_URL_APP` (everything the running services do). Verified live: cross-tenant reads return zero rows, no-tenant-context reads return zero rows (fail-closed), migrator role sees everything.
 - **`tenants` and `tenant_domains` are excluded from RLS**, deliberately. Resolving which tenant a request belongs to is the bootstrapping step that happens *before* `app.tenant_id` can be set — a table that needed tenant context to discover the tenant would be a chicken-and-egg lock-out. This is not a leak: which tenant owns which domain is inherently public (it's a live storefront domain).
-- **Tenant resolution across services**: `apps/storefront` and `apps/console` are separate Railway services from `apps/api` — the browser calls the API's own domain directly, so the API never sees the tenant's real storefront/console Host. Each Next.js app resolves its own tenant from *its* Host (`apps/storefront/src/lib/tenant.ts`), then forwards it explicitly via `X-Tenant-Slug` on every API call. The API's `TenantMiddleware` honors that header in every environment (not gated to dev) — this is safe because every *mutating* route requires a JWT, and `TenantMatchGuard` rejects any request where the session's `tenantId` disagrees with the header. The header can only ever influence which tenant's *public* catalog an unauthenticated request browses, which is intentionally public (PRD §7.1.1).
+- **Tenant resolution across services**: `apps/storefront` and `apps/console` are separate Railway services from `apps/api` — the browser calls the API's own domain directly, so the API never sees the tenant's real storefront/console Host. Each Next.js app resolves its own tenant from *its* Host (`apps/storefront/src/lib/tenant.ts`), then forwards it explicitly via `X-Tenant-Slug` on every API call. The API's `TenantMiddleware` honors that header in every environment (not gated to dev) — this is safe because every *authenticated* route requires a JWT, and `JwtAuthGuard` itself rejects any request where the session's `tenantId` disagrees with the header (folded into the guard in Session 16 — see below). The header can only ever influence which tenant's *public* catalog an unauthenticated request browses, which is intentionally public (PRD §7.1.1).
+- **The tenant-match check lives inside `JwtAuthGuard`, not a separate opt-in guard** (`apps/api/src/common/guards/jwt-auth.guard.ts`, Session 16): it used to be a standalone `TenantMatchGuard` that each controller had to remember to add alongside `JwtAuthGuard` on every route. It quietly went missing from roughly ten authenticated endpoints (including several *mutating* ones — deposit application/refunds, credit notes, customer blocklisting) — a real cross-tenant data leak, found only once a second tenant with its own staff credentials existed to test against. `JwtAuthGuard.canActivate` now runs the passport JWT check via `super.canActivate()`, then compares `req.user.tenantId` (JWT) against `req.tenant.id` (Host/`X-Tenant-Slug`) and throws `ForbiddenException` on mismatch — every authenticated route gets this automatically, present and future, with nothing to remember. A `PLATFORM_ADMIN` token (`tenantId: null`) still bypasses the check by design, matching the old guard's behavior (that role isn't wired into any controller yet, Phase 4). If you're adding a new authenticated route: `JwtAuthGuard` alone is sufficient, don't look for a separate tenant guard to add — there isn't one anymore, on purpose.
 - **`@rentos/database` depends on `@rentos/domain`** (not the reverse), and owns the shared invoice-generation orchestration (`packages/database/src/invoicing.ts`) — not `apps/api`. This is specifically so `apps/worker`'s recurring-invoice and dunning jobs call the *exact* code path `apps/api` uses on booking approval, instead of a second hand-rolled copy that could drift.
 - **`apps/worker` is a plain Node/BullMQ process, not a second NestJS app.** It re-implements a small `notify()` helper (`apps/worker/src/notify.ts`) mirroring `apps/api`'s `NotificationsService` rather than sharing NestJS DI across two deployables — the worker has no HTTP surface and pulling in Nest would buy nothing.
 - **Console v1 is one Next.js deployment per tenant** (`NEXT_PUBLIC_TENANT_SLUG` baked in at build time), not the PRD's eventual "single console URL with tenant switcher for platform admins" (§6) — that's explicitly Phase 4 platform-admin scope, premature for tenant #1.
@@ -661,6 +739,7 @@ Before writing new code:
 
 ## Known shortcuts (intentional, not bugs)
 
+- Every seeded staff user (both tenants, `packages/database/prisma/seed.ts`) shares one demo password, `RentOS!Demo2026`, hardcoded as a bcrypt hash in the seed file. Fine for local dev/demo; if this seed ever runs against a real deployment, every seeded account needs a real, unique password set immediately — the seed is not a safe way to provision production credentials.
 - Contract sign-off and invoice payment are two independent async gates that can complete in either order (`BookingService.computeActivationContext`/`finalizeActivation`, `apps/api/src/booking/booking.service.ts`). `handleInvoicePaid` catches `GuardFailedError` and returns quietly when payment lands before the contract is signed (booking stays `APPROVED`); `AgreementsService.sign()` calls `tryActivateAfterContractSigned` after a signature lands, which is a no-op if the invoice isn't paid yet. Whichever gate closes second is the one that actually fires the `ACTIVATE` transition. Verified live for all three cases: `contract_required` flag off, pay-then-sign, and sign-then-pay.
 - `nextInvoiceNumber` (`packages/database/src/invoice-number.ts`) derives the sequence from a per-tenant monthly `COUNT(*)` inside the same transaction as invoice creation. Correct at demo scale; races under concurrent invoice creation for the same tenant. A dedicated Postgres sequence per tenant is the real fix (Phase 2).
 - The dunning ladder (`apps/worker/src/jobs/dunning-ladder.job.ts`) hardcodes H-7/H-3/H-0/D+1/D+3/D+7/D+14 uniformly across tenants. `AutomationSetting` rows exist in schema for per-tenant override but the worker doesn't read them yet.

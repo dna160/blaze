@@ -7,7 +7,6 @@ import { CurrentUser } from "../common/decorators/current-user.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
 import { Roles } from "../common/decorators/roles.decorator.js";
 import { RolesGuard } from "../common/guards/roles.guard.js";
-import { TenantMatchGuard } from "../common/guards/tenant-match.guard.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
@@ -55,7 +54,7 @@ export class BookingController {
   }
 
   @Post(":id/approve")
-  @UseGuards(JwtAuthGuard, RolesGuard, TenantMatchGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("SUPER_ADMIN", "OPS_ADMIN")
   approve(
     @CurrentTenant() tenant: ResolvedTenant,
@@ -67,7 +66,7 @@ export class BookingController {
   }
 
   @Post(":id/reject")
-  @UseGuards(JwtAuthGuard, RolesGuard, TenantMatchGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("SUPER_ADMIN", "OPS_ADMIN")
   reject(
     @CurrentTenant() tenant: ResolvedTenant,
@@ -80,7 +79,7 @@ export class BookingController {
 
   /** Staff check-in (PRD Appendix B, NIGHTLY): PAID -> CHECKED_IN. */
   @Post(":id/check-in")
-  @UseGuards(JwtAuthGuard, RolesGuard, TenantMatchGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("SUPER_ADMIN", "OPS_ADMIN")
   checkIn(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
     return this.booking.checkIn(tenant, id, user.id);
@@ -88,7 +87,7 @@ export class BookingController {
 
   /** Staff check-out (PRD Appendix B, NIGHTLY): CHECKED_IN -> CHECKED_OUT -> CLOSED. */
   @Post(":id/check-out")
-  @UseGuards(JwtAuthGuard, RolesGuard, TenantMatchGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("SUPER_ADMIN", "OPS_ADMIN")
   checkOut(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
     return this.booking.checkOut(tenant, id, user.id);
@@ -96,7 +95,7 @@ export class BookingController {
 
   /** Staff pickup (PRD Appendix B, DURATION_ORDER): PAID -> PICKED_UP. */
   @Post(":id/pickup")
-  @UseGuards(JwtAuthGuard, RolesGuard, TenantMatchGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("SUPER_ADMIN", "OPS_ADMIN")
   pickUp(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
     return this.booking.pickUp(tenant, id, user.id);
@@ -104,7 +103,7 @@ export class BookingController {
 
   /** Staff return (PRD Appendix B, DURATION_ORDER): PICKED_UP -> RETURNED -> INSPECTION. */
   @Post(":id/return")
-  @UseGuards(JwtAuthGuard, RolesGuard, TenantMatchGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("SUPER_ADMIN", "OPS_ADMIN")
   returnEquipment(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
     return this.booking.returnEquipment(tenant, id, user.id);
@@ -112,14 +111,14 @@ export class BookingController {
 
   /** Staff inspection complete (PRD Appendix B, DURATION_ORDER): INSPECTION -> CLOSED. */
   @Post(":id/complete-inspection")
-  @UseGuards(JwtAuthGuard, RolesGuard, TenantMatchGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles("SUPER_ADMIN", "OPS_ADMIN")
   completeInspection(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
     return this.booking.completeInspection(tenant, id, user.id);
   }
 
   @Post(":id/notice")
-  @UseGuards(JwtAuthGuard, TenantMatchGuard)
+  @UseGuards(JwtAuthGuard)
   giveNotice(
     @CurrentTenant() tenant: ResolvedTenant,
     @CurrentUser() user: AuthenticatedUser,
