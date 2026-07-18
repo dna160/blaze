@@ -492,7 +492,21 @@ async function seedEquipmentTenant() {
       defaultLocale: "id",
       timezone: "Asia/Jakarta",
       branding: { primaryColor: "#7C2D12", accentColor: "#EAB308" },
-      featureFlags: { deposits_enabled: true, kyc_required: true, auto_approve: false, contract_required: false },
+      // kyc_auto_verification_enabled is Phase 4's automated KYC
+      // (docs/HANDOFF.md Session 21) — deliberately on for this ONE tenant
+      // only in the demo (diversifying away from gudang-aman, which
+      // already has Session 20's api_access_enabled flag), so the
+      // extensibility of the feature-flag pattern itself is demonstrated
+      // across two different tenants, not just one. griya-nginap doesn't
+      // even have kyc_required on, so it wouldn't be a meaningful demo
+      // target for this flag regardless.
+      featureFlags: {
+        deposits_enabled: true,
+        kyc_required: true,
+        auto_approve: false,
+        contract_required: false,
+        kyc_auto_verification_enabled: true,
+      },
     },
   });
 

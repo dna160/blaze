@@ -18,7 +18,7 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 | **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (Session 3), KYC upload + review (Session 4), and the contract e-sign gate (Session 5). 🚧 Remaining gaps: request-info/customer-reply UI, unit reassignment on approve UI |
 | **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | ✅ **Complete** — every named item on PRD §13's list plus every gap found along the way is done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow with partial-application support (Session 12, console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only), visual unit map + occupancy view (Session 9, console UI, staff-only), swap/upgrade requests with computed mid-cycle proration (Sessions 10 + 13, storefront + console UI), and a real ESignProvider port (Session 11, Privy adapter coded-but-unconfigured, MockESignProvider is the zero-regression default). Phase 3 is next. |
 | **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | ✅ **Every named item on PRD §13's Phase 3 list is done**, and the extensibility thesis has now been proven twice over. NIGHTLY (Session 14) and DURATION_ORDER (Session 15) are both real end-to-end. Two additional tenants are live with zero application code changes: `griya-nginap`/NIGHTLY (Session 16 — also found and fixed a real cross-tenant data leak) and `sewa-alat`/DURATION_ORDER (Session 19 — re-verified the Session 16 security fix holds at 3 tenants, not just 2). Pooled inventory (Session 17) drives genuine date-range-overlap capacity checking. Seasonal/dynamic pricing (Session 18) gives real per-night rate overrides. `HOURLY_SLOT` (venue/studio) is the one booking model still a stub, but it was never on Phase 3's named list — it's explicitly Phase-3-and-beyond, lowest priority, PRD's own "furthest out on the roadmap." |
-| **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | 🚧 Started (Session 20): tenant-facing read API + outbound webhooks are done, live-verified, enabled for `gudang-aman` only. Self-serve signup, billing/metering, the automation builder, OTA sync, and KYC automation are still not started. |
+| **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | 🚧 In progress: tenant-facing read API + outbound webhooks (Session 20, `gudang-aman` only) and automated KYC verification (Session 21, `sewa-alat` only) are done and live-verified. Self-serve signup, billing/metering, the automation builder, and OTA sync are still not started. |
 
 ### What's proven end-to-end (verified live against local Postgres/Redis)
 
@@ -945,6 +945,77 @@ first-ever seed run gets this correctly out of the box; an
 already-seeded local DB from a prior session does not** and needs either
 a fresh DB or a manual flag patch.
 
+**Session 21 (Phase 4 continued — automated KYC verification):** Continued
+self-directing Phase 4's remaining sub-features per the pattern
+established in Session 20 (pick the most engineering-bounded remaining
+item, document the reasoning, keep it demo-limited to one tenant). Chose
+automated KYC verification — PRD explicitly names it ("Verihubs or
+similar") and scopes it to P2, and it fits the existing
+Payment/Messaging/Storage/ESign **provider-port pattern** exactly, unlike
+self-serve signup/billing/the automation builder/OTA sync, which are all
+either bigger or more business-shaped. Built:
+
+- `KycDocument.verificationSource` (`MANUAL`/`AUTO` enum) +
+  `providerRef`/`providerReason` columns (migration, no new RLS needed —
+  `kyc_documents` was already RLS-covered).
+- `KycVerificationProvider` port (`apps/api/src/kyc/kyc-verification-provider.interface.ts`)
+  — `MockKycVerificationProvider` (zero-config default, always
+  `VERIFIED`, mirrors `MockESignProvider`'s "just works" behavior) and
+  `VerihubsKycVerificationProvider` (real-but-unconfigured, needs
+  `VERIHUBS_API_KEY`/`VERIHUBS_APP_ID`, selected via
+  `KYC_VERIFICATION_PROVIDER=verihubs`). **Known simplification**: Verihubs
+  calls are per-document (KTP OCR-validity for a KTP upload, liveness
+  check for a SELFIE upload), not the true KTP-vs-selfie face-match
+  Verihubs also offers — `KycService.upload()` verifies each document as
+  it lands, not as a matched pair, so face-match isn't reachable without
+  a bigger change to that call site. Documented in the provider's own
+  comment.
+- `KycService.upload()` calls the provider immediately when
+  `tenant.featureFlags.kyc_auto_verification_enabled` is on;
+  `VERIFIED`/`REJECTED` settle the document right away (no staff
+  involved), `PENDING` (provider inconclusive) falls back to the
+  existing manual queue with the provider's reason attached for staff
+  context. `KycService.review()` (staff manual review) always resets
+  `verificationSource` back to `MANUAL` — a human decision supersedes
+  whatever automation said, even overriding an already-AUTO-decided
+  document. Both paths share one `recomputeCustomerStatus` helper so the
+  hasKTP/hasSelfie/anyRejected/allVerified logic can't drift between
+  them.
+- `apps/console/src/app/kyc/page.tsx` — shows the provider's reason on
+  any document that auto-checked but came back inconclusive (the only
+  case an AUTO-attempted document still reaches this manual queue).
+- Seed: `sewa-alat` gets `featureFlags.kyc_auto_verification_enabled: true`
+  — deliberately a *different* tenant than Session 20's `gudang-aman`,
+  to demonstrate the per-tenant feature-flag mechanism generalizes
+  rather than being hardcoded to one specific tenant. `griya-nginap`
+  doesn't even have `kyc_required` on, so it wasn't a meaningful target
+  for this flag regardless.
+
+**Live verification**: uploaded a KTP for a `sewa-alat` customer → came
+back `VERIFIED`/`AUTO` immediately, no staff action; uploaded the
+matching SELFIE → also auto-`VERIFIED`, and the customer's `kycStatus`
+flipped to `VERIFIED` **automatically**, with neither document ever
+appearing in the staff review queue. Confirmed `gudang-aman` (flag off)
+is byte-for-byte unchanged — a KTP upload there still lands
+`PENDING_REVIEW`/`MANUAL` exactly as before this session. Staff then
+manually overrode the auto-verified KTP to `REJECTED` — `verificationSource`
+flipped to `MANUAL`, `reviewedByUserId` populated, and the customer's
+`kycStatus` correctly cascaded to `REJECTED` (original `providerRef`/
+`providerReason` preserved as a historical record of what the automated
+check originally said, not wiped by the override). Ledger balance
+unaffected (KYC never touches it) — confirmed still 0.00 for
+`gudang-aman`, zero entries for the other two. Full
+`turbo run typecheck build test --force` passes clean across all 8
+packages. Test customers/documents cleaned up afterward; the flag
+itself stays on for `sewa-alat`.
+
+**Also hit the same seed-upsert gotcha as Session 20**: `sewa-alat`
+already existed in this local DB, so `featureFlags.kyc_auto_verification_enabled`
+needed a manual SQL patch to actually land, exactly like
+`api_access_enabled` did. Same non-bug, same fix — noted here so it's
+not repeated as a surprise a third time. A fresh database's first seed
+run needs no such patch.
+
 ### What's explicitly NOT done (don't assume it exists)
 
 - Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
@@ -960,28 +1031,43 @@ a fresh DB or a manual flag patch.
 
 ## Resume here
 
-**Phases 0-3 are complete.** Phase 4 (SaaS-ready) is **started, not
-finished** — Session 20 built and live-verified tenant-facing API keys +
-outbound webhooks (the "read API + webhooks" slice), self-directed per
-the user's "let's move on to phase 4" + explicit rejection of a
-scoping question, gated to `gudang-aman` only per "only 1 tenant has it."
+**Phases 0-3 are complete.** Phase 4 (SaaS-ready) is **in progress, not
+finished**. Two sub-features are done and live-verified, each
+self-directed following the same pattern (user said "let's move on to
+phase 4, but only 1 tenant has it," then explicitly rejected a scoping
+question — so every Phase 4 sub-feature since has been chosen
+autonomously, picking whichever remaining item is most engineering-bounded
+rather than business-shaped, and gated to exactly one tenant):
+
+- **Session 20** — tenant-facing API keys + outbound webhooks, gated to
+  `gudang-aman`.
+- **Session 21** — automated KYC verification (provider-port pattern,
+  matching Payment/Messaging/Storage/ESign), gated to `sewa-alat`.
+
 **Still not started, in priority order per PRD §13**: self-serve tenant
 signup, tenant billing/metering, a visual automation builder, OTA
-channel sync (hotel), KYC automation. Each of those is its own
-business-shaped decision (pricing model, which OTA to integrate first,
-etc.) more than the API/webhooks slice was — if continuing Phase 4
-autonomously, self-direct the next sub-feature the same way Session 20
-did (pick the most engineering-bounded one, document the reasoning),
-unless the user gives more specific direction.
+channel sync (hotel). Each of those is more of a business-shaped
+decision (pricing model, which OTA to integrate first, what a workflow
+builder's UI even looks like) than either Session 20 or 21's slice was —
+if continuing Phase 4 autonomously, keep self-directing the same way:
+pick the most engineering-bounded remaining item, document the
+reasoning, gate it to one tenant, unless the user gives more specific
+direction.
 
-Read Session 20's full entry above before touching
+Read Session 20's and 21's full entries above before touching
 `apps/api/src/webhook-dispatch/`, `apps/api/src/api-keys/`,
-`apps/api/src/tenant-webhooks/`, or `apps/api/src/external-api/` — in
-particular the `ApiKeyGuard` design rationale (why `TenantApiKey` stays
-RLS-covered, unlike `tenants`/`tenant_domains`) and the seed-upsert
-gotcha (an already-seeded DB doesn't retroactively pick up new
-`featureFlags` keys from `seed.ts` — only a fresh DB's first seed run
-does).
+`apps/api/src/tenant-webhooks/`, `apps/api/src/external-api/`, or
+`apps/api/src/kyc/` — in particular the `ApiKeyGuard` design rationale
+(why `TenantApiKey` stays RLS-covered, unlike `tenants`/`tenant_domains`),
+the `KycVerificationProvider` per-document (not matched-pair) simplification,
+and the seed-upsert gotcha, which has now bitten twice: **an
+already-seeded DB doesn't retroactively pick up new `featureFlags` keys
+from `seed.ts` — only a fresh DB's first seed run does.** If a third
+Phase 4 sub-feature adds another per-tenant flag, expect to hit this a
+third time on this same local DB; either patch the flag in via SQL
+again (fast, what Sessions 20/21 both did) or reset to a fresh database
+(slower, but the more "correct" reproduction of what a real first-deploy
+seed run does).
 
 **Phase 3 recap** (Sessions 14-19): NIGHTLY and DURATION_ORDER real
 logic, pooled inventory, seasonal pricing, two additional tenants in
@@ -1055,6 +1141,8 @@ Before writing new code:
 - **API keys are hashed with SHA-256, not bcrypt** (`apps/api/src/api-keys/api-key.util.ts`): bcrypt's slow-hash design defends against brute-forcing low-entropy human-chosen passwords. An API key is a 24-byte random secret — there's nothing for a slow hash to buy here, and it would add real CPU cost to every external-API request (the hash is recomputed on every call, not just at login).
 - **Webhook signing secrets are stored in plaintext, not hashed** (`TenantWebhookSubscription.secret`) — unlike API keys, `apps/worker`'s delivery job needs the actual secret value to compute each delivery's HMAC, so hashing it would make delivery impossible. The console still only shows it once, at creation (same UX convention as Stripe/GitHub webhook secrets), even though it technically could be re-displayed.
 - **`WebhookDispatcherService.dispatch()` is a no-op by default, not a guarded call site** — it checks the feature flag and subscription match internally and returns early if either is absent, so `BookingService`/`PaymentsService` call it unconditionally at the point a real event happens rather than wrapping every call site in an `if (tenant.featureFlags.api_access_enabled)` check that would need to be remembered at every future event-emitting call site too.
+- **`KycVerificationProvider.verify()` is called once per document, not once per KTP+SELFIE pair** (`apps/api/src/kyc/kyc.service.ts`, Session 21): `KycService.upload()` verifies each document the instant it lands, independent of whether its counterpart has been uploaded yet. This is why `VerihubsKycVerificationProvider` calls Verihubs' single-image OCR/liveness endpoints rather than its face-match-against-KTP endpoint — a true face-match needs both images available together, which would mean either buffering the first upload until the second arrives, or re-verifying both once the pair is complete. Deliberately deferred; `MockKycVerificationProvider` doesn't care either way since it always returns `VERIFIED`.
+- **A human review always wins over an automated one** (`KycService.review()`, Session 21): reviewing a document — whether it's sitting in the queue because auto-verification is off, or because an automated check was inconclusive, or even overriding a document the provider already settled — always sets `verificationSource` back to `MANUAL`. There's no path where an automated decision "sticks" against a later staff override.
 - **`LocalDiskStorageProvider` is dev/demo-only, not Railway-production-safe as configured** — container filesystems are ephemeral across deploys/restarts unless a persistent Volume is explicitly mounted at `UPLOAD_DIR`. Real KTP/selfie images (actual PII, PRD §10 "encrypted PII at rest") must go through `S3StorageProvider` (`STORAGE_PROVIDER=s3`) before this touches production, or a Volume needs to be attached to the api service on Railway. This is flagged loudly in the provider's own doc comment specifically so it isn't missed.
 
 ## Known shortcuts (intentional, not bugs)

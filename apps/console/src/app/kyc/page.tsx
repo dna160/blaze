@@ -13,6 +13,8 @@ interface KycDocumentWithCustomer {
   status: "PENDING_REVIEW" | "VERIFIED" | "REJECTED";
   createdAt: string;
   customer: { id: string; fullName: string | null; phone: string };
+  verificationSource: "MANUAL" | "AUTO";
+  providerReason: string | null;
 }
 
 /** PRD §7.2.1 / §8.4 automation A9: manual KYC review queue. */
@@ -84,6 +86,11 @@ export default function KycReviewPage() {
                 <p className="text-sm text-brand-700/60">
                   {doc.documentType} · submitted {new Date(doc.createdAt).toLocaleDateString("id-ID")}
                 </p>
+                {doc.providerReason && (
+                  <p className="mt-1 text-xs text-amber-700">
+                    Automated check inconclusive — needs manual review: {doc.providerReason}
+                  </p>
+                )}
               </div>
               <div className="flex gap-2">
                 <button

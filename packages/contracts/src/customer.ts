@@ -22,12 +22,19 @@ export const KycDocumentTypeSchema = z.enum(["KTP", "SELFIE"]);
  * transit our own API over TLS, never a second hop the client controls.
  * See apps/api/src/kyc/kyc.controller.ts.
  */
+export const KycVerificationSourceSchema = z.enum(["MANUAL", "AUTO"]);
+
 export const KycDocumentDtoSchema = z.object({
   id: z.string().uuid(),
   documentType: KycDocumentTypeSchema,
   status: KycStatusSchema,
   createdAt: z.string().datetime(),
   reviewedAt: z.string().datetime().nullable(),
+  /** AUTO means KycVerificationProvider decided this without a human in the loop (Session 21) — see apps/api/src/kyc/kyc-verification-provider.interface.ts. */
+  verificationSource: KycVerificationSourceSchema,
+  providerRef: z.string().nullable(),
+  /** Provider's stated reason — populated for AUTO-REJECTED docs and for an inconclusive auto-check that fell back to the manual queue. */
+  providerReason: z.string().nullable(),
 });
 export type KycDocumentDto = z.infer<typeof KycDocumentDtoSchema>;
 

@@ -121,6 +121,17 @@ enum KycStatus {
   REJECTED
 }
 
+/// Who made the VERIFIED/REJECTED call on a KycDocument — AUTO means
+/// KycVerificationProvider decided it without a human in the loop (Session
+/// 21, Phase 4 automated KYC, PRD's P2 scope). A document a provider
+/// couldn't decide on (PENDING) stays MANUAL and sits in the review queue
+/// same as today. A staff override via KycService.review() always resets
+/// this back to MANUAL, since the human decision supersedes automation.
+enum KycVerificationSource {
+  MANUAL
+  AUTO
+}
+
 enum SwapRequestStatus {
   PENDING
   APPROVED
@@ -270,6 +281,12 @@ model KycDocument {
   reviewedByUserId String?   @db.Uuid @map("reviewed_by_user_id")
   reviewedAt       DateTime? @map("reviewed_at")
   createdAt        DateTime  @default(now()) @map("created_at")
+
+  verificationSource KycVerificationSource @default(MANUAL) @map("verification_source")
+  /// KycVerificationProvider's external reference for this check (e.g. Verihubs' request id). Null when verificationSource is MANUAL.
+  providerRef        String?               @map("provider_ref")
+  /// Human-readable reason from the provider — shown to staff verbatim for AUTO-REJECTED docs, or an inconclusive AUTO check that fell back to the manual queue.
+  providerReason     String?               @map("provider_reason")
 
   @@index([tenantId])
   @@index([customerId])

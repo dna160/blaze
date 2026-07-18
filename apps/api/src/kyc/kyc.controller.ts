@@ -17,13 +17,14 @@ import { ApiTags } from "@nestjs/swagger";
 import { ReviewKycDocumentRequestSchema } from "@rentos/contracts";
 import type { Response } from "express";
 
-import { CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
+import { CurrentTenant, CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
 import { Roles } from "../common/decorators/roles.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
 import { RolesGuard } from "../common/guards/roles.guard.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
+import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 
 import { KycService } from "./kyc.service.js";
 
@@ -37,7 +38,7 @@ export class KycController {
   @Post("documents")
   @UseInterceptors(FileInterceptor("file"))
   async upload(
-    @CurrentTenantId() tenantId: string,
+    @CurrentTenant() tenant: ResolvedTenant,
     @CurrentUser() user: AuthenticatedUser,
     @Body("documentType") documentType: string,
     @UploadedFile() file: Express.Multer.File | undefined,
@@ -47,7 +48,7 @@ export class KycController {
     if (documentType !== "KTP" && documentType !== "SELFIE") {
       throw new BadRequestException('documentType must be "KTP" or "SELFIE".');
     }
-    return this.kyc.upload(tenantId, user.id, documentType, {
+    return this.kyc.upload(tenant, user.id, documentType, {
       buffer: file.buffer,
       mimetype: file.mimetype,
       size: file.size,
