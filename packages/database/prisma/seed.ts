@@ -401,9 +401,177 @@ async function seedHomestayTenant() {
   console.log(`Seeded tenant "${tenant.slug}" (${tenant.id}) with ${assets.length} assets.`);
 }
 
+/**
+ * Tenant #3 — an equipment rental operator on DURATION_ORDER (Session
+ * 19). NIGHTLY already had two live tenants (Session 16, 18); a second
+ * NIGHTLY tenant would add no new extensibility evidence, but no real
+ * tenant had exercised DURATION_ORDER's pickup/return/inspection
+ * lifecycle until now. PKP-registered (`isPkp: true`, unlike
+ * `griya-nginap`) — a third real data point on the tax branch, and
+ * matches how an equipment-rental CV would typically be registered.
+ */
+async function seedEquipmentTenant() {
+  const tenant = await prisma.tenant.upsert({
+    where: { slug: "sewa-alat" },
+    update: {},
+    create: {
+      slug: "sewa-alat",
+      name: "Sewa Alat Jaya",
+      legalName: "CV Sewa Alat Jaya",
+      isPkp: true,
+      defaultLocale: "id",
+      timezone: "Asia/Jakarta",
+      branding: { primaryColor: "#7C2D12", accentColor: "#EAB308" },
+      featureFlags: { deposits_enabled: true, kyc_required: true, auto_approve: false, contract_required: false },
+    },
+  });
+
+  await prisma.tenantDomain.upsert({
+    where: { domain: "sewa-alat.rentos.local" },
+    update: {},
+    create: { tenantId: tenant.id, domain: "sewa-alat.rentos.local", isPrimary: true },
+  });
+
+  const location = await prisma.location.upsert({
+    where: { id: "00000000-0000-0000-0000-000000000301" },
+    update: {},
+    create: {
+      id: "00000000-0000-0000-0000-000000000301",
+      tenantId: tenant.id,
+      name: "Sewa Alat Jaya — Bandung",
+      address: "Jl. Soekarno-Hatta No. 88, Bandung, Jawa Barat",
+      timezone: "Asia/Jakarta",
+    },
+  });
+
+  await seedStaffUser(tenant.id, "ops@sewa-alat.test", "Sewa Alat Ops", ["OPS_ADMIN"]);
+  await seedStaffUser(tenant.id, "finance@sewa-alat.test", "Sewa Alat Finance", ["FINANCE_ADMIN"]);
+
+  const genset = await prisma.assetType.upsert({
+    where: { tenantId_slug: { tenantId: tenant.id, slug: "genset-5kva" } },
+    update: {},
+    create: {
+      tenantId: tenant.id,
+      name: "Genset 5kVA",
+      slug: "genset-5kva",
+      bookingModel: BookingModel.DURATION_ORDER,
+      attributesSchema: { powerKva: 5, fuelType: "diesel" },
+      pricing: {
+        basePrice: 150000,
+        currency: "IDR",
+        adminFee: 20000,
+        depositRule: { type: "FIXED", amount: 1000000 },
+        taxInclusive: false,
+      },
+      photos: [],
+      isPublished: true,
+    },
+  });
+
+  const scaffolding = await prisma.assetType.upsert({
+    where: { tenantId_slug: { tenantId: tenant.id, slug: "perancah-set" } },
+    update: {},
+    create: {
+      tenantId: tenant.id,
+      name: "Perancah Set (Scaffolding)",
+      slug: "perancah-set",
+      bookingModel: BookingModel.DURATION_ORDER,
+      attributesSchema: { heightM: 6, panels: 8 },
+      pricing: {
+        basePrice: 90000,
+        currency: "IDR",
+        adminFee: 15000,
+        depositRule: { type: "FIXED", amount: 750000 },
+        taxInclusive: false,
+      },
+      photos: [],
+      isPublished: true,
+    },
+  });
+
+  const assetCodes: Array<{ code: string; assetTypeId: string; status: AssetStatus }> = [
+    { code: "GEN-01", assetTypeId: genset.id, status: AssetStatus.OCCUPIED },
+    { code: "GEN-02", assetTypeId: genset.id, status: AssetStatus.AVAILABLE },
+    { code: "GEN-03", assetTypeId: genset.id, status: AssetStatus.MAINTENANCE },
+    { code: "SCF-01", assetTypeId: scaffolding.id, status: AssetStatus.AVAILABLE },
+  ];
+
+  const assets = [];
+  for (const a of assetCodes) {
+    const asset = await prisma.asset.upsert({
+      where: { tenantId_locationId_code: { tenantId: tenant.id, locationId: location.id, code: a.code } },
+      update: {},
+      create: {
+        tenantId: tenant.id,
+        locationId: location.id,
+        assetTypeId: a.assetTypeId,
+        code: a.code,
+        status: a.status,
+        attributes: {},
+      },
+    });
+    assets.push(asset);
+  }
+
+  const customer = await prisma.customer.upsert({
+    where: { tenantId_phone: { tenantId: tenant.id, phone: "+6281255551234" } },
+    update: {},
+    create: {
+      tenantId: tenant.id,
+      phone: "+6281255551234",
+      email: "dedi.kurniawan@example.com",
+      fullName: "Dedi Kurniawan",
+      kycStatus: "VERIFIED",
+    },
+  });
+
+  const pickedUpAsset = assets.find((a) => a.code === "GEN-01")!;
+  const existingBooking = await prisma.booking.findFirst({
+    where: { tenantId: tenant.id, assetId: pickedUpAsset.id, status: BookingStatus.PICKED_UP },
+  });
+
+  if (!existingBooking) {
+    const startDate = new Date();
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + 5);
+    await prisma.booking.create({
+      data: {
+        tenantId: tenant.id,
+        customerId: customer.id,
+        assetTypeId: genset.id,
+        assetId: pickedUpAsset.id,
+        bookingModel: BookingModel.DURATION_ORDER,
+        status: BookingStatus.PICKED_UP,
+        startDate,
+        endDate,
+        priceSnapshot: {
+          basePrice: 150000,
+          currency: "IDR",
+          adminFee: 20000,
+          depositRule: { type: "FIXED", amount: 1000000 },
+          taxInclusive: false,
+        },
+        approvedByUserId: null,
+        events: {
+          create: [
+            { tenantId: tenant.id, toStatus: BookingStatus.PENDING_APPROVAL, actorType: "CUSTOMER", reason: "Order submitted" },
+            { tenantId: tenant.id, fromStatus: BookingStatus.PENDING_APPROVAL, toStatus: BookingStatus.APPROVED, actorType: "SYSTEM", reason: "Seed data" },
+            { tenantId: tenant.id, fromStatus: BookingStatus.APPROVED, toStatus: BookingStatus.PAID, actorType: "SYSTEM", reason: "Seed data" },
+            { tenantId: tenant.id, fromStatus: BookingStatus.PAID, toStatus: BookingStatus.PICKED_UP, actorType: "SYSTEM", reason: "Seed data" },
+          ],
+        },
+      },
+    });
+  }
+
+  // eslint-disable-next-line no-console
+  console.log(`Seeded tenant "${tenant.slug}" (${tenant.id}) with ${assets.length} assets.`);
+}
+
 async function main() {
   await seedStorageTenant();
   await seedHomestayTenant();
+  await seedEquipmentTenant();
 }
 
 main()

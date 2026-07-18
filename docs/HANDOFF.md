@@ -17,7 +17,7 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 | **0 — Foundation** | Tenancy + RLS, auth/RBAC, domain model, asset registry, Xendit/WA sandbox | ✅ Done (auth: staff JWT + customer OTP; RLS verified; provider seams in place, sandbox keys not yet supplied) |
 | **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (Session 3), KYC upload + review (Session 4), and the contract e-sign gate (Session 5). 🚧 Remaining gaps: request-info/customer-reply UI, unit reassignment on approve UI |
 | **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | ✅ **Complete** — every named item on PRD §13's list plus every gap found along the way is done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow with partial-application support (Session 12, console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only), visual unit map + occupancy view (Session 9, console UI, staff-only), swap/upgrade requests with computed mid-cycle proration (Sessions 10 + 13, storefront + console UI), and a real ESignProvider port (Session 11, Privy adapter coded-but-unconfigured, MockESignProvider is the zero-regression default). Phase 3 is next. |
-| **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | ✅ **Every named item on PRD §13's Phase 3 list is done.** NIGHTLY (Session 14) and DURATION_ORDER (Session 15) are both real end-to-end. A second tenant in the NIGHTLY vertical is live (Session 16) — the extensibility thesis is validated with zero application code changes, and that exercise also found and fixed a real cross-tenant data leak. Pooled inventory (Session 17) drives genuine date-range-overlap capacity checking. **Seasonal/dynamic pricing (Session 18)** closes the list — real per-night rate overrides with a live demo. `HOURLY_SLOT` (venue/studio) is the one booking model still a stub, but it was never on Phase 3's named list — it's explicitly Phase-3-and-beyond, lowest priority, PRD's own "furthest out on the roadmap." |
+| **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | ✅ **Every named item on PRD §13's Phase 3 list is done**, and the extensibility thesis has now been proven twice over. NIGHTLY (Session 14) and DURATION_ORDER (Session 15) are both real end-to-end. Two additional tenants are live with zero application code changes: `griya-nginap`/NIGHTLY (Session 16 — also found and fixed a real cross-tenant data leak) and `sewa-alat`/DURATION_ORDER (Session 19 — re-verified the Session 16 security fix holds at 3 tenants, not just 2). Pooled inventory (Session 17) drives genuine date-range-overlap capacity checking. Seasonal/dynamic pricing (Session 18) gives real per-night rate overrides. `HOURLY_SLOT` (venue/studio) is the one booking model still a stub, but it was never on Phase 3's named list — it's explicitly Phase-3-and-beyond, lowest priority, PRD's own "furthest out on the roadmap." |
 | **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | ⬜ Not started, deliberately deferred per PRD |
 
 ### What's proven end-to-end (verified live against local Postgres/Redis)
@@ -784,6 +784,50 @@ typecheck test build` runs all three, not just `test`.
 
 This closes every named item on PRD §13's Phase 3 list.
 
+**Session 19 (a third tenant, DURATION_ORDER — extending the
+extensibility proof past its first data point):** Phase 3's named list
+was already complete after Session 18; the user was asked whether to
+start Phase 4 (explicitly optional, gated on a monetization decision
+the owner deferred) or keep working within Phase 3's footprint, and
+chose the latter. Of the three Phase-3-adjacent options on the table
+(HOURLY_SLOT from scratch, pooled-inventory UI polish, a third
+tenant), a third tenant was the best-scoped: `NIGHTLY` already had two
+live tenants (Sessions 16, 18) and a second one would add no new
+evidence, but `DURATION_ORDER` — fully built in Session 15 — had never
+been exercised by a real tenant with its own credentials, only
+throwaway `psql`-seeded test data cleaned up after each session's live
+verification. `packages/database/prisma/seed.ts` gained
+`seedEquipmentTenant()` (`sewa-alat`, an equipment-rental CV, PKP-registered
+— a third real data point on the tax branch alongside `gudang-aman`'s
+`true` and `griya-nginap`'s `false`): two `DURATION_ORDER` `AssetType`s
+(genset, scaffolding), 4 assets, 2 staff logins, a demo customer, and
+one order already `PICKED_UP` for the console/storefront to render on
+first run — same structural pattern as `seedHomestayTenant()`.
+
+Verified live end-to-end via real HTTP, zero application code changes:
+public catalog browse → 4-day scaffolding order submitted → approved
+(invoice math hand-checked: 4×90,000 rent + 15,000 admin fee = 375,000
+taxable, 41,250 PPN since this tenant *is* PKP-registered, +750,000
+deposit = 1,166,250 total, exact match) → OTP + mock payment → pickup
+→ return (asset correctly routed through `MAINTENANCE` during
+inspection, per Session 15's design) → complete inspection → `CLOSED`,
+asset back to `AVAILABLE`. **The more important check**: with three
+real tenants and three real staff credentials now live simultaneously,
+re-ran Session 16's cross-tenant exploit pattern in every direction —
+`gudang-aman`'s token against `sewa-alat`'s booking (403), `griya-nginap`'s
+token against `sewa-alat`'s booking (403), `sewa-alat`'s token against
+`gudang-aman`'s deposits list (403) and `griya-nginap`'s unit-map
+(403), each tenant's token against its own data (200) — confirming the
+`JwtAuthGuard` tenant-match fix (Session 16) holds correctly at N=3
+tenants, not just the N=2 it was originally proven against. Public
+catalogs stayed correctly isolated per tenant throughout (three
+distinct asset-type lists, no cross-contamination). Ledger balance
+summed to exactly 0.00 after the full flow and again after test-data
+cleanup, checked across all three tenants combined. Full
+`turbo run typecheck test build --force` passes clean across all 8
+packages (no domain-package changes this session — this was a
+database-seed + live-verification session, same shape as Session 16).
+
 ### What's explicitly NOT done (don't assume it exists)
 
 - Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
@@ -822,22 +866,29 @@ start Phase 4 without explicit direction** — it's the one phase the
 PRD itself frames as a business decision, not a default next sprint,
 unlike Phases 1-3 which were unconditionally "build these."
 
+**Three tenants are now live** (`gudang-aman`/RECURRING_LEASE,
+`griya-nginap`/NIGHTLY, `sewa-alat`/DURATION_ORDER, Session 19) — the
+extensibility thesis has been proven twice over now, and the
+cross-tenant security fix from Session 16 has been re-verified holding
+at N=3, not just N=2. Login credentials for all three tenants'
+seeded staff: `ops@<tenant>.test` / `finance@<tenant>.test`, password
+`RentOS!Demo2026` for every one of them.
+
 Low-priority polish left over from Phase 3, worth doing opportunistically
 but none of it blocks anything:
 1. `HOURLY_SLOT` (venue/studio vertical) is still a typed stub —
    furthest out on the roadmap per its own doc comment, and was never
-   on Phase 3's named PRD §13 list to begin with.
-2. A DURATION_ORDER or third-vertical tenant, if there's ever a
-   concrete reason to onboard one — the extensibility thesis is already
-   validated with two tenants across two non-RECURRING_LEASE verticals.
-   Not required.
-3. Console/storefront UI has no pooled-aware affordances yet (no "N of
+   on Phase 3's named PRD §13 list to begin with. A fourth tenant on
+   this vertical would need its FSM built from scratch first (unlike
+   NIGHTLY/DURATION_ORDER, whose FSMs already existed before their real
+   math did) — a materially bigger lift than Sessions 14/15/19 were.
+2. Console/storefront UI has no pooled-aware affordances yet (no "N of
    M beds available" display distinct from the existing count, no way
    for staff to pick a specific pooled unit at approval time instead of
    accepting the auto-assigned one) — functionally complete without it.
-4. No admin UI exists to create/edit `AssetType.pricing` at all
-   (seasonal rates included) — every AssetType in this codebase is
-   seed-data-driven, including the two seeded tenants. A real pricing
+3. No admin UI exists to create/edit `AssetType.pricing` at all
+   (seasonal rates included) — every AssetType in this codebase,
+   across all three seeded tenants, is seed-data-driven. A real pricing
    management UI is genuinely out of scope for what's been asked so
    far, not an oversight.
 
