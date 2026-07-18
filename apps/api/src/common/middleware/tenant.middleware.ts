@@ -28,6 +28,12 @@ import { TenancyService } from "../../tenancy/tenancy.service.js";
  * cross-checked by JwtAuthGuard. The only thing this header can
  * influence unauthenticated is which tenant's PUBLIC catalog you browse,
  * which is public by design (PRD §7.1.1: "prices visible without login").
+ *
+ * `?tenant=<slug>` query param is a same-scope fallback for a
+ * third-party consumer that can't set a custom header at all — e.g. an
+ * OTA (Airbnb/Booking.com) polling the outbound .ics calendar feed
+ * URL from OtaSyncController. Checked after the header, before Host, so
+ * an explicit header always wins if somehow both are present.
  */
 @Injectable()
 export class TenantMiddleware implements NestMiddleware {
@@ -36,9 +42,9 @@ export class TenantMiddleware implements NestMiddleware {
   async use(req: Request, _res: Response, next: NextFunction) {
     try {
       const slugHeader = req.header("x-tenant-slug");
-      req.tenant = slugHeader
-        ? await this.tenancy.resolveBySlug(slugHeader)
-        : await this.tenancy.resolveByHost(req.header("host"));
+      const slugQuery = typeof req.query.tenant === "string" ? req.query.tenant : undefined;
+      const slug = slugHeader ?? slugQuery;
+      req.tenant = slug ? await this.tenancy.resolveBySlug(slug) : await this.tenancy.resolveByHost(req.header("host"));
     } catch {
       // Left undefined; CurrentTenantId will 400 for handlers that require it.
     }

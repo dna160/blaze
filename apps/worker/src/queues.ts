@@ -5,10 +5,12 @@ import { deliverTenantWebhook, markWebhookDeliveryFailed, type WebhookDeliveryJo
 import { runDunningLadder } from "./jobs/dunning-ladder.job.js";
 import { runGenerateRecurringInvoices } from "./jobs/generate-recurring-invoices.job.js";
 import { runLedgerBalanceCheck } from "./jobs/ledger-balance-check.job.js";
+import { runSyncOtaCalendars } from "./jobs/sync-ota-calendars.job.js";
 
 export const INVOICE_GENERATION_QUEUE = "invoice-generation";
 export const DUNNING_LADDER_QUEUE = "dunning-ladder";
 export const LEDGER_BALANCE_CHECK_QUEUE = "ledger-balance-check";
+export const OTA_CALENDAR_SYNC_QUEUE = "ota-calendar-sync";
 /** Must match apps/api/src/webhook-dispatch/webhook-dispatch.service.ts's TENANT_WEBHOOK_DELIVERY_QUEUE exactly — that's the producer, this file's Worker is the consumer. */
 export const TENANT_WEBHOOK_DELIVERY_QUEUE = "tenant-webhook-delivery";
 
@@ -31,6 +33,7 @@ export async function scheduleRepeatableJobs(connection: IORedis): Promise<void>
   const invoiceQueue = new Queue(INVOICE_GENERATION_QUEUE, { connection });
   const dunningQueue = new Queue(DUNNING_LADDER_QUEUE, { connection });
   const ledgerQueue = new Queue(LEDGER_BALANCE_CHECK_QUEUE, { connection });
+  const otaSyncQueue = new Queue(OTA_CALENDAR_SYNC_QUEUE, { connection });
 
   await invoiceQueue.add(
     "tick",
@@ -47,10 +50,19 @@ export async function scheduleRepeatableJobs(connection: IORedis): Promise<void>
     {},
     { repeat: { pattern: process.env.LEDGER_BALANCE_CHECK_CRON ?? "0 3 * * *" }, jobId: "ledger-balance-check-daily" },
   );
+  // Hourly, not daily — OTA availability changes throughout the day and a
+  // stale block window risks a real double-booking, unlike the other
+  // three jobs which are fine settling once a day.
+  await otaSyncQueue.add(
+    "tick",
+    {},
+    { repeat: { pattern: process.env.OTA_CALENDAR_SYNC_CRON ?? "0 * * * *" }, jobId: "ota-calendar-sync-hourly" },
+  );
 
   await invoiceQueue.close();
   await dunningQueue.close();
   await ledgerQueue.close();
+  await otaSyncQueue.close();
 }
 
 export function startWorkers(connection: IORedis): Worker[] {
@@ -84,6 +96,16 @@ export function startWorkers(connection: IORedis): Worker[] {
     { connection },
   );
 
+  const otaSyncWorker = new Worker(
+    OTA_CALENDAR_SYNC_QUEUE,
+    async (job: Job) => {
+      console.log(`[${OTA_CALENDAR_SYNC_QUEUE}] tick started (job ${job.id})`);
+      await runSyncOtaCalendars();
+      console.log(`[${OTA_CALENDAR_SYNC_QUEUE}] tick completed`);
+    },
+    { connection },
+  );
+
   const webhookDeliveryWorker = new Worker<WebhookDeliveryJobPayload>(
     TENANT_WEBHOOK_DELIVERY_QUEUE,
     async (job: Job<WebhookDeliveryJobPayload>) => {
@@ -100,9 +122,9 @@ export function startWorkers(connection: IORedis): Worker[] {
     }
   });
 
-  for (const worker of [invoiceWorker, dunningWorker, ledgerWorker]) {
+  for (const worker of [invoiceWorker, dunningWorker, ledgerWorker, otaSyncWorker]) {
     worker.on("failed", (job, err) => console.error(`Job ${job?.id} in ${job?.queueName} failed:`, err));
   }
 
-  return [invoiceWorker, dunningWorker, ledgerWorker, webhookDeliveryWorker];
+  return [invoiceWorker, dunningWorker, ledgerWorker, otaSyncWorker, webhookDeliveryWorker];
 }

@@ -286,7 +286,20 @@ async function seedHomestayTenant() {
       defaultLocale: "id",
       timezone: "Asia/Makassar",
       branding: { primaryColor: "#134E4A", accentColor: "#FB923C" },
-      featureFlags: { deposits_enabled: true, kyc_required: false, auto_approve: false, contract_required: false },
+      // ota_sync_enabled is Phase 4's OTA channel calendar sync
+      // (docs/HANDOFF.md Session 22) — deliberately on for this ONE
+      // tenant only in the demo. griya-nginap is the only NIGHTLY
+      // (homestay) tenant, the one vertical OTA sync actually targets —
+      // this is now the third of three tenants each demoing a distinct
+      // Phase 4 capability (gudang-aman: API/webhooks, sewa-alat:
+      // automated KYC, griya-nginap: OTA sync).
+      featureFlags: {
+        deposits_enabled: true,
+        kyc_required: false,
+        auto_approve: false,
+        contract_required: false,
+        ota_sync_enabled: true,
+      },
     },
   });
 
@@ -310,6 +323,10 @@ async function seedHomestayTenant() {
 
   await seedStaffUser(tenant.id, "ops@griya-nginap.test", "Griya Ops", ["OPS_ADMIN"]);
   await seedStaffUser(tenant.id, "finance@griya-nginap.test", "Griya Finance", ["FINANCE_ADMIN"]);
+  // SUPER_ADMIN gates OtaSyncController's subscription endpoints (OTA
+  // Sync console page) — same reasoning as gudang-aman's superadmin
+  // seeded in Session 20.
+  const superAdmin = await seedStaffUser(tenant.id, "superadmin@griya-nginap.test", "Super Admin", ["SUPER_ADMIN"]);
 
   const roomStandard = await prisma.assetType.upsert({
     where: { tenantId_slug: { tenantId: tenant.id, slug: "kamar-standard" } },
@@ -463,6 +480,27 @@ async function seedHomestayTenant() {
             { tenantId: tenant.id, fromStatus: BookingStatus.PAID, toStatus: BookingStatus.CHECKED_IN, actorType: "SYSTEM", reason: "Seed data" },
           ],
         },
+      },
+    });
+  }
+
+  // Demo OTA subscription — a placeholder source URL (not a real Airbnb
+  // export feed), same convention as the Session 20 demo webhook
+  // subscription pointing at https://example.com/webhooks/rentos: gives
+  // the console something to show out of the box, expected to fail/
+  // retry on an actual sync rather than pretend to be a live one.
+  const demoOtaAsset = assets.find((a) => a.code === "R-02")!;
+  const existingOtaSubscription = await prisma.otaCalendarSubscription.findFirst({
+    where: { tenantId: tenant.id, assetId: demoOtaAsset.id },
+  });
+  if (!existingOtaSubscription) {
+    await prisma.otaCalendarSubscription.create({
+      data: {
+        tenantId: tenant.id,
+        assetId: demoOtaAsset.id,
+        label: "Demo Airbnb feed",
+        sourceUrl: "https://example.com/calendar/demo-r-02.ics",
+        createdByUserId: superAdmin.id,
       },
     });
   }

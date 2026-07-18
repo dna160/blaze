@@ -182,6 +182,7 @@ model Tenant {
   promoCodes           PromoCode[]
   apiKeys              TenantApiKey[]
   webhookSubscriptions TenantWebhookSubscription[]
+  otaSubscriptions     OtaCalendarSubscription[]
 
   @@map("tenants")
 }
@@ -339,6 +340,8 @@ model Asset {
 
   bookings           Booking[]
   swapRequestTargets SwapRequest[]
+  otaSubscriptions   OtaCalendarSubscription[]
+  otaBlockedDates    OtaBlockedDate[]
 
   @@unique([tenantId, locationId, code])
   @@index([tenantId])
@@ -763,4 +766,70 @@ model TenantWebhookDelivery {
   @@index([tenantId])
   @@index([subscriptionId])
   @@map("tenant_webhook_deliveries")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — OTA channel calendar sync via iCal (PRD §13, Session 22)
+// ---------------------------------------------------------------------------
+
+enum OtaSyncStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+/// One inbound iCal import per Asset (one real-world listing = one
+/// physical Asset = one external calendar) — gated by
+/// `Tenant.featureFlags.ota_sync_enabled`. apps/worker's
+/// sync-ota-calendars job fetches `sourceUrl` on a schedule and turns its
+/// VEVENTs into OtaBlockedDate rows, so a guest booked directly through
+/// Airbnb/Booking.com doesn't get double-booked through RentOS. See
+/// docs/HANDOFF.md Session 22.
+model OtaCalendarSubscription {
+  id              String        @id @default(uuid()) @db.Uuid
+  tenantId        String        @db.Uuid @map("tenant_id")
+  tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assetId         String        @db.Uuid @map("asset_id")
+  asset           Asset         @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  label           String
+  sourceUrl       String        @map("source_url")
+  isActive        Boolean       @default(true) @map("is_active")
+  lastSyncedAt    DateTime?     @map("last_synced_at")
+  lastSyncStatus  OtaSyncStatus @default(PENDING) @map("last_sync_status")
+  lastSyncError   String?       @map("last_sync_error")
+  createdByUserId String?       @db.Uuid @map("created_by_user_id")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  blockedDates OtaBlockedDate[]
+
+  @@index([tenantId])
+  @@index([assetId])
+  @@map("ota_calendar_subscriptions")
+}
+
+/// A single blocked date range parsed out of a subscription's iCal feed.
+/// `externalUid` is the source VEVENT's UID — resyncing upserts on
+/// (subscriptionId, externalUid) so a still-present reservation on the
+/// external calendar doesn't duplicate, and a cancelled one can be
+/// cleanly replaced. `BookingService.createBooking`'s non-pooled NIGHTLY
+/// asset selection excludes any Asset with an overlapping row here,
+/// exactly like `computePooledAvailableCount` excludes overlapping
+/// Bookings for pooled types.
+model OtaBlockedDate {
+  id             String                  @id @default(uuid()) @db.Uuid
+  tenantId       String                  @db.Uuid @map("tenant_id")
+  assetId        String                  @db.Uuid @map("asset_id")
+  asset          Asset                   @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  subscriptionId String                  @db.Uuid @map("subscription_id")
+  subscription   OtaCalendarSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  externalUid    String                  @map("external_uid")
+  startDate      DateTime                @map("start_date")
+  endDate        DateTime                @map("end_date")
+  createdAt      DateTime                @default(now()) @map("created_at")
+
+  @@unique([subscriptionId, externalUid])
+  @@index([tenantId])
+  @@index([assetId])
+  @@map("ota_blocked_dates")
 }

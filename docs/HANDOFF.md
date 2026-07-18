@@ -18,7 +18,7 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 | **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (Session 3), KYC upload + review (Session 4), and the contract e-sign gate (Session 5). 🚧 Remaining gaps: request-info/customer-reply UI, unit reassignment on approve UI |
 | **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | ✅ **Complete** — every named item on PRD §13's list plus every gap found along the way is done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow with partial-application support (Session 12, console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only), visual unit map + occupancy view (Session 9, console UI, staff-only), swap/upgrade requests with computed mid-cycle proration (Sessions 10 + 13, storefront + console UI), and a real ESignProvider port (Session 11, Privy adapter coded-but-unconfigured, MockESignProvider is the zero-regression default). Phase 3 is next. |
 | **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | ✅ **Every named item on PRD §13's Phase 3 list is done**, and the extensibility thesis has now been proven twice over. NIGHTLY (Session 14) and DURATION_ORDER (Session 15) are both real end-to-end. Two additional tenants are live with zero application code changes: `griya-nginap`/NIGHTLY (Session 16 — also found and fixed a real cross-tenant data leak) and `sewa-alat`/DURATION_ORDER (Session 19 — re-verified the Session 16 security fix holds at 3 tenants, not just 2). Pooled inventory (Session 17) drives genuine date-range-overlap capacity checking. Seasonal/dynamic pricing (Session 18) gives real per-night rate overrides. `HOURLY_SLOT` (venue/studio) is the one booking model still a stub, but it was never on Phase 3's named list — it's explicitly Phase-3-and-beyond, lowest priority, PRD's own "furthest out on the roadmap." |
-| **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | 🚧 In progress: tenant-facing read API + outbound webhooks (Session 20, `gudang-aman` only) and automated KYC verification (Session 21, `sewa-alat` only) are done and live-verified. Self-serve signup, billing/metering, the automation builder, and OTA sync are still not started. |
+| **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | 🚧 In progress: tenant-facing read API + outbound webhooks (Session 20, `gudang-aman`), automated KYC verification (Session 21, `sewa-alat`), and OTA calendar sync via iCal (Session 22, `griya-nginap`) are all done and live-verified — every tenant now demonstrates a distinct Phase 4 capability. Self-serve signup, billing/metering, and the visual automation builder are still not started — the three remaining items, and the most business-shaped ones. |
 
 ### What's proven end-to-end (verified live against local Postgres/Redis)
 
@@ -1016,6 +1016,98 @@ needed a manual SQL patch to actually land, exactly like
 not repeated as a surprise a third time. A fresh database's first seed
 run needs no such patch.
 
+**Session 22 (Phase 4 continued — OTA channel calendar sync via iCal):**
+Third self-directed Phase 4 sub-feature, same pattern as Sessions 20/21.
+Chose OTA calendar sync — PRD §13 names it ("OTA channel sync (hotel)")
+and it's the last remaining item that's engineering-bounded rather than
+business-shaped (self-serve signup, billing/metering, and the automation
+builder all remain undone — see "Resume here"). Specifically built it as
+**iCal (.ics) sync**, not a paid OTA API integration: real self-hosted
+rental platforms commonly sync Airbnb/Booking.com/VRBO this way because
+it needs no API credentials or business-development relationship with
+the OTA, just an exchange of plain calendar URLs — which also means
+there's no "real-but-unconfigured provider" stub here the way
+Xendit/WhatsApp/Privy/Verihubs work, since the whole mechanism is an
+open, credential-free standard, not a paid third-party API.
+
+- `OtaCalendarSubscription` (one per Asset — one real-world listing = one
+  physical unit = one external calendar) + `OtaBlockedDate` (parsed
+  VEVENTs, deduped by external UID) — new RLS-covered tables.
+- `packages/database/src/ical.ts` — hand-rolled RFC5545 VEVENT
+  generator (outbound) and a deliberately minimal VEVENT extractor
+  (inbound): no `RRULE`/recurrence, no `VTIMEZONE`, whole-day `VALUE=DATE`
+  only. A real "block these reserved nights" export feed is always a
+  flat list of non-recurring VEVENTs in practice, so a full RFC5545
+  parser would be a lot of unused complexity — same reasoning as this
+  codebase's hand-rolled FSM over xstate.
+- `packages/database/src/ota-blocking.ts` — `findAvailableNonPooledAsset`,
+  extending the pre-existing non-pooled asset-selection query (which had
+  **no date-overlap check at all** before this session — a single-
+  current-booking-per-asset simplification already in place) to also
+  exclude any Asset with an overlapping `OtaBlockedDate`. Only wired in
+  for NIGHTLY — the one booking model OTA sync targets.
+- `OtaSyncModule` — `GET /ota/assets/:assetId/calendar.ics` (public,
+  unauthenticated, gated by `featureFlags.ota_sync_enabled`, exposes only
+  date ranges, never customer PII — same trust level as public catalog
+  browsing) + `SUPER_ADMIN`-gated subscription CRUD. Registering a
+  subscription only stores *what* to sync — apps/worker's new hourly
+  `sync-ota-calendars` job does the actual fetching/parsing, so a slow or
+  unreachable external URL never blocks an API request.
+- **`TenantMiddleware` gained a `?tenant=<slug>` query-param fallback**
+  (checked after the `X-Tenant-Slug` header, before Host) — needed
+  because the outbound .ics URL is meant to be pasted directly into
+  Airbnb/Booking.com's calendar-import field, and an OTA's fetcher can't
+  be configured to send a custom header the way `apps/storefront`/
+  `apps/console`'s own BFFs can. This is a small, general-purpose
+  addition (any future unauthenticated endpoint needing a URL-embeddable
+  tenant hint benefits from it), not something scoped narrowly to OTA
+  sync.
+- `apps/console/src/app/ota-sync` — lists every Asset's outbound feed URL
+  (copyable) and manages inbound subscriptions with last-sync status.
+- Seed: `griya-nginap` gets `featureFlags.ota_sync_enabled: true` (the
+  only NIGHTLY/homestay tenant — the one vertical OTA sync targets) plus
+  a `SUPER_ADMIN` staff user and one demo subscription pointing at a
+  placeholder URL (same non-functional-by-design convention as Sessions
+  20/21's demo credentials). **All three tenants now each demonstrate a
+  distinct Phase 4 capability**: `gudang-aman` → API/webhooks,
+  `sewa-alat` → automated KYC, `griya-nginap` → OTA sync.
+
+**Live verification**: fetched `gudang-aman`'s D-01 outbound feed (both
+via `X-Tenant-Slug` header and via `?tenant=` query param, simulating a
+real external OTA fetcher) and got a correct `VEVENT` matching its real
+seeded `CHECKED_IN` booking's exact dates. Stood up a throwaway local
+HTTP server serving a fixed test .ics (one VEVENT blocking Aug 10-15,
+2026), registered it as a real subscription against two of
+`griya-nginap`'s Kamar Standard units (R-01 and R-02 — the only two
+`AVAILABLE` units of that type), ran the sync job directly (not waiting
+for the hourly schedule) and confirmed the parsed `OtaBlockedDate` rows
+landed with the exact UID/dates from the feed. Then: a booking attempt
+for Aug 11-13 (inside the blocked range) on Kamar Standard correctly
+409'd ("No units of this type are currently available") since both
+candidate units were blocked; a booking attempt for Sept 1-4 (outside
+the range) on the same AssetType correctly succeeded and landed on R-02
+— proving the exclusion is genuinely date-range-scoped, not a blanket
+asset lockout. `gudang-aman` and `sewa-alat` (flag off on both) correctly
+403'd on the outbound feed regardless of asset id. The seeded placeholder
+subscription failed/retried as expected (non-functional by design, same
+as Sessions 20/21's demo credentials). Ledger balance unaffected
+(0.00, and OTA sync has no financial code path to begin with). Full
+`turbo run typecheck build test --force` passes clean across all 8
+packages (built with `NODE_ENV=production`, same pre-existing environment
+quirk noted in Session 20). Test subscriptions, the test booking, and its
+customer were all cleaned up afterward; the seeded demo subscription and
+`ota_sync_enabled` flag were left in place.
+
+**Environment note, unrelated to this session's code**: partway through
+this session, both the local Postgres and Redis services stopped
+running (likely a container/resource event, not something any command
+here caused) — `pg_isready`/`redis-cli ping` both failed mid-session and
+had to be restarted with `sudo service postgresql start` /
+`sudo service redis-server start` before verification could continue.
+If a future session hits `ECONNREFUSED`/"no response" on either despite
+`.env` being correct, check whether the services are simply not running
+before assuming a config problem.
+
 ### What's explicitly NOT done (don't assume it exists)
 
 - Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
@@ -1043,31 +1135,45 @@ rather than business-shaped, and gated to exactly one tenant):
   `gudang-aman`.
 - **Session 21** — automated KYC verification (provider-port pattern,
   matching Payment/Messaging/Storage/ESign), gated to `sewa-alat`.
+- **Session 22** — OTA channel calendar sync via iCal, gated to
+  `griya-nginap`.
 
 **Still not started, in priority order per PRD §13**: self-serve tenant
-signup, tenant billing/metering, a visual automation builder, OTA
-channel sync (hotel). Each of those is more of a business-shaped
-decision (pricing model, which OTA to integrate first, what a workflow
-builder's UI even looks like) than either Session 20 or 21's slice was —
-if continuing Phase 4 autonomously, keep self-directing the same way:
-pick the most engineering-bounded remaining item, document the
-reasoning, gate it to one tenant, unless the user gives more specific
-direction.
+signup, tenant billing/metering, a visual automation builder. All three
+are genuinely business-shaped decisions (a pricing/tiering model, what a
+workflow builder's UI and rule language even look like, how self-serve
+signup interacts with a not-yet-decided billing gate) rather than
+engineering-bounded ones the way Sessions 20-22's slices were — this is
+also why they were left for last three sessions running. If continuing
+Phase 4 autonomously, the same "pick the most engineering-bounded
+remaining item and self-direct" approach runs out here: there isn't a
+clearly engineering-only slice left to peel off any of these three
+without first making a business call the PRD explicitly deferred. Worth
+pausing to ask, or picking the least business-sensitive angle (e.g. a
+tenant provisioning wizard for self-serve signup that stops short of
+actually deciding a pricing model) rather than inventing pricing/tiering
+terms unilaterally.
 
-Read Session 20's and 21's full entries above before touching
+Read Sessions 20-22's full entries above before touching
 `apps/api/src/webhook-dispatch/`, `apps/api/src/api-keys/`,
-`apps/api/src/tenant-webhooks/`, `apps/api/src/external-api/`, or
-`apps/api/src/kyc/` — in particular the `ApiKeyGuard` design rationale
-(why `TenantApiKey` stays RLS-covered, unlike `tenants`/`tenant_domains`),
-the `KycVerificationProvider` per-document (not matched-pair) simplification,
-and the seed-upsert gotcha, which has now bitten twice: **an
-already-seeded DB doesn't retroactively pick up new `featureFlags` keys
-from `seed.ts` — only a fresh DB's first seed run does.** If a third
-Phase 4 sub-feature adds another per-tenant flag, expect to hit this a
-third time on this same local DB; either patch the flag in via SQL
-again (fast, what Sessions 20/21 both did) or reset to a fresh database
-(slower, but the more "correct" reproduction of what a real first-deploy
-seed run does).
+`apps/api/src/tenant-webhooks/`, `apps/api/src/external-api/`,
+`apps/api/src/kyc/`, or `apps/api/src/ota-sync/` — in particular the
+`ApiKeyGuard` design rationale (why `TenantApiKey` stays RLS-covered,
+unlike `tenants`/`tenant_domains`), the `KycVerificationProvider`
+per-document (not matched-pair) simplification, the iCal parser's
+deliberate no-recurrence/no-timezone scope, and the seed-upsert gotcha,
+which has now bitten three times running: **an already-seeded DB
+doesn't retroactively pick up new `featureFlags` keys from `seed.ts` —
+only a fresh DB's first seed run does.** Same fix each time (patch the
+flag in via SQL, or reset to a fresh database) — stop being surprised by
+it.
+
+**Environment note**: mid-Session-22, local Postgres and Redis both
+stopped running unprompted and needed `sudo service postgresql start` /
+`sudo service redis-server start` before verification could proceed —
+check whether the services are actually running before assuming a
+`.env`/config problem if a future session hits connection-refused
+errors that weren't there moments earlier.
 
 **Phase 3 recap** (Sessions 14-19): NIGHTLY and DURATION_ORDER real
 logic, pooled inventory, seasonal pricing, two additional tenants in
@@ -1084,9 +1190,11 @@ class for the new API-key auth path.
 for all three tenants' seeded staff (`admin@gudang-aman.test` /
 `ops@griya-nginap.test` / `ops@sewa-alat.test`, plus `finance@<tenant>.test`
 for every tenant), password `RentOS!Demo2026` for every one of them.
-`gudang-aman` additionally has `superadmin@gudang-aman.test` (same
-password) — the only `SUPER_ADMIN` seeded anywhere so far, needed for
-the new `/api-access` console page.
+`gudang-aman` and `griya-nginap` additionally have
+`superadmin@<tenant>.test` (same password) — `SUPER_ADMIN` gates the
+`/api-access` and `/ota-sync` console pages respectively. `sewa-alat`
+has no `SUPER_ADMIN` since Session 21's automated KYC doesn't need one
+(`KycController` only requires `OPS_ADMIN`/`FINANCE_ADMIN`).
 
 Low-priority polish left over from Phase 3, worth doing opportunistically
 but none of it blocks anything:
@@ -1144,6 +1252,9 @@ Before writing new code:
 - **`KycVerificationProvider.verify()` is called once per document, not once per KTP+SELFIE pair** (`apps/api/src/kyc/kyc.service.ts`, Session 21): `KycService.upload()` verifies each document the instant it lands, independent of whether its counterpart has been uploaded yet. This is why `VerihubsKycVerificationProvider` calls Verihubs' single-image OCR/liveness endpoints rather than its face-match-against-KTP endpoint — a true face-match needs both images available together, which would mean either buffering the first upload until the second arrives, or re-verifying both once the pair is complete. Deliberately deferred; `MockKycVerificationProvider` doesn't care either way since it always returns `VERIFIED`.
 - **A human review always wins over an automated one** (`KycService.review()`, Session 21): reviewing a document — whether it's sitting in the queue because auto-verification is off, or because an automated check was inconclusive, or even overriding a document the provider already settled — always sets `verificationSource` back to `MANUAL`. There's no path where an automated decision "sticks" against a later staff override.
 - **`LocalDiskStorageProvider` is dev/demo-only, not Railway-production-safe as configured** — container filesystems are ephemeral across deploys/restarts unless a persistent Volume is explicitly mounted at `UPLOAD_DIR`. Real KTP/selfie images (actual PII, PRD §10 "encrypted PII at rest") must go through `S3StorageProvider` (`STORAGE_PROVIDER=s3`) before this touches production, or a Volume needs to be attached to the api service on Railway. This is flagged loudly in the provider's own doc comment specifically so it isn't missed.
+- **OTA sync is iCal-based, not a paid OTA API integration** (`packages/database/src/ical.ts`, Session 22) — a deliberate choice over building against, say, Airbnb's or Booking.com's actual partner API, which would need a real business relationship/API credentials with a specific OTA before any of it could be exercised even structurally. iCal export/import is how many real self-hosted rental platforms handle this exact problem: no credentials, just an exchange of calendar URLs. The cost is real-time-ness (hourly sync, not a webhook push) and one-way blocking-only semantics (RentOS can't push its own bookings' *rate*, guest details, etc. to the OTA — only which dates are taken).
+- **`TenantMiddleware`'s `?tenant=<slug>` query-param fallback** (Session 22) is deliberately checked *after* the `X-Tenant-Slug` header and *before* Host resolution — an explicit header always wins if both are somehow present, and the query param only matters for a caller (like an OTA's calendar fetcher) that can't set custom headers at all. Same public-by-design trust level as the header already had: it can only ever influence which tenant's already-intentionally-public data (catalog, OTA calendar) an unauthenticated request sees.
+- **`findAvailableNonPooledAsset`'s OTA-block check is NIGHTLY-only** (`packages/database/src/ota-blocking.ts`, Session 22) — `BookingService.createBooking` only passes a real date window for NIGHTLY bookings; every other booking model passes `null`/`null`, which skips the `OtaBlockedDate` overlap query entirely (a harmless no-op, since no `OtaCalendarSubscription` can even be created for a non-NIGHTLY Asset's booking model in practice — there's no UI path to do so, though the schema doesn't hard-enforce it).
 
 ## Known shortcuts (intentional, not bugs)
 

@@ -1,6 +1,12 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { assetFsm } from "@rentos/domain";
-import { computePooledAvailableCount, findAvailablePooledAsset, recordDepositHeldEntries, type Prisma } from "@rentos/database";
+import {
+  computePooledAvailableCount,
+  findAvailableNonPooledAsset,
+  findAvailablePooledAsset,
+  recordDepositHeldEntries,
+  type Prisma,
+} from "@rentos/database";
 
 import { AuditService } from "../audit/audit.service.js";
 import { CrmService } from "../crm/crm.service.js";
@@ -68,14 +74,18 @@ export class BookingService {
           throw new ConflictException("No units of this type are currently available for the requested dates.");
         }
       } else {
-        const availableAsset = await tx.asset.findFirst({
-          where: { assetTypeId: assetType.id, status: "AVAILABLE" },
-          orderBy: { code: "asc" },
-        });
-        if (!availableAsset) {
+        // OTA-blocked dates (Session 22) only apply to NIGHTLY, the one
+        // booking model synced calendars target — other models pass
+        // null/null and get the exact pre-existing behavior (no
+        // OtaBlockedDate rows exist for their AssetTypes anyway).
+        const isNightly = assetType.bookingModel === "NIGHTLY";
+        const otaWindowStart = isNightly ? input.startDate : null;
+        const otaWindowEnd = isNightly ? (input.endDate ?? null) : null;
+        const foundAssetId = await findAvailableNonPooledAsset(tx, assetType.id, otaWindowStart, otaWindowEnd);
+        if (!foundAssetId) {
           throw new ConflictException("No units of this type are currently available.");
         }
-        availableAssetId = availableAsset.id;
+        availableAssetId = foundAssetId;
       }
 
       const fsm = bookingFsmFor(assetType.bookingModel);

@@ -17,6 +17,7 @@ import { FinanceModule } from "./finance/finance.module.js";
 import { HealthController } from "./health/health.controller.js";
 import { KycModule } from "./kyc/kyc.module.js";
 import { NotificationsModule } from "./notifications/notifications.module.js";
+import { OtaSyncModule } from "./ota-sync/ota-sync.module.js";
 import { PaymentsModule } from "./payments/payments.module.js";
 import { PrismaModule } from "./prisma/prisma.module.js";
 import { ReportingModule } from "./reporting/reporting.module.js";
@@ -47,6 +48,7 @@ import { WebhookDispatchModule } from "./webhook-dispatch/webhook-dispatch.modul
     ApiKeysModule,
     TenantWebhooksModule,
     ExternalApiModule,
+    OtaSyncModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_FILTER, useClass: HttpExceptionFilter }],

@@ -7,3 +7,4 @@ export * from "./customer.js";
 export * from "./contract.js";
 export * from "./swap-request.js";
 export * from "./platform-api.js";
+export * from "./ota-sync.js";
