@@ -94,6 +94,30 @@ export class BookingController {
     return this.booking.checkOut(tenant, id, user.id);
   }
 
+  /** Staff pickup (PRD Appendix B, DURATION_ORDER): PAID -> PICKED_UP. */
+  @Post(":id/pickup")
+  @UseGuards(JwtAuthGuard, RolesGuard, TenantMatchGuard)
+  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  pickUp(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
+    return this.booking.pickUp(tenant, id, user.id);
+  }
+
+  /** Staff return (PRD Appendix B, DURATION_ORDER): PICKED_UP -> RETURNED -> INSPECTION. */
+  @Post(":id/return")
+  @UseGuards(JwtAuthGuard, RolesGuard, TenantMatchGuard)
+  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  returnEquipment(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
+    return this.booking.returnEquipment(tenant, id, user.id);
+  }
+
+  /** Staff inspection complete (PRD Appendix B, DURATION_ORDER): INSPECTION -> CLOSED. */
+  @Post(":id/complete-inspection")
+  @UseGuards(JwtAuthGuard, RolesGuard, TenantMatchGuard)
+  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  completeInspection(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
+    return this.booking.completeInspection(tenant, id, user.id);
+  }
+
   @Post(":id/notice")
   @UseGuards(JwtAuthGuard, TenantMatchGuard)
   giveNotice(

@@ -10,24 +10,24 @@ describe("getBookingModelStrategy", () => {
     expect(strategy.lifecycleVerbs).toContain("move_in");
   });
 
-  it("resolves NIGHTLY to a working strategy whose computeFinalSettlement is still a typed stub", () => {
-    const strategy = getBookingModelStrategy("NIGHTLY");
-    expect(strategy.kind).toBe("NIGHTLY");
-    expect(strategy.lifecycleVerbs.length).toBeGreaterThan(0);
-    expect(() => strategy.computeFinalSettlement({} as never, {} as never, {} as never, new Date())).toThrow(
-      BookingModelNotImplementedError,
-    );
-  });
-
-  it.each(["DURATION_ORDER", "HOURLY_SLOT"] as const)(
-    "resolves %s to a typed stub that satisfies the interface but is not implemented",
+  it.each(["NIGHTLY", "DURATION_ORDER"] as const)(
+    "resolves %s to a working strategy whose computeFinalSettlement is still a typed stub",
     (kind) => {
       const strategy = getBookingModelStrategy(kind);
       expect(strategy.kind).toBe(kind);
       expect(strategy.lifecycleVerbs.length).toBeGreaterThan(0);
-      expect(() => strategy.computeInitialInvoice({} as never, {} as never, {} as never)).toThrow(
+      expect(() => strategy.computeFinalSettlement({} as never, {} as never, {} as never, new Date())).toThrow(
         BookingModelNotImplementedError,
       );
     },
   );
+
+  it("resolves HOURLY_SLOT to a typed stub that satisfies the interface but is not implemented", () => {
+    const strategy = getBookingModelStrategy("HOURLY_SLOT");
+    expect(strategy.kind).toBe("HOURLY_SLOT");
+    expect(strategy.lifecycleVerbs.length).toBeGreaterThan(0);
+    expect(() => strategy.computeInitialInvoice({} as never, {} as never, {} as never)).toThrow(
+      BookingModelNotImplementedError,
+    );
+  });
 });

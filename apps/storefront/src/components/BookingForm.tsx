@@ -13,6 +13,8 @@ interface BookingFormProps {
 /** PRD §7.1.2 booking flow steps 1-3: pick date(s), identify by phone, submit. OTP/KYC happen after submission in this v1 flow. */
 export function BookingForm({ tenantSlug, assetTypeId, bookingModel }: BookingFormProps) {
   const isNightly = bookingModel === "NIGHTLY";
+  const isDurationOrder = bookingModel === "DURATION_ORDER";
+  const needsEndDate = isNightly || isDurationOrder;
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [phone, setPhone] = useState("");
@@ -23,8 +25,8 @@ export function BookingForm({ tenantSlug, assetTypeId, bookingModel }: BookingFo
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (isNightly && endDate && new Date(endDate) <= new Date(startDate)) {
-      setError("Checkout date must be after check-in.");
+    if (needsEndDate && endDate && new Date(endDate) <= new Date(startDate)) {
+      setError(isNightly ? "Checkout date must be after check-in." : "Return date must be after pickup.");
       setStatus("error");
       return;
     }
@@ -37,7 +39,7 @@ export function BookingForm({ tenantSlug, assetTypeId, bookingModel }: BookingFo
         body: {
           assetTypeId,
           startDate: new Date(startDate).toISOString(),
-          ...(isNightly ? { endDate: new Date(endDate).toISOString() } : {}),
+          ...(needsEndDate ? { endDate: new Date(endDate).toISOString() } : {}),
           customerPhone: phone,
           customerFullName: fullName,
         },
@@ -66,7 +68,9 @@ export function BookingForm({ tenantSlug, assetTypeId, bookingModel }: BookingFo
     <form onSubmit={onSubmit} className="space-y-4 rounded-xl border border-brand-600/10 bg-white p-6">
       <h3 className="font-medium">Request this unit</h3>
       <div>
-        <label className="block text-sm text-brand-700/70">{isNightly ? "Check-in date" : "Move-in date"}</label>
+        <label className="block text-sm text-brand-700/70">
+          {isNightly ? "Check-in date" : isDurationOrder ? "Pickup date" : "Move-in date"}
+        </label>
         <input
           type="date"
           required
@@ -75,9 +79,9 @@ export function BookingForm({ tenantSlug, assetTypeId, bookingModel }: BookingFo
           className="mt-1 w-full rounded border border-brand-600/20 px-3 py-2"
         />
       </div>
-      {isNightly && (
+      {needsEndDate && (
         <div>
-          <label className="block text-sm text-brand-700/70">Checkout date</label>
+          <label className="block text-sm text-brand-700/70">{isNightly ? "Checkout date" : "Return date"}</label>
           <input
             type="date"
             required

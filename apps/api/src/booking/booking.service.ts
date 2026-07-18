@@ -15,10 +15,13 @@ type TxBooking = { id: string; assetId: string | null; priceSnapshot: unknown; s
 
 const DEFAULT_RESERVATION_TTL_HOURS = 48;
 
+/** Booking models whose invoice math needs both ends of the window (nights/days x rate) — see BookingWindow.endDate. */
+const BOOKING_MODELS_REQUIRING_END_DATE = new Set(["NIGHTLY", "DURATION_ORDER"]);
+
 export interface CreateBookingInput {
   assetTypeId: string;
   startDate: Date;
-  /** Checkout date — required for NIGHTLY, ignored otherwise. */
+  /** Checkout/return date — required for NIGHTLY and DURATION_ORDER, ignored otherwise. */
   endDate?: Date;
   customerPhone: string;
   customerFullName: string;
@@ -42,12 +45,12 @@ export class BookingService {
       const assetType = await tx.assetType.findUnique({ where: { id: input.assetTypeId } });
       if (!assetType || !assetType.isPublished) throw new NotFoundException("AssetType not found.");
 
-      if (assetType.bookingModel === "NIGHTLY") {
+      if (BOOKING_MODELS_REQUIRING_END_DATE.has(assetType.bookingModel)) {
         if (!input.endDate) {
-          throw new BadRequestException("A checkout date is required for this booking.");
+          throw new BadRequestException("An end date is required for this booking.");
         }
         if (input.endDate.getTime() <= input.startDate.getTime()) {
-          throw new BadRequestException("Checkout date must be after the check-in date.");
+          throw new BadRequestException("End date must be after the start date.");
         }
       }
 
@@ -71,7 +74,7 @@ export class BookingService {
           bookingModel: assetType.bookingModel,
           status: "DRAFT",
           startDate: input.startDate,
-          endDate: assetType.bookingModel === "NIGHTLY" ? input.endDate : undefined,
+          endDate: BOOKING_MODELS_REQUIRING_END_DATE.has(assetType.bookingModel) ? input.endDate : undefined,
           priceSnapshot: assetType.pricing as Prisma.InputJsonValue,
           reservedUntil,
         },
@@ -389,8 +392,10 @@ export class BookingService {
 
   /**
    * Staff check-in action (PRD Appendix B, NIGHTLY): PAID -> CHECKED_IN,
-   * moves the unit into service. DURATION_ORDER's equivalent pickup step
-   * isn't wired yet — out of scope for this pass (docs/HANDOFF.md).
+   * moves the unit into service. DURATION_ORDER has its own equivalent
+   * lifecycle methods below (pickUp/returnEquipment/completeInspection) —
+   * its FSM shape differs (an extra INSPECTION step), so it isn't reused
+   * here.
    */
   async checkIn(tenant: ResolvedTenant, bookingId: string, actorUserId: string) {
     return this.prisma.runInTenantContext(tenant.id, async (tx) => {
@@ -446,6 +451,110 @@ export class BookingService {
 
       await tx.bookingEvent.create({
         data: { tenantId: tenant.id, bookingId, fromStatus: booking.status, toStatus: closed, actorType: "USER", actorId: actorUserId, reason: "Checked out" },
+      });
+
+      return updated;
+    });
+  }
+
+  /**
+   * Staff pickup action (PRD Appendix B, DURATION_ORDER — equipment
+   * rental): PAID -> PICKED_UP, moves the unit into service. Mirrors
+   * checkIn() but kept as its own method since the two booking models'
+   * FSMs diverge from here.
+   */
+  async pickUp(tenant: ResolvedTenant, bookingId: string, actorUserId: string) {
+    return this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const booking = await tx.booking.findUnique({ where: { id: bookingId } });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      if (booking.bookingModel !== "DURATION_ORDER") {
+        throw new BadRequestException(`Pickup is not implemented for ${booking.bookingModel} bookings yet.`);
+      }
+
+      const fsm = bookingFsmFor(booking.bookingModel);
+      const { to } = await fsm.fire(booking.status as never, "ACTIVATE", {} as BookingActivationContext);
+
+      const updated = await tx.booking.update({ where: { id: bookingId }, data: { status: to } });
+
+      if (booking.assetId) {
+        await assetFsm.fire("RESERVED", "MOVE_IN", undefined);
+        await tx.asset.update({ where: { id: booking.assetId }, data: { status: "OCCUPIED" } });
+      }
+
+      await tx.bookingEvent.create({
+        data: { tenantId: tenant.id, bookingId, fromStatus: booking.status, toStatus: to, actorType: "USER", actorId: actorUserId, reason: "Picked up" },
+      });
+
+      return updated;
+    });
+  }
+
+  /**
+   * Staff return action: PICKED_UP -> RETURNED -> INSPECTION in one call
+   * — the equipment physically arrives back and immediately needs
+   * inspection before it can be re-listed, so there's nothing real to
+   * wait on between those two FSM states (same reasoning as checkOut()
+   * collapsing SETTLE + END_DATE_REACHED for NIGHTLY). The unit goes to
+   * MAINTENANCE (not straight back to AVAILABLE) so it can't be re-booked
+   * while inspection is pending — see completeInspection() for the step
+   * that clears it.
+   */
+  async returnEquipment(tenant: ResolvedTenant, bookingId: string, actorUserId: string) {
+    return this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const booking = await tx.booking.findUnique({ where: { id: bookingId } });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      if (booking.bookingModel !== "DURATION_ORDER") {
+        throw new BadRequestException(`Return is not implemented for ${booking.bookingModel} bookings yet.`);
+      }
+
+      const fsm = bookingFsmFor(booking.bookingModel);
+      const { to: returned } = await fsm.fire(booking.status as never, "SETTLE", {} as BookingActivationContext);
+      const { to: inspection } = await fsm.fire(returned, "CYCLE_INVOICE_ISSUED", {} as BookingActivationContext);
+
+      const updated = await tx.booking.update({ where: { id: bookingId }, data: { status: inspection } });
+
+      if (booking.assetId) {
+        await assetFsm.fire("OCCUPIED", "MOVE_OUT", undefined);
+        await assetFsm.fire("AVAILABLE", "SET_MAINTENANCE", undefined);
+        await tx.asset.update({ where: { id: booking.assetId }, data: { status: "MAINTENANCE" } });
+      }
+
+      await tx.bookingEvent.create({
+        data: { tenantId: tenant.id, bookingId, fromStatus: booking.status, toStatus: inspection, actorType: "USER", actorId: actorUserId, reason: "Returned — inspection pending" },
+      });
+
+      return updated;
+    });
+  }
+
+  /**
+   * Staff inspection-complete action: INSPECTION -> CLOSED, returns the
+   * unit to the available pool. Damage deductions against the deposit
+   * (if any) are a separate manual action via the existing
+   * `DepositsService.applyToDamages` workflow (Session 12) — staff make
+   * that call before or after this one, whichever suits their process;
+   * it isn't automated here.
+   */
+  async completeInspection(tenant: ResolvedTenant, bookingId: string, actorUserId: string) {
+    return this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const booking = await tx.booking.findUnique({ where: { id: bookingId } });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      if (booking.bookingModel !== "DURATION_ORDER") {
+        throw new BadRequestException(`Completing inspection is not implemented for ${booking.bookingModel} bookings yet.`);
+      }
+
+      const fsm = bookingFsmFor(booking.bookingModel);
+      const { to } = await fsm.fire(booking.status as never, "END_DATE_REACHED", {} as BookingActivationContext);
+
+      const updated = await tx.booking.update({ where: { id: bookingId }, data: { status: to } });
+
+      if (booking.assetId) {
+        await assetFsm.fire("MAINTENANCE", "RETURN_TO_SERVICE", undefined);
+        await tx.asset.update({ where: { id: booking.assetId }, data: { status: "AVAILABLE" } });
+      }
+
+      await tx.bookingEvent.create({
+        data: { tenantId: tenant.id, bookingId, fromStatus: booking.status, toStatus: to, actorType: "USER", actorId: actorUserId, reason: "Inspection complete" },
       });
 
       return updated;

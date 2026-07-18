@@ -29,7 +29,7 @@ export default async function AssetTypeDetailPage({ params }: { params: Promise<
         <p className="mt-4 text-2xl font-semibold text-accent-500">
           {formatIDR(assetType.pricing.basePrice)}
           <span className="text-base font-normal text-brand-700/60">
-            {assetType.bookingModel === "NIGHTLY" ? "/night" : "/month"}
+            {assetType.bookingModel === "NIGHTLY" ? "/night" : assetType.bookingModel === "DURATION_ORDER" ? "/day" : "/month"}
           </span>
         </p>
         <p className="mt-2 text-sm text-brand-700/70">
@@ -46,7 +46,13 @@ export default async function AssetTypeDetailPage({ params }: { params: Promise<
             <dt className="text-brand-700/60">Security deposit</dt>
             <dd>
               {assetType.pricing.depositRule?.type === "MULTIPLE_OF_RENT"
-                ? `${assetType.pricing.depositRule.multiple}× ${assetType.bookingModel === "NIGHTLY" ? "nightly rate" : "monthly rent"}`
+                ? `${assetType.pricing.depositRule.multiple}× ${
+                    assetType.bookingModel === "NIGHTLY"
+                      ? "nightly rate"
+                      : assetType.bookingModel === "DURATION_ORDER"
+                        ? "daily rate"
+                        : "monthly rent"
+                  }`
                 : formatIDR(assetType.pricing.depositRule && "amount" in assetType.pricing.depositRule ? assetType.pricing.depositRule.amount : 0)}
             </dd>
           </div>

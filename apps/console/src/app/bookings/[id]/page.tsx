@@ -66,7 +66,7 @@ export default function BookingDetailPage() {
     }
   }
 
-  async function performStayAction(action: "check-in" | "check-out") {
+  async function performStayAction(action: "check-in" | "check-out" | "pickup" | "return" | "complete-inspection") {
     const token = authClient.getToken();
     if (!token) return;
     setStayActionBusy(true);
@@ -128,6 +128,55 @@ export default function BookingDetailPage() {
           )}
         </div>
       )}
+
+      {booking.bookingModel === "DURATION_ORDER" &&
+        (booking.status === "PAID" ||
+          booking.status === "PICKED_UP" ||
+          booking.status === "RETURNED" ||
+          booking.status === "INSPECTION") && (
+          <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">
+            <h2 className="font-medium">Order</h2>
+            {booking.status === "PAID" && (
+              <>
+                <p className="mt-2 text-sm text-brand-700/60">Paid in full — ready for pickup.</p>
+                <button
+                  onClick={() => performStayAction("pickup")}
+                  disabled={stayActionBusy}
+                  className="mt-3 rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  {stayActionBusy ? "Recording pickup..." : "Mark picked up"}
+                </button>
+              </>
+            )}
+            {booking.status === "PICKED_UP" && (
+              <>
+                <p className="mt-2 text-sm text-brand-700/60">Equipment is out with the customer.</p>
+                <button
+                  onClick={() => performStayAction("return")}
+                  disabled={stayActionBusy}
+                  className="mt-3 rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  {stayActionBusy ? "Recording return..." : "Mark returned"}
+                </button>
+              </>
+            )}
+            {booking.status === "INSPECTION" && (
+              <>
+                <p className="mt-2 text-sm text-brand-700/60">
+                  Returned — under inspection. Apply any damage deductions via the deposit before closing, if
+                  needed.
+                </p>
+                <button
+                  onClick={() => performStayAction("complete-inspection")}
+                  disabled={stayActionBusy}
+                  className="mt-3 rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  {stayActionBusy ? "Closing..." : "Complete inspection"}
+                </button>
+              </>
+            )}
+          </div>
+        )}
 
       {contract && (
         <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">

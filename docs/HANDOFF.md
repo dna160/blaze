@@ -17,7 +17,7 @@ Source PRD: [`docs/PRD.md`](./PRD.md). Section references below (`§X`) are PRD 
 | **0 — Foundation** | Tenancy + RLS, auth/RBAC, domain model, asset registry, Xendit/WA sandbox | ✅ Done (auth: staff JWT + customer OTP; RLS verified; provider seams in place, sandbox keys not yet supplied) |
 | **1 — Storage MVP** | Storefront, approval workbench, RECURRING_LEASE engine, invoicing+webhooks, dunning, customer portal, P0 reports | ✅ Core loop done and verified end-to-end (see "What's proven" below), including the customer-facing pay-now flow (Session 3), KYC upload + review (Session 4), and the contract e-sign gate (Session 5). 🚧 Remaining gaps: request-info/customer-reply UI, unit reassignment on approve UI |
 | **2 — Finance depth & automation** | Deposit payouts, refunds, credit notes, maker-checker, unit map, swap requests, e-sign, accounting export, month-end view | ✅ **Complete** — every named item on PRD §13's list plus every gap found along the way is done: double-entry ledger (accrual basis, verified balanced live), manual payment recording with a real proof-of-payment upload (Session 6) + maker-checker verification (console UI), deposit refund request/approve workflow with partial-application support (Session 12, console UI), credit note issuance with automatic replacement invoice for the remaining balance (Session 7, console UI), nightly ledger-balance-check worker job, month-end close view + invoice/payment/ledger CSV export (Session 8, console UI, finance-roles-only), visual unit map + occupancy view (Session 9, console UI, staff-only), swap/upgrade requests with computed mid-cycle proration (Sessions 10 + 13, storefront + console UI), and a real ESignProvider port (Session 11, Privy adapter coded-but-unconfigured, MockESignProvider is the zero-regression default). Phase 3 is next. |
-| **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | 🚧 In progress. NIGHTLY is real end-to-end (Session 14): nights × rate invoicing, check-in/check-out lifecycle, storefront + console UI. DURATION_ORDER/HOURLY_SLOT are still typed stubs. Pooled inventory, seasonal pricing, and second-tenant onboarding not started. |
+| **3 — Multi-vertical proof** | NIGHTLY + DURATION_ORDER real logic, pooled inventory, seasonal pricing, second tenant | 🚧 In progress. NIGHTLY (Session 14) and DURATION_ORDER (Session 15) are both real end-to-end: nights/days × rate invoicing, full pickup/return/inspection or check-in/check-out lifecycles, storefront + console UI. HOURLY_SLOT is still a typed stub (furthest-out vertical per PRD, not prioritized). Pooled inventory, seasonal pricing, and second-tenant onboarding not started. |
 | **4 — SaaS-ready** | Self-serve tenant signup, tenant billing, visual automation builder, OTA sync, KYC automation | ⬜ Not started, deliberately deferred per PRD |
 
 ### What's proven end-to-end (verified live against local Postgres/Redis)
@@ -500,6 +500,84 @@ still is) — the old test asserted the whole strategy threw, which this
 session's change correctly broke. Full `turbo run typecheck test build --force`
 passes clean across all 8 packages (50 domain unit tests, up from 42).
 
+**Session 15 (DURATION_ORDER real booking-model logic — second Phase 3
+vertical):** Followed Session 14's NIGHTLY as the direct template.
+`DurationOrderStrategy.computeInitialInvoice`
+(`packages/domain/src/booking-model/duration-order.strategy.ts`, 7 new
+unit tests) is days × `pricing.basePrice` (reused as a per-day rate,
+same pattern as NIGHTLY's per-night reuse) plus the same shared
+`buildInvoiceDraft` admin-fee/deposit/PPN assembly — no third copy of
+that logic, it's the same one Session 14 already extracted.
+`computeFinalSettlement` stays a stub for the same reason NIGHTLY's
+does: no early-return path exists on `durationOrderBookingFsm` yet.
+`endDate` validation in `BookingService.createBooking` now covers both
+NIGHTLY and DURATION_ORDER via one `BOOKING_MODELS_REQUIRING_END_DATE`
+set instead of a single hardcoded check — no schema or contract changes
+needed, since `endDate` was already threaded generically through
+`BookingWindow`/`BookingForInvoicing` in Session 14.
+
+The real new piece: DURATION_ORDER's FSM (`durationOrderBookingFsm`,
+pre-existing but unreached until now) has one more state than NIGHTLY —
+`PICKED_UP → RETURNED → INSPECTION → CLOSED` instead of a direct
+`CHECKED_IN → CHECKED_OUT → CLOSED` — modeling the equipment-rental
+reality that a returned item needs a damage check before it can be
+re-listed. Three new `BookingService` methods, deliberately *not*
+reusing `checkIn`/`checkOut`'s two-method shape: `pickUp` (`PAID →
+PICKED_UP`, asset `RESERVED → OCCUPIED`), `returnEquipment`
+(`PICKED_UP → RETURNED → INSPECTION` in one call — same "nothing real
+to wait on between these two states" reasoning Session 14 used for
+`checkOut`'s two-step collapse — asset `OCCUPIED → AVAILABLE →
+MAINTENANCE`, deliberately routed through `MAINTENANCE` rather than
+straight back to `AVAILABLE` so the unit can't be re-booked while
+inspection is pending), and `completeInspection` (`INSPECTION →
+CLOSED`, asset `MAINTENANCE → AVAILABLE` via `RETURN_TO_SERVICE`) — the
+real decision point where staff would call the existing
+`DepositsService.applyToDamages` (Session 12) before or after closing,
+not automated here. New endpoints: `POST /bookings/:id/{pickup,return,
+complete-inspection}` (`SUPER_ADMIN`/`OPS_ADMIN`). All three explicitly
+gate on `booking.bookingModel === "DURATION_ORDER"` (400 otherwise),
+mirroring `checkIn`/`checkOut`'s NIGHTLY-only gate — cross-model calls
+fail with a clear message, not a confusing FSM error or silent
+half-wiring.
+
+Storefront's `BookingForm` generalized its NIGHTLY-only `endDate`
+branch to a `needsEndDate` flag covering both models (pickup/return
+date labels for DURATION_ORDER vs check-in/checkout for NIGHTLY); the
+asset-type detail page shows "/day" pricing and "daily rate" deposit
+phrasing for DURATION_ORDER. Console's booking detail page gained an
+"Order" card (DURATION_ORDER + `PAID`/`PICKED_UP`/`RETURNED`/`INSPECTION`)
+with Mark picked up / Mark returned / Complete inspection buttons,
+alongside (not replacing) the existing NIGHTLY "Stay" card.
+
+Verified live end-to-end against a temporary DURATION_ORDER
+`AssetType` + `Asset` (equipment rental, seeded via `psql`, same
+pattern as every prior session, cleaned up after): a 5-day order (Aug
+10 → Aug 15) → approve → invoice `RENT` line read exactly "Rental fee
+(5 days × 150000)" totalling 750,000, full invoice total 1,854,700
+(750,000 rent + 20,000 admin fee + 84,700 PPN + 1,000,000 deposit) —
+hand-verified against the same formula the unit tests pin. Mock
+payment flipped the booking to `PAID` with a `HELD` deposit of
+1,000,000 and the asset still `RESERVED`. `pickUp` → `PICKED_UP`, asset
+`OCCUPIED`. `returnEquipment` → `INSPECTION` directly (skipping a
+visible `RETURNED` state, as designed), asset `MAINTENANCE` — confirming
+the equipment is genuinely off-market during inspection, not just
+logically "returned" while still bookable. `completeInspection` →
+`CLOSED`, asset back to `AVAILABLE`. Edge cases: pickup on an
+already-`CLOSED` order 409s; `check-in` (the NIGHTLY-only method)
+called on a DURATION_ORDER booking 400s with the explicit
+"not implemented for DURATION_ORDER" message, confirming the two
+verticals' lifecycle methods stay properly isolated from each other;
+missing `endDate` on a DURATION_ORDER booking 400s; pickup attempted
+before payment (booking still `APPROVED`) 409s
+(`ILLEGAL_TRANSITION` — no `ACTIVATE` transition from `APPROVED` in
+`durationOrderBookingFsm`, only from `PAID`). Ledger balance summed to
+exactly 0.00 after the full flow and again after test-data cleanup.
+`registry.test.ts` updated the same way Session 14 did for NIGHTLY —
+DURATION_ORDER now joins it in the "working strategy, `computeFinalSettlement`
+still a stub" test case instead of the old blanket "whole strategy
+throws" one. Full `turbo run typecheck test build --force` passes clean
+across all 8 packages (57 domain unit tests, up from 50).
+
 ### What's explicitly NOT done (don't assume it exists)
 
 - Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
@@ -516,45 +594,49 @@ passes clean across all 8 packages (50 domain unit tests, up from 42).
 ## Resume here
 
 **Phase 2 is complete** (see the Phase status table). **Phase 3 is
-underway**: NIGHTLY is now real end-to-end (Session 14) — invoicing,
-payment, deposit, check-in/check-out lifecycle, storefront + console
-UI, all verified live. What's left in Phase 3, in priority order:
+well underway**: both NIGHTLY (Session 14) and DURATION_ORDER (Session
+15) are now real end-to-end — invoicing, payment, deposit, full
+lifecycle (check-in/check-out or pickup/return/inspection), storefront
++ console UI, all verified live. What's left in Phase 3, in priority
+order:
 
-1. **`DURATION_ORDER` real booking-model logic** — the next-highest-leverage
-   chunk. `NightlyStrategy` (`packages/domain/src/booking-model/nightly.strategy.ts`)
-   is now the template to follow (not `RecurringLeaseStrategy` — DURATION_ORDER
-   is a one-shot model like NIGHTLY, not a recurring-cycle one). Its FSM
-   already exists and is proven-reachable in shape (`durationOrderBookingFsm`,
-   `packages/domain/src/state-machine/booking-fsm.ts`):
-   `APPROVED → PAYMENT_RECEIVED → PAID → ACTIVATE → PICKED_UP → SETTLE →
-   RETURNED → CYCLE_INVOICE_ISSUED → INSPECTION → END_DATE_REACHED → CLOSED`
-   — note the extra `RETURNED → INSPECTION` step versus NIGHTLY's direct
-   `CHECKED_OUT → CLOSED`, which exists specifically for a
-   damage-inspection window before close; `BookingService.checkIn`/`checkOut`
-   currently hard-reject any non-NIGHTLY booking model (400,
-   "not implemented for X yet") specifically so this isn't accidentally
-   half-wired — build real `pickUp`/`markReturned`/`completeInspection`
-   methods for DURATION_ORDER rather than reusing NIGHTLY's two-method
-   shape as-is. `computeInitialInvoice` needs a duration (days/weeks) ×
-   rate + a deposit hold (equipment vertical, PRD §7.1.3) — `endDate`
-   is already threaded through `BookingWindow`/`BookingForInvoicing` from
-   this session's NIGHTLY work, so DURATION_ORDER can likely reuse it
-   directly rather than needing its own schema/contract changes.
+1. **A second tenant in a different vertical onboarded without code
+   changes** — now the clear next step, and the PRD's extensibility
+   thesis has real material to test against: two working non-RECURRING_LEASE
+   verticals (NIGHTLY for hotel/kost, DURATION_ORDER for equipment
+   rental) exist, not just one. Onboarding means writing rows directly
+   (tenant, users, asset types with `NIGHTLY` or `DURATION_ORDER`
+   pricing, assets) — `packages/database/prisma/seed.ts` is the
+   template — and confirming the full golden path (storefront browse →
+   book → approve → pay → lifecycle actions → closed) works with **zero
+   application code changes**, only config/data. If it doesn't, that's
+   the signal to find and fix the leak, not a second tenant's problem
+   to work around.
 2. Pooled inventory flag (`AssetType.isPooled` already exists in
    schema, unused) — availability becomes a count against a shared
-   pool rather than one specific asset per booking.
+   pool rather than one specific asset per booking. Not required to
+   onboard a second tenant (both NIGHTLY and DURATION_ORDER assign one
+   specific `Asset` per booking, same as RECURRING_LEASE), but real for
+   some equipment/hotel setups where interchangeable inventory is
+   tracked as a count rather than individually.
 3. Seasonal/dynamic pricing (needed for the hotel vertical per PRD
-   §7.1.3).
-4. A second tenant in a different vertical (hotel/kost or equipment)
-   onboarded **without code changes** — the PRD's extensibility thesis
-   validated or falsified. This is a materially bigger lift than
-   anything else in Phase 3: it's the first point where "does the
-   architecture actually generalize" gets tested against a real second
-   booking model in production-like conditions, not just a clean
-   interface holding up under one vertical's load in isolation. Don't
-   start this until at least one of items 1-3 above is real (NIGHTLY
-   alone is arguably enough now, but a second real vertical — DURATION_ORDER
-   — makes the "no code changes" claim much more convincing than one).
+   §7.1.3) — today `AssetType.pricing.basePrice` is a single flat rate
+   regardless of date; weekday/weekend or peak-season rates aren't
+   modeled at all.
+4. `HOURLY_SLOT` (venue/studio vertical) is still a typed stub —
+   furthest out on the roadmap per its own doc comment, lowest priority
+   of what's left in Phase 3.
+
+DURATION_ORDER's implementation (`packages/domain/src/booking-model/duration-order.strategy.ts`,
+`BookingService.pickUp`/`returnEquipment`/`completeInspection` in
+`apps/api/src/booking/booking.service.ts`) is the template for anyone
+building `HOURLY_SLOT` later — same pattern as NIGHTLY was the template
+for DURATION_ORDER: read the target FSM's exact shape in
+`packages/domain/src/state-machine/booking-fsm.ts` first (don't assume
+it mirrors an existing one), reuse `buildInvoiceDraft` for the
+tax/deposit line assembly, and give each genuinely-different lifecycle
+step its own service method rather than forcing an existing one to
+also handle it.
 
 Before writing new code:
 1. `docker compose up` (or run each service manually per README "Local development") in an environment with real network access, to confirm the Dockerfiles actually work — this is unverified debt, still outstanding from Session 1.
@@ -588,8 +670,10 @@ Before writing new code:
 - Deposit refunds always call `PaymentProvider.refund()` against the *original* payment's `providerRef` (best-effort lookup by booking + DEPOSIT line), never a manual-disbursement-only path. `MockPaymentProvider.refund()` doesn't validate the ref at all, so this was never exercised against a picky real gateway — when wiring real Xendit payouts, double check Xendit's refund API actually accepts a ref from an *invoice* payment for what's conceptually a *deposit* payout (PRD says deposit refunds go out via "Xendit payout," which is a different Xendit product/endpoint than a payment refund — this may need its own adapter method, not reuse of `refund()`).
 - Swap-request approval (`SwapRequestsService.approve`) reassigns the asset and re-snapshots pricing immediately and *computes* the mid-cycle proration (`computeSwapProration`, stored on `SwapRequest.prorationNetAdjustment`/`prorationDaysRemaining`), but does **not** auto-generate an invoice or credit note for that number — a downsize computes a negative adjustment, and this codebase's invoice model has no negative-amount convention anything downstream (payments, dunning, the storefront UI) is built to handle. Staff see the exact number in the console swap queue and act on it manually: a credit note for a downsize, a manual charge for an upgrade. A real fix needs a signed-adjustment-line concept on `Invoice`, or a standalone account-credit primitive this schema doesn't have yet — bigger than a "small, contained fix," genuinely deferred, not forgotten.
 - `NightlyStrategy.computeFinalSettlement` (`packages/domain/src/booking-model/nightly.strategy.ts`) still throws `BookingModelNotImplementedError` — deliberately. NIGHTLY's FSM (`nightlyBookingFsm`) has no early-checkout or `GIVE_NOTICE`-equivalent transition, only the forward `CHECKED_IN → CHECKED_OUT → CLOSED` path, so this method is genuinely unreachable from any code path today. It becomes real when PRD Appendix B's `EXTENDED`/early-checkout states get built, not before.
-- `BookingService.checkIn`/`checkOut` (`apps/api/src/booking/booking.service.ts`) explicitly reject any `bookingModel` other than `NIGHTLY` (400, not a silent no-op or a confusing FSM error) — DURATION_ORDER's equivalent pickup/return/inspection lifecycle is real in the FSM (`durationOrderBookingFsm`) but has no service methods or endpoints wired yet. See "Resume here" item 1.
-- NIGHTLY deposit refunds after checkout are **not automated** — `checkOut()` only transitions the booking/asset; if a deposit was held, staff process its refund via the existing, unrelated `DepositsService.requestRefund`/`approveRefund` flow (Session 2/12) exactly as they would for a RECURRING_LEASE move-out. This mirrors how RECURRING_LEASE already works (deposit settlement is a separate finance-module concern from the booking FSM), not a NIGHTLY-specific gap.
+- `BookingService.checkIn`/`checkOut` (NIGHTLY) and `pickUp`/`returnEquipment`/`completeInspection` (DURATION_ORDER) each explicitly reject the other booking model (400, not a silent no-op or a confusing FSM error) — the two verticals' lifecycle methods are deliberately not shared, since their FSM shapes diverge (DURATION_ORDER has an extra `INSPECTION` step NIGHTLY doesn't).
+- NIGHTLY deposit refunds after checkout, and DURATION_ORDER deposit refunds/damage deductions after inspection, are **not automated** — `checkOut()`/`completeInspection()` only transition the booking/asset; staff process deposit refunds via the existing, unrelated `DepositsService.requestRefund`/`approveRefund`/`applyToDamages` flow (Session 2/12) exactly as they would for a RECURRING_LEASE move-out. This mirrors how RECURRING_LEASE already works (deposit settlement is a separate finance-module concern from the booking FSM), not a gap specific to either newer vertical.
+- `DurationOrderStrategy.computeFinalSettlement` (`packages/domain/src/booking-model/duration-order.strategy.ts`) still throws `BookingModelNotImplementedError` — deliberately, same reasoning as `NightlyStrategy`'s: no early-return path exists on `durationOrderBookingFsm` yet (`RETURNED` only goes forward through `INSPECTION` to `CLOSED`).
+- DURATION_ORDER's `returnEquipment()` routes the asset through `MAINTENANCE` during the `INSPECTION` window (via `assetFsm`'s existing `SET_MAINTENANCE`/`RETURN_TO_SERVICE` transitions) rather than adding a new asset status — a deliberate reuse of `MAINTENANCE`'s existing meaning ("off-market, not bookable") rather than growing the `AssetStatus` enum for one vertical's inspection step. If a tenant ever needs to distinguish "genuinely broken, needs repair" from "routine post-rental inspection" at the asset-status level, that's a real reason to add a dedicated status — not needed yet.
 
 ## Open PRD questions still unanswered (§15)
 
