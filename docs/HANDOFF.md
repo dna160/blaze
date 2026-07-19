@@ -1544,10 +1544,22 @@ ones for this session all pass) — 3 pre-existing failures in
 `test/seasonal.test.ts` (NIGHTLY seasonal-rate breakdown, unrelated to
 this session) confirmed present on a clean stash of the prior commit
 before this session touched anything; not investigated further here,
-tracked as a pre-existing gap for a future session. Not yet
-live-verified against real HTTP/Postgres in this session (build+unit-test
-verification only) — do that before trusting the quote endpoint or a
-real Daily/Weekly booking against a live tenant.
+tracked as a pre-existing gap for a future session.
+
+**Verified live against the deployed Railway environment** (`gudang-aman`,
+real Postgres, not local): set `dailyRate`/`weeklyRate` on the real seeded
+"Storage Unit 1.5×2m" AssetType via `PATCH /catalog/asset-types/:id` →
+`GET .../quote` for all three tiers matched the unit tests' hand-derived
+math exactly (DAILY 3 days: 315,300 total; WEEKLY 9 days→2 weeks:
+1,182,500; MONTHLY unchanged: 763,306.45 prorated) → submitted a real
+`POST /bookings` with `rateTier: DAILY` — booking correctly got a real
+`endDate` and `anchorDay: null` → approved as `superadmin@gudang-aman.test`
+→ the generated invoice's lines/total matched the quote byte-for-byte,
+confirming the "preview can't drift from the real charge" guarantee
+actually holds, not just in theory. Storefront's asset-type page confirmed
+rendering the new "/day"/"/week ... also available" pricing hint via the
+live server-rendered HTML. Test booking left in place (not deleted) as a
+concrete example — id `d007931d-e7e4-4537-807b-092301b07937`.
 
 ### What's explicitly NOT done (don't assume it exists)
 
