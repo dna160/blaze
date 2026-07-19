@@ -5,12 +5,14 @@ import { deliverTenantWebhook, markWebhookDeliveryFailed, type WebhookDeliveryJo
 import { runDunningLadder } from "./jobs/dunning-ladder.job.js";
 import { runGenerateRecurringInvoices } from "./jobs/generate-recurring-invoices.job.js";
 import { runLedgerBalanceCheck } from "./jobs/ledger-balance-check.job.js";
+import { runPlatformBilling } from "./jobs/platform-billing.job.js";
 import { runSyncOtaCalendars } from "./jobs/sync-ota-calendars.job.js";
 
 export const INVOICE_GENERATION_QUEUE = "invoice-generation";
 export const DUNNING_LADDER_QUEUE = "dunning-ladder";
 export const LEDGER_BALANCE_CHECK_QUEUE = "ledger-balance-check";
 export const OTA_CALENDAR_SYNC_QUEUE = "ota-calendar-sync";
+export const PLATFORM_BILLING_QUEUE = "platform-billing";
 /** Must match apps/api/src/webhook-dispatch/webhook-dispatch.service.ts's TENANT_WEBHOOK_DELIVERY_QUEUE exactly — that's the producer, this file's Worker is the consumer. */
 export const TENANT_WEBHOOK_DELIVERY_QUEUE = "tenant-webhook-delivery";
 
@@ -34,6 +36,7 @@ export async function scheduleRepeatableJobs(connection: IORedis): Promise<void>
   const dunningQueue = new Queue(DUNNING_LADDER_QUEUE, { connection });
   const ledgerQueue = new Queue(LEDGER_BALANCE_CHECK_QUEUE, { connection });
   const otaSyncQueue = new Queue(OTA_CALENDAR_SYNC_QUEUE, { connection });
+  const platformBillingQueue = new Queue(PLATFORM_BILLING_QUEUE, { connection });
 
   await invoiceQueue.add(
     "tick",
@@ -58,11 +61,21 @@ export async function scheduleRepeatableJobs(connection: IORedis): Promise<void>
     {},
     { repeat: { pattern: process.env.OTA_CALENDAR_SYNC_CRON ?? "0 * * * *" }, jobId: "ota-calendar-sync-hourly" },
   );
+  // Monthly, 1st-of-month — RentOS's own SaaS billing run (Session 26).
+  // generateMonthlyPlatformInvoices is idempotent per (tenant, year,
+  // month), so a redeploy that re-registers this repeatable job mid-month
+  // can't double-bill.
+  await platformBillingQueue.add(
+    "tick",
+    {},
+    { repeat: { pattern: process.env.PLATFORM_BILLING_CRON ?? "0 4 1 * *" }, jobId: "platform-billing-monthly" },
+  );
 
   await invoiceQueue.close();
   await dunningQueue.close();
   await ledgerQueue.close();
   await otaSyncQueue.close();
+  await platformBillingQueue.close();
 }
 
 export function startWorkers(connection: IORedis): Worker[] {
@@ -106,6 +119,16 @@ export function startWorkers(connection: IORedis): Worker[] {
     { connection },
   );
 
+  const platformBillingWorker = new Worker(
+    PLATFORM_BILLING_QUEUE,
+    async (job: Job) => {
+      console.log(`[${PLATFORM_BILLING_QUEUE}] tick started (job ${job.id})`);
+      await runPlatformBilling();
+      console.log(`[${PLATFORM_BILLING_QUEUE}] tick completed`);
+    },
+    { connection },
+  );
+
   const webhookDeliveryWorker = new Worker<WebhookDeliveryJobPayload>(
     TENANT_WEBHOOK_DELIVERY_QUEUE,
     async (job: Job<WebhookDeliveryJobPayload>) => {
@@ -122,9 +145,9 @@ export function startWorkers(connection: IORedis): Worker[] {
     }
   });
 
-  for (const worker of [invoiceWorker, dunningWorker, ledgerWorker, otaSyncWorker]) {
+  for (const worker of [invoiceWorker, dunningWorker, ledgerWorker, otaSyncWorker, platformBillingWorker]) {
     worker.on("failed", (job, err) => console.error(`Job ${job?.id} in ${job?.queueName} failed:`, err));
   }
 
-  return [invoiceWorker, dunningWorker, ledgerWorker, otaSyncWorker, webhookDeliveryWorker];
+  return [invoiceWorker, dunningWorker, ledgerWorker, otaSyncWorker, platformBillingWorker, webhookDeliveryWorker];
 }

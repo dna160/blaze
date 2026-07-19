@@ -47,6 +47,41 @@ async function seedStaffUser(tenantId: string, email: string, displayName: strin
 }
 
 /**
+ * PRD Phase 4 self-serve signup + tenant billing (Session 26) — the ONE
+ * demo platform-admin account, `User.tenantId === null` (see that
+ * field's doc comment). Deliberately NOT `prisma.user.upsert()` like
+ * `seedStaffUser` above: the compound unique index is `(tenant_id,
+ * email)`, and Postgres does not treat two NULL `tenant_id` values as
+ * equal for uniqueness purposes — re-running this with `upsert`'s
+ * `where: { tenantId_email: { tenantId: null, email } }` would silently
+ * insert a second row on every reseed rather than update the first,
+ * since there's no real unique constraint for `upsert`'s generated
+ * `ON CONFLICT` to target. `findFirst` + conditional `create` sidesteps
+ * that gap entirely — genuinely idempotent even though the DB itself
+ * can't enforce it for this one nullable-tenant case.
+ */
+async function seedPlatformAdmin() {
+  let user = await prisma.user.findFirst({ where: { tenantId: null, email: "platform-admin@rentos.test" } });
+  if (!user) {
+    user = await prisma.user.create({
+      data: {
+        tenantId: null,
+        email: "platform-admin@rentos.test",
+        displayName: "RentOS Platform Admin",
+        passwordHash: DEMO_PASSWORD_HASH,
+        status: "ACTIVE",
+      },
+    });
+  }
+  await prisma.userRole.upsert({
+    where: { userId_role: { userId: user.id, role: "PLATFORM_ADMIN" } },
+    update: {},
+    create: { userId: user.id, role: "PLATFORM_ADMIN" },
+  });
+  return user;
+}
+
+/**
  * PRD Phase 4 tenant-facing API + outbound webhooks (docs/HANDOFF.md
  * Session 20) — demo-only, gudang-aman is the sole tenant with
  * featureFlags.api_access_enabled set. Uses fixed plaintext/secret so the
@@ -105,12 +140,17 @@ async function seedStorageTenant() {
       // only in the demo, per instruction; griya-nginap and sewa-alat leave
       // it unset (falsy) so ApiKeysService/TenantWebhooksService's
       // assertEnabled() 403s there, same code path either way.
+      // automation_builder_enabled is Phase 4's dunning-ladder builder
+      // (Session 26) — same single-tenant demo convention, on for
+      // gudang-aman only; AutomationService.assertEnabled() 403s for the
+      // other two tenants.
       featureFlags: {
         deposits_enabled: true,
         kyc_required: true,
         auto_approve: false,
         contract_required: false,
         api_access_enabled: true,
+        automation_builder_enabled: true,
       },
     },
   });
@@ -691,6 +731,7 @@ async function seedEquipmentTenant() {
 }
 
 async function main() {
+  await seedPlatformAdmin();
   await seedStorageTenant();
   await seedHomestayTenant();
   await seedEquipmentTenant();

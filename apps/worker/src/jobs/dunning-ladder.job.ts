@@ -6,14 +6,47 @@ import { notify } from "../notify.js";
 /**
  * "Automated reminder ladder (config per tenant): H-7/H-3/H-0 reminders ->
  * D+1/D+3/D+7 overdue -> D+X SUSPENDED" (PRD §7.2.4, automations A5/A6).
- * v1 hardcodes the ladder steps and the D+X suspend threshold uniformly
- * across tenants — AutomationSetting rows exist in the schema for
- * per-tenant overrides but this job does not read them yet
- * (docs/HANDOFF.md tracks this as the Phase 2 follow-up).
+ * These three constants are now only the FALLBACK — the platform-admin-
+ * gated "visual automation builder" (Session 26, apps/api/src/automation/,
+ * gudang-aman only) lets one tenant save a real `AutomationSetting` row
+ * (key DUNNING_LADDER) overriding them; every other tenant still gets
+ * exactly this hardcoded ladder, so this change is zero-behavior for
+ * anyone who never saved a row — see `resolveDunningLadderConfig` below.
  */
 const REMINDER_DAYS_BEFORE_DUE = [7, 3, 0];
 const OVERDUE_REMINDER_DAYS = [1, 3, 7];
 const SUSPEND_AFTER_DAYS_OVERDUE = 14;
+
+interface DunningLadderConfig {
+  reminderDaysBeforeDue: number[];
+  overdueReminderDays: number[];
+  suspendAfterDaysOverdue: number;
+}
+
+const DEFAULT_CONFIG: DunningLadderConfig = {
+  reminderDaysBeforeDue: REMINDER_DAYS_BEFORE_DUE,
+  overdueReminderDays: OVERDUE_REMINDER_DAYS,
+  suspendAfterDaysOverdue: SUSPEND_AFTER_DAYS_OVERDUE,
+};
+
+function isValidConfig(value: unknown): value is DunningLadderConfig {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return (
+    Array.isArray(v.reminderDaysBeforeDue) &&
+    v.reminderDaysBeforeDue.every((n) => typeof n === "number") &&
+    Array.isArray(v.overdueReminderDays) &&
+    v.overdueReminderDays.every((n) => typeof n === "number") &&
+    typeof v.suspendAfterDaysOverdue === "number"
+  );
+}
+
+/** Per-tenant override if an enabled, well-formed AutomationSetting row exists; the hardcoded ladder otherwise. */
+async function resolveDunningLadderConfig(tx: Prisma.TransactionClient, tenantId: string): Promise<DunningLadderConfig> {
+  const row = await tx.automationSetting.findUnique({ where: { tenantId_key: { tenantId, key: "DUNNING_LADDER" } } });
+  if (row?.enabled && isValidConfig(row.config)) return row.config;
+  return DEFAULT_CONFIG;
+}
 
 function daysBetween(a: Date, b: Date): number {
   return Math.round((a.getTime() - b.getTime()) / (1000 * 60 * 60 * 24));
@@ -34,6 +67,7 @@ export async function runDunningLadder(): Promise<void> {
 
   for (const tenant of tenants) {
     await withTenantContext(prisma, tenant.id, async (tx) => {
+      const config = await resolveDunningLadderConfig(tx, tenant.id);
       const issued = await tx.invoice.findMany({ where: { status: "ISSUED" } });
 
       for (const invoice of issued) {
@@ -41,7 +75,7 @@ export async function runDunningLadder(): Promise<void> {
         dueDate.setHours(0, 0, 0, 0);
         const daysUntilDue = daysBetween(dueDate, today) * -1;
 
-        if (REMINDER_DAYS_BEFORE_DUE.includes(daysUntilDue)) {
+        if (config.reminderDaysBeforeDue.includes(daysUntilDue)) {
           const templateKey = `invoice_reminder_h${daysUntilDue}`;
           if (!(await alreadyNotified(tx, invoice.id, templateKey))) {
             const customer = await tx.customer.findUniqueOrThrow({ where: { id: invoice.customerId } });
@@ -66,7 +100,7 @@ export async function runDunningLadder(): Promise<void> {
         dueDate.setHours(0, 0, 0, 0);
         const daysOverdue = daysBetween(today, dueDate);
 
-        if (OVERDUE_REMINDER_DAYS.includes(daysOverdue)) {
+        if (config.overdueReminderDays.includes(daysOverdue)) {
           const templateKey = `invoice_overdue_d${daysOverdue}`;
           if (!(await alreadyNotified(tx, invoice.id, templateKey))) {
             const customer = await tx.customer.findUniqueOrThrow({ where: { id: invoice.customerId } });
@@ -80,7 +114,7 @@ export async function runDunningLadder(): Promise<void> {
           }
         }
 
-        if (daysOverdue >= SUSPEND_AFTER_DAYS_OVERDUE && invoice.bookingId) {
+        if (daysOverdue >= config.suspendAfterDaysOverdue && invoice.bookingId) {
           const booking = await tx.booking.findUnique({ where: { id: invoice.bookingId } });
           if (booking?.status === "RENEWING") {
             const { to } = await recurringLeaseBookingFsm.fire(

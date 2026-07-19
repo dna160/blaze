@@ -1,5 +1,5 @@
 import { Injectable, OnModuleDestroy } from "@nestjs/common";
-import { getPrismaClient, withTenantContext, type Prisma, type PrismaClient } from "@rentos/database";
+import { getPrismaClient, withPlatformContext, withTenantContext, type Prisma, type PrismaClient } from "@rentos/database";
 
 /**
  * Thin wrapper around the singleton Prisma client from @rentos/database.
@@ -15,6 +15,11 @@ export class PrismaService implements OnModuleDestroy {
 
   async runInTenantContext<T>(tenantId: string, fn: (tx: Prisma.TransactionClient) => Promise<T>) {
     return withTenantContext(this.raw, tenantId, fn);
+  }
+
+  /** See @rentos/database's withPlatformContext — the one sanctioned way to reach a NULL-tenant_id (platform-admin) User row. */
+  async runInPlatformContext<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) {
+    return withPlatformContext(this.raw, fn);
   }
 
   async onModuleDestroy() {

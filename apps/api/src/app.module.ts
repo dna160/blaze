@@ -5,6 +5,7 @@ import { AgreementsModule } from "./agreements/agreements.module.js";
 import { ApiKeysModule } from "./api-keys/api-keys.module.js";
 import { AuditModule } from "./audit/audit.module.js";
 import { AuthModule } from "./auth/auth.module.js";
+import { AutomationModule } from "./automation/automation.module.js";
 import { BookingModule } from "./booking/booking.module.js";
 import { CatalogModule } from "./catalog/catalog.module.js";
 import { HttpExceptionFilter } from "./common/filters/http-exception.filter.js";
@@ -19,6 +20,7 @@ import { KycModule } from "./kyc/kyc.module.js";
 import { NotificationsModule } from "./notifications/notifications.module.js";
 import { OtaSyncModule } from "./ota-sync/ota-sync.module.js";
 import { PaymentsModule } from "./payments/payments.module.js";
+import { PlatformModule } from "./platform/platform.module.js";
 import { PrismaModule } from "./prisma/prisma.module.js";
 import { ReportingModule } from "./reporting/reporting.module.js";
 import { SwapRequestsModule } from "./swap-requests/swap-requests.module.js";
@@ -49,6 +51,8 @@ import { WebhookDispatchModule } from "./webhook-dispatch/webhook-dispatch.modul
     TenantWebhooksModule,
     ExternalApiModule,
     OtaSyncModule,
+    PlatformModule,
+    AutomationModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_FILTER, useClass: HttpExceptionFilter }],

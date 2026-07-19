@@ -17,6 +17,7 @@ const NAV = [
   { href: "/reports", label: "Reports" },
   { href: "/api-access", label: "API Access" },
   { href: "/ota-sync", label: "OTA Sync" },
+  { href: "/automation", label: "Automation" },
 ];
 
 /** Console shell — sidebar nav + top bar, shown once staff is authenticated. */

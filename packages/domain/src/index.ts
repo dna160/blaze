@@ -54,3 +54,12 @@ export {
 } from "./state-machine/booking-fsm.js";
 export { invoiceFsm, type InvoiceStatus, type InvoiceEvent } from "./state-machine/invoice-fsm.js";
 export { assetFsm, type AssetStatus, type AssetEvent } from "./state-machine/asset-fsm.js";
+
+export {
+  BILLING_PLANS,
+  OVERAGE_PRICE_PER_ASSET_IDR,
+  computeMonthlyCharge,
+  type BillingPlanKey,
+  type BillingPlanDefinition,
+  type MonthlyChargeResult,
+} from "./billing/plans.js";

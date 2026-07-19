@@ -40,6 +40,38 @@ export class AuthService {
     };
   }
 
+  /**
+   * Platform-admin login (Session 26, PRD Phase 4) — the tenant-agnostic
+   * counterpart to consoleLogin. No `ResolvedTenant` involved: platform
+   * admins have `User.tenantId === null` (see that field's doc comment),
+   * so the lookup runs under `runInPlatformContext` instead of
+   * `runInTenantContext`, and the issued JWT carries `tenantId: null` —
+   * `JwtAuthGuard` already treats that as "skip the tenant-match check"
+   * (it has since Session 16, this role just wasn't wired to any
+   * controller until now).
+   */
+  async platformLogin(email: string, password: string) {
+    const user = await this.prisma.runInPlatformContext((tx) =>
+      tx.user.findFirst({ where: { tenantId: null, email }, include: { roles: true } }),
+    );
+    if (!user || !user.passwordHash || user.status !== "ACTIVE") {
+      throw new UnauthorizedException("Invalid credentials.");
+    }
+    const valid = await compare(password, user.passwordHash);
+    if (!valid) throw new UnauthorizedException("Invalid credentials.");
+
+    const roles = user.roles.map((r) => r.role);
+    if (!roles.includes("PLATFORM_ADMIN")) {
+      throw new UnauthorizedException("Invalid credentials.");
+    }
+
+    const accessToken = await this.jwt.signAsync({ sub: user.id, tenantId: null, kind: "STAFF", roles });
+    return {
+      accessToken,
+      user: { id: user.id, email: user.email, displayName: user.displayName, roles },
+    };
+  }
+
   /** Customer OTP request — "phone number + WhatsApp OTP (primary)... No passwords in v1" (PRD §7.1.2). */
   async requestOtp(tenant: ResolvedTenant, phone: string): Promise<void> {
     const code = String(randomInt(0, 1_000_000)).padStart(6, "0");

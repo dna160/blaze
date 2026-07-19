@@ -138,6 +138,24 @@ enum SwapRequestStatus {
   REJECTED
 }
 
+/// Platform-level (RentOS's own SaaS revenue from a tenant), not to be
+/// confused with a tenant's own Invoice model — see PlatformInvoice's own
+/// doc comment. Static pricing/limits per plan live in code
+/// (@rentos/domain's BILLING_PLANS), not a DB table — a short, fixed list
+/// that rarely changes, same reasoning AssetType.pricing already applies
+/// to per-tenant pricing config (Session 25).
+enum BillingPlan {
+  TRIAL
+  STARTER
+  GROWTH
+  SCALE
+}
+
+enum PlatformInvoiceStatus {
+  ISSUED
+  PAID
+}
+
 enum LedgerEntryType {
   DEBIT
   CREDIT
@@ -166,6 +184,13 @@ model Tenant {
   timezone      String   @default("Asia/Jakarta")
   branding      Json     @default("{}")
   featureFlags  Json     @default("{}") @map("feature_flags")
+  /// PRD Phase 4 tenant billing/metering (Session 26). What RentOS charges
+  /// this tenant, not what this tenant charges its own customers — see
+  /// PlatformInvoice. Defaults every tenant (including the three seeded
+  /// ones, who never went through self-serve signup) to TRIAL rather than
+  /// leaving it null, so billing generation has a real value to work from
+  /// for every tenant unconditionally.
+  billingPlan   BillingPlan @default(TRIAL) @map("billing_plan")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
@@ -183,6 +208,7 @@ model Tenant {
   apiKeys              TenantApiKey[]
   webhookSubscriptions TenantWebhookSubscription[]
   otaSubscriptions     OtaCalendarSubscription[]
+  platformInvoices     PlatformInvoice[]
 
   @@map("tenants")
 }
@@ -677,6 +703,40 @@ model PromoCode {
 
   @@unique([tenantId, code])
   @@map("promo_codes")
+}
+
+/// RentOS's own SaaS invoice TO a tenant for using the platform (PRD
+/// Phase 4 "tenant billing"), deliberately a completely separate model
+/// from `Invoice` (which is a tenant's invoice to ITS OWN customer) —
+/// conflating the two would mix RentOS's revenue with a tenant's revenue
+/// in the same table. Generated monthly (packages/database/src/platform-billing.ts,
+/// shared by apps/api's on-demand trigger and apps/worker's monthly cron)
+/// from a flat plan price plus a simple per-asset overage charge — see
+/// @rentos/domain's computeMonthlyCharge. This never touches any
+/// tenant's own ledger_entries; it is RentOS's own AR against the
+/// tenant, tracked nowhere else in this schema (v1 has no ledger for
+/// RentOS's own books — a real gap if this ever needs its own
+/// accounting, out of scope for a metering/billing demo).
+model PlatformInvoice {
+  id               String                 @id @default(uuid()) @db.Uuid
+  tenantId         String                 @db.Uuid @map("tenant_id")
+  tenant           Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  billingPlan      BillingPlan            @map("billing_plan")
+  periodYear       Int                    @map("period_year")
+  periodMonth      Int                    @map("period_month")
+  includedAssets   Int                    @map("included_assets")
+  actualAssetCount Int                    @map("actual_asset_count")
+  planAmount       Decimal                @db.Decimal(14, 2) @map("plan_amount")
+  overageAmount    Decimal                @db.Decimal(14, 2) @map("overage_amount")
+  totalAmount      Decimal                @db.Decimal(14, 2) @map("total_amount")
+  status           PlatformInvoiceStatus  @default(ISSUED)
+  issuedAt         DateTime               @default(now()) @map("issued_at")
+  paidAt           DateTime?              @map("paid_at")
+  createdAt        DateTime               @default(now()) @map("created_at")
+
+  @@unique([tenantId, periodYear, periodMonth])
+  @@index([tenantId])
+  @@map("platform_invoices")
 }
 
 /// Immutable — protects the owner from his own staff (PRD §7.2.7).

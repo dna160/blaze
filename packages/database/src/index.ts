@@ -1,6 +1,8 @@
 export * from "../generated/client/index.js";
 export { getPrismaClient } from "./client.js";
 export { withTenantContext, InvalidTenantIdError } from "./tenant-context.js";
+export { withPlatformContext } from "./platform-context.js";
+export { generateMonthlyPlatformInvoices } from "./platform-billing.js";
 export { nextInvoiceNumber } from "./invoice-number.js";
 export {
   generateInitialInvoice,

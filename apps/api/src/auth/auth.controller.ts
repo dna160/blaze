@@ -1,6 +1,6 @@
 import { Body, Controller, Post } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
-import { ConsoleLoginRequestSchema, OtpRequestSchema, OtpVerifySchema } from "@rentos/contracts";
+import { ConsoleLoginRequestSchema, OtpRequestSchema, OtpVerifySchema, PlatformLoginRequestSchema } from "@rentos/contracts";
 
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
@@ -19,6 +19,14 @@ export class AuthController {
     @Body(new ZodValidationPipe(ConsoleLoginRequestSchema)) body: ReturnType<typeof ConsoleLoginRequestSchema.parse>,
   ) {
     return this.auth.consoleLogin(tenant, body.email, body.password);
+  }
+
+  /** Platform-admin login (Session 26) — tenant-agnostic, no @CurrentTenant() involved by design. */
+  @Post("platform/login")
+  platformLogin(
+    @Body(new ZodValidationPipe(PlatformLoginRequestSchema)) body: ReturnType<typeof PlatformLoginRequestSchema.parse>,
+  ) {
+    return this.auth.platformLogin(body.email, body.password);
   }
 
   @Post("otp/request")
