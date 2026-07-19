@@ -11,6 +11,7 @@ export {
   markInvoicePaid,
   markInvoiceOverdue,
   createCreditReplacementInvoice,
+  toPricingConfig,
   type BookingForInvoicing,
   type InvoiceForCredit,
   type InvoiceLineForCredit,

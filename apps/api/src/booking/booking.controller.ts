@@ -28,6 +28,7 @@ export class BookingController {
       assetTypeId: body.assetTypeId,
       startDate: new Date(body.startDate),
       endDate: body.endDate ? new Date(body.endDate) : undefined,
+      rateTier: body.rateTier,
       customerPhone: body.customerPhone,
       customerFullName: body.customerFullName,
     });

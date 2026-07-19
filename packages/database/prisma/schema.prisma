@@ -41,6 +41,17 @@ enum BookingModel {
   HOURLY_SLOT
 }
 
+/// RECURRING_LEASE only — which configured rate a booking is priced against.
+/// MONTHLY (default) is the original indefinite lease. DAILY/WEEKLY are
+/// fixed-term bookings (real endDate, one upfront invoice, no recurring
+/// cycle) — see packages/domain RecurringLeaseStrategy. Ignored for other
+/// booking models.
+enum RateTier {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
 enum AssetStatus {
   AVAILABLE
   RESERVED
@@ -390,6 +401,8 @@ model Booking {
   assetId             String?       @db.Uuid @map("asset_id")
   asset               Asset?        @relation(fields: [assetId], references: [id])
   bookingModel        BookingModel  @map("booking_model")
+  /// RECURRING_LEASE only — see RateTier. Ignored for other booking models.
+  rateTier            RateTier      @default(MONTHLY) @map("rate_tier")
   status              BookingStatus @default(DRAFT)
   startDate           DateTime      @map("start_date")
   endDate             DateTime?     @map("end_date")

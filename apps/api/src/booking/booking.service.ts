@@ -18,18 +18,31 @@ import { WebhookDispatcherService } from "../webhook-dispatch/webhook-dispatch.s
 
 import { bookingFsmFor, GuardFailedError, type BookingActivationContext, type BookingStatus } from "./booking-fsm.util.js";
 
-type TxBooking = { id: string; assetId: string | null; priceSnapshot: unknown; startDate: Date };
+type RateTierValue = "DAILY" | "WEEKLY" | "MONTHLY";
+
+type TxBooking = {
+  id: string;
+  assetId: string | null;
+  priceSnapshot: unknown;
+  startDate: Date;
+  rateTier: RateTierValue;
+};
 
 const DEFAULT_RESERVATION_TTL_HOURS = 48;
 
 /** Booking models whose invoice math needs both ends of the window (nights/days x rate) — see BookingWindow.endDate. */
 const BOOKING_MODELS_REQUIRING_END_DATE = new Set(["NIGHTLY", "DURATION_ORDER"]);
 
+/** RECURRING_LEASE fixed-term tiers (Travelio-style short stays) — need an endDate the same way NIGHTLY/DURATION_ORDER do; MONTHLY (the original indefinite lease) does not. */
+const FIXED_TERM_RATE_TIERS = new Set<RateTierValue>(["DAILY", "WEEKLY"]);
+
 export interface CreateBookingInput {
   assetTypeId: string;
   startDate: Date;
-  /** Checkout/return date — required for NIGHTLY and DURATION_ORDER, ignored otherwise. */
+  /** Checkout/return date — required for NIGHTLY, DURATION_ORDER, and RECURRING_LEASE with a DAILY/WEEKLY rateTier. Ignored otherwise. */
   endDate?: Date;
+  /** RECURRING_LEASE only — defaults to MONTHLY (the original indefinite lease) when omitted. Ignored for other booking models. */
+  rateTier?: RateTierValue;
   customerPhone: string;
   customerFullName: string;
 }
@@ -53,12 +66,29 @@ export class BookingService {
       const assetType = await tx.assetType.findUnique({ where: { id: input.assetTypeId } });
       if (!assetType || !assetType.isPublished) throw new NotFoundException("AssetType not found.");
 
-      if (BOOKING_MODELS_REQUIRING_END_DATE.has(assetType.bookingModel)) {
+      // RECURRING_LEASE's rateTier is meaningless for every other booking
+      // model — normalize to MONTHLY (the column default) rather than
+      // trusting an unrelated client-supplied value onto the row.
+      const rateTier: RateTierValue =
+        assetType.bookingModel === "RECURRING_LEASE" ? (input.rateTier ?? "MONTHLY") : "MONTHLY";
+      const isFixedTermLease = assetType.bookingModel === "RECURRING_LEASE" && FIXED_TERM_RATE_TIERS.has(rateTier);
+      const requiresEndDate = BOOKING_MODELS_REQUIRING_END_DATE.has(assetType.bookingModel) || isFixedTermLease;
+
+      if (requiresEndDate) {
         if (!input.endDate) {
           throw new BadRequestException("An end date is required for this booking.");
         }
         if (input.endDate.getTime() <= input.startDate.getTime()) {
           throw new BadRequestException("End date must be after the start date.");
+        }
+      }
+      if (isFixedTermLease) {
+        const pricing = assetType.pricing as { dailyRate?: string; weeklyRate?: string };
+        if (rateTier === "DAILY" && !pricing.dailyRate) {
+          throw new BadRequestException("Daily rate is not configured for this listing.");
+        }
+        if (rateTier === "WEEKLY" && !pricing.weeklyRate) {
+          throw new BadRequestException("Weekly rate is not configured for this listing.");
         }
       }
 
@@ -98,9 +128,10 @@ export class BookingService {
           assetTypeId: assetType.id,
           assetId: availableAssetId,
           bookingModel: assetType.bookingModel,
+          rateTier,
           status: "DRAFT",
           startDate: input.startDate,
-          endDate: BOOKING_MODELS_REQUIRING_END_DATE.has(assetType.bookingModel) ? input.endDate : undefined,
+          endDate: requiresEndDate ? input.endDate : undefined,
           priceSnapshot: assetType.pricing as Prisma.InputJsonValue,
           reservedUntil,
         },
@@ -210,6 +241,7 @@ export class BookingService {
         startDate: updated.startDate,
         endDate: updated.endDate,
         anchorDay: updated.anchorDay,
+        rateTier: updated.rateTier,
         priceSnapshot: updated.priceSnapshot,
       });
 
@@ -345,8 +377,16 @@ export class BookingService {
     to: BookingStatus,
     depositLine?: { amount: Prisma.Decimal | string },
   ) {
-    const priceSnapshot = booking.priceSnapshot as { prorationRule?: "ANCHOR_DATE" | "FULL_FIRST_PERIOD" };
-    const anchorDay = priceSnapshot.prorationRule === "FULL_FIRST_PERIOD" ? 1 : booking.startDate.getDate();
+    // Fixed-term (DAILY/WEEKLY rateTier) bookings never get an anchorDay:
+    // that's what excludes them from the recurring-invoice worker job's
+    // `anchorDay: { not: null } }` cycle-generation query — they're a
+    // one-invoice booking, not an indefinite lease. Only MONTHLY tier
+    // (the original indefinite lease) gets one.
+    let anchorDay: number | null = null;
+    if (booking.rateTier === "MONTHLY") {
+      const priceSnapshot = booking.priceSnapshot as { prorationRule?: "ANCHOR_DATE" | "FULL_FIRST_PERIOD" };
+      anchorDay = priceSnapshot.prorationRule === "FULL_FIRST_PERIOD" ? 1 : booking.startDate.getDate();
+    }
     await tx.booking.update({ where: { id: booking.id }, data: { status: to, anchorDay } });
 
     if (booking.assetId) {
@@ -652,6 +692,15 @@ export class BookingService {
       const existing = await tx.booking.findUnique({ where: { id: bookingId } });
       if (!existing) throw new NotFoundException("Booking not found.");
       if (existing.customerId !== customerId) throw new BadRequestException("This booking does not belong to you.");
+      if (FIXED_TERM_RATE_TIERS.has(existing.rateTier as RateTierValue)) {
+        // DAILY/WEEKLY bookings are a fixed term, not an indefinite lease
+        // — computeFinalSettlement's month-anchor proration doesn't apply
+        // (anchorDay is never set for these). They end automatically on
+        // their own endDate; renewal is a new booking, not a notice.
+        throw new BadRequestException(
+          "This booking has a fixed end date and does not support giving notice. Contact support to modify it.",
+        );
+      }
 
       const fsm = bookingFsmFor(existing.bookingModel);
       const { to } = await fsm.fire(existing.status as never, "GIVE_NOTICE", {} as BookingActivationContext);

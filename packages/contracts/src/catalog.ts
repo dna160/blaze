@@ -7,6 +7,16 @@ export type BookingModelValue = z.infer<typeof BookingModelSchema>;
 
 export const AssetStatusSchema = z.enum(["AVAILABLE", "RESERVED", "OCCUPIED", "MAINTENANCE", "RETIRED"]);
 
+/**
+ * RECURRING_LEASE only — which of the AssetType's three configured rates a
+ * booking is priced against. MONTHLY (default) is the original indefinite
+ * lease. DAILY/WEEKLY are fixed-term bookings (real endDate, one upfront
+ * invoice) — Travelio-style short stays on the same unit. Ignored for
+ * other booking models.
+ */
+export const RateTierSchema = z.enum(["DAILY", "WEEKLY", "MONTHLY"]);
+export type RateTierValue = z.infer<typeof RateTierSchema>;
+
 export const PricingConfigSchema = z.object({
   basePrice: MoneyStringSchema,
   currency: z.string().length(3),
@@ -24,6 +34,10 @@ export const PricingConfigSchema = z.object({
   seasonalRates: z
     .array(z.object({ startDate: z.string(), endDate: z.string(), basePrice: z.number(), label: z.string().optional() }))
     .optional(),
+  /** RECURRING_LEASE only — per-day rate, used when a booking's rateTier is DAILY. */
+  dailyRate: MoneyStringSchema.optional(),
+  /** RECURRING_LEASE only — per-week rate, used when a booking's rateTier is WEEKLY. */
+  weeklyRate: MoneyStringSchema.optional(),
 });
 export type PricingConfig = z.infer<typeof PricingConfigSchema>;
 
@@ -122,3 +136,35 @@ export const AvailabilityResponseSchema = z.object({
   availableCount: z.number().int().min(0),
 });
 export type AvailabilityResponse = z.infer<typeof AvailabilityResponseSchema>;
+
+/**
+ * Live price preview (public, unauthenticated — same trust level as the
+ * catalog listing itself, PRD §7.1.1) for the storefront's Daily/Weekly/
+ * Monthly tier picker. Reuses the exact BookingModelStrategy math a real
+ * booking will be charged, via a read-only call — no persistence, no
+ * customer/tenant write — so the preview can never drift from the real
+ * charge the way a hand-duplicated client-side calculation could.
+ */
+export const QuoteRequestSchema = z.object({
+  startDate: z.string().datetime(),
+  endDate: z.string().datetime().optional(),
+  rateTier: RateTierSchema.optional(),
+});
+export type QuoteRequest = z.infer<typeof QuoteRequestSchema>;
+
+export const QuoteResponseSchema = z.object({
+  currency: z.string().length(3),
+  lines: z.array(
+    z.object({
+      description: z.string(),
+      amount: MoneyStringSchema,
+      lineType: z.enum(["RENT", "DEPOSIT", "ADMIN_FEE", "TAX", "DISCOUNT", "DAMAGE"]),
+    }),
+  ),
+  subtotal: MoneyStringSchema,
+  taxAmount: MoneyStringSchema,
+  totalAmount: MoneyStringSchema,
+  periodStart: z.string().datetime(),
+  periodEnd: z.string().datetime(),
+});
+export type QuoteResponse = z.infer<typeof QuoteResponseSchema>;

@@ -28,6 +28,9 @@ interface AssetTypeFormState {
   taxInclusive: boolean;
   isPooled: boolean;
   isPublished: boolean;
+  /** RECURRING_LEASE only — Daily/Weekly rateTier options (Travelio-style short stays) on top of the monthly rate above. Blank = tier not offered. */
+  dailyRate: string;
+  weeklyRate: string;
 }
 
 const EMPTY_FORM: AssetTypeFormState = {
@@ -43,6 +46,8 @@ const EMPTY_FORM: AssetTypeFormState = {
   taxInclusive: false,
   isPooled: false,
   isPublished: true,
+  dailyRate: "",
+  weeklyRate: "",
 };
 
 function toPricing(form: AssetTypeFormState): PricingConfig {
@@ -59,6 +64,8 @@ function toPricing(form: AssetTypeFormState): PricingConfig {
         : form.depositType === "MULTIPLE_OF_RENT"
           ? { type: "MULTIPLE_OF_RENT", multiple: Number(form.depositMultiple || 1) }
           : undefined,
+    dailyRate: form.bookingModel === "RECURRING_LEASE" && form.dailyRate.trim() ? form.dailyRate.trim() : undefined,
+    weeklyRate: form.bookingModel === "RECURRING_LEASE" && form.weeklyRate.trim() ? form.weeklyRate.trim() : undefined,
   };
 }
 
@@ -77,6 +84,8 @@ function fromAssetType(assetType: AssetTypeDto): AssetTypeFormState {
     taxInclusive: pricing.taxInclusive,
     isPooled: assetType.isPooled,
     isPublished: assetType.isPublished,
+    dailyRate: pricing.dailyRate ?? "",
+    weeklyRate: pricing.weeklyRate ?? "",
   };
 }
 
@@ -222,7 +231,9 @@ export default function CatalogSetupPage() {
           </div>
         )}
         <div>
-          <label className="text-xs font-medium text-brand-700/60">Base price (IDR)</label>
+          <label className="text-xs font-medium text-brand-700/60">
+            {form.bookingModel === "RECURRING_LEASE" ? "Monthly rate (IDR)" : "Base price (IDR)"}
+          </label>
           <input
             value={form.basePrice}
             onChange={(e) => setForm({ ...form, basePrice: e.target.value })}
@@ -230,6 +241,30 @@ export default function CatalogSetupPage() {
             className="mt-1 w-full rounded border border-brand-600/20 px-2 py-1.5 text-sm"
           />
         </div>
+        {form.bookingModel === "RECURRING_LEASE" && (
+          <>
+            <div>
+              <label className="text-xs font-medium text-brand-700/60">Daily rate (IDR, optional)</label>
+              <input
+                value={form.dailyRate}
+                onChange={(e) => setForm({ ...form, dailyRate: e.target.value })}
+                placeholder="60000"
+                className="mt-1 w-full rounded border border-brand-600/20 px-2 py-1.5 text-sm"
+              />
+              <p className="mt-0.5 text-[11px] text-brand-700/40">Leave blank to hide the Daily option on the storefront.</p>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-brand-700/60">Weekly rate (IDR, optional)</label>
+              <input
+                value={form.weeklyRate}
+                onChange={(e) => setForm({ ...form, weeklyRate: e.target.value })}
+                placeholder="350000"
+                className="mt-1 w-full rounded border border-brand-600/20 px-2 py-1.5 text-sm"
+              />
+              <p className="mt-0.5 text-[11px] text-brand-700/40">Leave blank to hide the Weekly option on the storefront.</p>
+            </div>
+          </>
+        )}
         <div>
           <label className="text-xs font-medium text-brand-700/60">Admin fee (IDR, optional)</label>
           <input

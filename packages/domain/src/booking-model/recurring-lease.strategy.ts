@@ -5,11 +5,99 @@ import { nextAnchorDate, periodEndFor, prorateFirstPeriod } from "../pricing/pro
 import { buildInvoiceDraft } from "./invoice-builder.js";
 import type { BookingModelStrategy, BookingWindow, InvoiceDraft, InvoiceLineDraft, PricingConfig, TenantTaxContext } from "./types.js";
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 class RecurringLeaseStrategy implements BookingModelStrategy {
   readonly kind = "RECURRING_LEASE" as const;
   readonly lifecycleVerbs = ["move_in", "renew", "terminate"] as const;
 
   computeInitialInvoice(window: BookingWindow, pricing: PricingConfig, tax: TenantTaxContext): InvoiceDraft {
+    const tier = window.rateTier ?? "MONTHLY";
+    if (tier === "DAILY" || tier === "WEEKLY") {
+      return this.computeFixedTermInvoice(window, pricing, tax, tier);
+    }
+    return this.computeMonthlyInitialInvoice(window, pricing, tax);
+  }
+
+  /**
+   * DAILY/WEEKLY rateTier (Travelio-style short stays on a storage/rental
+   * unit) — a fixed-term booking, not the indefinite month-to-month lease:
+   * one upfront invoice for rate × duration, no proration, no anchorDay
+   * (so the recurring-invoice worker job's `anchorDay: { not: null }`
+   * filter naturally excludes these from the monthly cycle generator —
+   * see apps/worker/src/jobs/generate-recurring-invoices.job.ts). Early
+   * termination (GIVE_NOTICE) is explicitly blocked for these at the
+   * service layer (BookingService.giveNotice) rather than taught to
+   * computeFinalSettlement's month-anchor math, which does not apply here.
+   */
+  private computeFixedTermInvoice(
+    window: BookingWindow,
+    pricing: PricingConfig,
+    tax: TenantTaxContext,
+    tier: "DAILY" | "WEEKLY",
+  ): InvoiceDraft {
+    if (!window.endDate) {
+      throw new Error(`RECURRING_LEASE booking with rateTier ${tier} requires an endDate.`);
+    }
+    const days = Math.round((window.endDate.getTime() - window.startDate.getTime()) / MS_PER_DAY);
+    if (days < 1) {
+      throw new Error("endDate must be at least one day after startDate.");
+    }
+
+    let rentLine: InvoiceLineDraft;
+    let depositBase: Decimal;
+    if (tier === "DAILY") {
+      if (!pricing.dailyRate || pricing.dailyRate.lessThanOrEqualTo(0)) {
+        throw new Error("Daily rate is not configured for this listing.");
+      }
+      rentLine = {
+        description: `Rent (${days} day${days === 1 ? "" : "s"} × ${pricing.dailyRate.toString()})`,
+        quantity: new Decimal(days),
+        unitPrice: pricing.dailyRate,
+        amount: roundMoney(pricing.dailyRate.mul(days)),
+        lineType: "RENT",
+      };
+      depositBase = pricing.dailyRate;
+    } else {
+      if (!pricing.weeklyRate || pricing.weeklyRate.lessThanOrEqualTo(0)) {
+        throw new Error("Weekly rate is not configured for this listing.");
+      }
+      const weeks = Math.ceil(days / 7);
+      rentLine = {
+        description: `Rent (${weeks} week${weeks === 1 ? "" : "s"} × ${pricing.weeklyRate.toString()})`,
+        quantity: new Decimal(weeks),
+        unitPrice: pricing.weeklyRate,
+        amount: roundMoney(pricing.weeklyRate.mul(weeks)),
+        lineType: "RENT",
+      };
+      depositBase = pricing.weeklyRate;
+    }
+
+    const extraLines: InvoiceLineDraft[] = [];
+    if (pricing.adminFee && pricing.adminFee.greaterThan(0)) {
+      extraLines.push({
+        description: "Admin fee",
+        quantity: new Decimal(1),
+        unitPrice: pricing.adminFee,
+        amount: pricing.adminFee,
+        lineType: "ADMIN_FEE",
+      });
+    }
+    const deposit = computeDeposit(pricing.depositRule, depositBase);
+    if (deposit.greaterThan(0)) {
+      extraLines.push({
+        description: "Security deposit",
+        quantity: new Decimal(1),
+        unitPrice: deposit,
+        amount: deposit,
+        lineType: "DEPOSIT",
+      });
+    }
+
+    return buildInvoiceDraft(rentLine, extraLines, tax, pricing, window.startDate, window.endDate);
+  }
+
+  private computeMonthlyInitialInvoice(window: BookingWindow, pricing: PricingConfig, tax: TenantTaxContext): InvoiceDraft {
     const rule = pricing.prorationRule ?? "ANCHOR_DATE";
     const proration = prorateFirstPeriod(pricing.basePrice, window.startDate, rule);
 

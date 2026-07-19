@@ -89,3 +89,103 @@ describe("recurringLeaseStrategy.computeFinalSettlement", () => {
     expect(rent.amount.toString()).toBe(money(1_200_000).mul(10).div(30).toDecimalPlaces(2).toString());
   });
 });
+
+const tieredPricing: PricingConfig = {
+  ...pkpPricing,
+  dailyRate: money(60_000),
+  weeklyRate: money(350_000),
+};
+
+describe("recurringLeaseStrategy.computeInitialInvoice — DAILY rateTier", () => {
+  it("charges dailyRate × whole days, no proration", () => {
+    const draft = recurringLeaseStrategy.computeInitialInvoice(
+      { startDate: new Date(2026, 6, 1), endDate: new Date(2026, 6, 4), rateTier: "DAILY" },
+      tieredPricing,
+      { isTenantPkp: true },
+    );
+    const rent = draft.lines.find((l) => l.lineType === "RENT")!;
+    expect(rent.amount.toString()).toBe("180000"); // 3 days × 60,000
+    expect(rent.description).toContain("3 days");
+    expect(draft.periodEnd).toEqual(new Date(2026, 6, 4));
+  });
+
+  it("bases the deposit on dailyRate, not the monthly basePrice", () => {
+    const draft = recurringLeaseStrategy.computeInitialInvoice(
+      { startDate: new Date(2026, 6, 1), endDate: new Date(2026, 6, 2), rateTier: "DAILY" },
+      { ...tieredPricing, depositRule: { type: "MULTIPLE_OF_RENT", multiple: 1 } },
+      { isTenantPkp: true },
+    );
+    const deposit = draft.lines.find((l) => l.lineType === "DEPOSIT")!;
+    expect(deposit.amount.toString()).toBe("60000");
+  });
+
+  it("throws a clear error when dailyRate is not configured", () => {
+    expect(() =>
+      recurringLeaseStrategy.computeInitialInvoice(
+        { startDate: new Date(2026, 6, 1), endDate: new Date(2026, 6, 2), rateTier: "DAILY" },
+        pkpPricing,
+        { isTenantPkp: true },
+      ),
+    ).toThrow(/Daily rate is not configured/);
+  });
+
+  it("throws when endDate is missing", () => {
+    expect(() =>
+      recurringLeaseStrategy.computeInitialInvoice(
+        { startDate: new Date(2026, 6, 1), rateTier: "DAILY" },
+        tieredPricing,
+        { isTenantPkp: true },
+      ),
+    ).toThrow(/requires an endDate/);
+  });
+});
+
+describe("recurringLeaseStrategy.computeInitialInvoice — WEEKLY rateTier", () => {
+  it("charges weeklyRate × whole weeks, rounding a partial week up", () => {
+    const draft = recurringLeaseStrategy.computeInitialInvoice(
+      { startDate: new Date(2026, 6, 1), endDate: new Date(2026, 6, 10), rateTier: "WEEKLY" }, // 9 days -> 2 weeks
+      tieredPricing,
+      { isTenantPkp: true },
+    );
+    const rent = draft.lines.find((l) => l.lineType === "RENT")!;
+    expect(rent.amount.toString()).toBe("700000"); // 2 weeks × 350,000
+    expect(rent.description).toContain("2 weeks");
+  });
+
+  it("charges exactly one week for a 7-day stay", () => {
+    const draft = recurringLeaseStrategy.computeInitialInvoice(
+      { startDate: new Date(2026, 6, 1), endDate: new Date(2026, 6, 8), rateTier: "WEEKLY" },
+      tieredPricing,
+      { isTenantPkp: true },
+    );
+    const rent = draft.lines.find((l) => l.lineType === "RENT")!;
+    expect(rent.amount.toString()).toBe("350000");
+  });
+
+  it("throws a clear error when weeklyRate is not configured", () => {
+    expect(() =>
+      recurringLeaseStrategy.computeInitialInvoice(
+        { startDate: new Date(2026, 6, 1), endDate: new Date(2026, 6, 8), rateTier: "WEEKLY" },
+        pkpPricing,
+        { isTenantPkp: true },
+      ),
+    ).toThrow(/Weekly rate is not configured/);
+  });
+});
+
+describe("recurringLeaseStrategy.computeInitialInvoice — MONTHLY rateTier (default, zero-regression)", () => {
+  it("behaves identically whether rateTier is 'MONTHLY' or omitted", () => {
+    const withTier = recurringLeaseStrategy.computeInitialInvoice(
+      { startDate: new Date(2026, 6, 16), rateTier: "MONTHLY" },
+      pkpPricing,
+      { isTenantPkp: true },
+    );
+    const withoutTier = recurringLeaseStrategy.computeInitialInvoice(
+      { startDate: new Date(2026, 6, 16) },
+      pkpPricing,
+      { isTenantPkp: true },
+    );
+    expect(withTier.totalAmount.toString()).toBe(withoutTier.totalAmount.toString());
+    expect(withTier.periodEnd).toEqual(withoutTier.periodEnd);
+  });
+});

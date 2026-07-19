@@ -3,11 +3,13 @@ import { ApiTags } from "@nestjs/swagger";
 import {
   CreateAssetRequestSchema,
   CreateAssetTypeRequestSchema,
+  RateTierSchema,
   UpdateAssetStatusRequestSchema,
   UpdateAssetTypeRequestSchema,
 } from "@rentos/contracts";
 
-import { CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
+import { CurrentTenant, CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
+import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 import { Roles } from "../common/decorators/roles.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
 import { RolesGuard } from "../common/guards/roles.guard.js";
@@ -52,6 +54,19 @@ export class CatalogController {
     const window = startDate && endDate ? { startDate: new Date(startDate), endDate: new Date(endDate) } : undefined;
     const availableCount = await this.catalog.availableCount(tenantId, id, window);
     return { assetTypeId: id, availableCount };
+  }
+
+  /** Live price preview for the storefront's Daily/Weekly/Monthly tier picker — see CatalogService.quote. */
+  @Get("asset-types/:id/quote")
+  async quote(
+    @CurrentTenant() tenant: ResolvedTenant,
+    @Param("id") id: string,
+    @Query("startDate") startDate: string,
+    @Query("endDate") endDate?: string,
+    @Query("rateTier") rateTierRaw?: string,
+  ) {
+    const rateTier = rateTierRaw ? RateTierSchema.parse(rateTierRaw) : undefined;
+    return this.catalog.quote(tenant.id, tenant.isPkp, id, { startDate, endDate, rateTier });
   }
 
   @Get("locations")

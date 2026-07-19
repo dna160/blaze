@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { BookingModelSchema } from "./catalog.js";
+import { BookingModelSchema, RateTierSchema } from "./catalog.js";
 import { MoneyStringSchema } from "./common.js";
 
 export const BookingStatusSchema = z.enum([
@@ -38,8 +38,10 @@ export type BookingStatusValue = z.infer<typeof BookingStatusSchema>;
 export const CreateBookingRequestSchema = z.object({
   assetTypeId: z.string().uuid(),
   startDate: z.string().datetime(),
-  /** Required for NIGHTLY (checkout date) — nights x rate needs both ends of the stay. Ignored for RECURRING_LEASE. */
+  /** Required for NIGHTLY/DURATION_ORDER (checkout/return date), and for RECURRING_LEASE when rateTier is DAILY/WEEKLY. Ignored otherwise. */
   endDate: z.string().datetime().optional(),
+  /** RECURRING_LEASE only — defaults to MONTHLY (the original indefinite lease) when omitted. */
+  rateTier: RateTierSchema.optional(),
   customerPhone: z.string().min(8).max(20),
   customerFullName: z.string().min(1).max(200),
   promoCode: z.string().optional(),
@@ -56,6 +58,7 @@ export const BookingDtoSchema = z.object({
   startDate: z.string().datetime(),
   endDate: z.string().datetime().nullable(),
   anchorDay: z.number().int().nullable(),
+  rateTier: RateTierSchema,
   reservedUntil: z.string().datetime().nullable(),
   totalDue: MoneyStringSchema.optional(),
   createdAt: z.string().datetime(),

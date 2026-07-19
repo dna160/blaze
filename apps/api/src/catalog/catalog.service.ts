@@ -1,6 +1,7 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import { computePooledAvailableCount, type Prisma } from "@rentos/database";
-import type { CreateAssetRequest, CreateAssetTypeRequest, UpdateAssetTypeRequest } from "@rentos/contracts";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { computePooledAvailableCount, toPricingConfig, type Prisma } from "@rentos/database";
+import { getBookingModelStrategy, type BookingWindow } from "@rentos/domain";
+import type { CreateAssetRequest, CreateAssetTypeRequest, QuoteRequest, QuoteResponse, UpdateAssetTypeRequest } from "@rentos/contracts";
 
 import { PrismaService } from "../prisma/prisma.service.js";
 
@@ -25,6 +26,41 @@ export class CatalogService {
     );
     if (!assetType) throw new NotFoundException("AssetType not found.");
     return assetType;
+  }
+
+  /**
+   * Live price preview (public, unauthenticated — same trust level as the
+   * catalog listing itself). Read-only — reuses the exact
+   * BookingModelStrategy math a real booking will be charged via
+   * `computeInitialInvoice`, so the storefront's Daily/Weekly/Monthly
+   * tier picker can never drift from what the customer is actually
+   * charged the way a hand-duplicated client-side calculation could.
+   */
+  async quote(tenantId: string, isTenantPkp: boolean, assetTypeId: string, request: QuoteRequest): Promise<QuoteResponse> {
+    const assetType = await this.getAssetType(tenantId, assetTypeId);
+    const strategy = getBookingModelStrategy(assetType.bookingModel);
+    const window: BookingWindow = {
+      startDate: new Date(request.startDate),
+      endDate: request.endDate ? new Date(request.endDate) : undefined,
+      rateTier: request.rateTier,
+    };
+    let draft;
+    try {
+      draft = strategy.computeInitialInvoice(window, toPricingConfig(assetType.pricing), { isTenantPkp });
+    } catch (err) {
+      throw new BadRequestException(err instanceof Error ? err.message : "Could not compute a quote for these dates.");
+    }
+    return {
+      currency: assetType.pricing && typeof assetType.pricing === "object" && "currency" in assetType.pricing
+        ? String((assetType.pricing as { currency: unknown }).currency)
+        : "IDR",
+      lines: draft.lines.map((l) => ({ description: l.description, amount: l.amount.toString(), lineType: l.lineType })),
+      subtotal: draft.subtotal.toString(),
+      taxAmount: draft.taxAmount.toString(),
+      totalAmount: draft.totalAmount.toString(),
+      periodStart: draft.periodStart.toISOString(),
+      periodEnd: draft.periodEnd.toISOString(),
+    };
   }
 
   /**

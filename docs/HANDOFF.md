@@ -1493,6 +1493,62 @@ app — a good reminder that `tsc --noEmit` alone is not equivalent to
 `next build` for catching this class of resolution mismatch in a mixed
 Node-ESM/bundler-resolution monorepo.
 
+**Session 27 (RECURRING_LEASE Daily/Weekly rateTier — Travelio-style short
+stays):** User-requested feature, not a PRD item: the storefront's
+move-in date was locked to the indefinite monthly lease with no shorter
+option. Deliberately scoped as **fixed-term bookings**, not a cadence
+change to the indefinite lease — a real architectural fork (confirmed
+with the user before building): Daily/Weekly bookings get a real
+`endDate` and one upfront invoice (rate × duration, reusing the exact
+NIGHTLY/DURATION_ORDER pattern), not a switch to daily/weekly recurring
+billing. This avoided reworking `periodEndFor`/`nextAnchorDate` (the
+month-anchor proration engine dunning, swap-request proration, and the
+recurring-invoice cron all depend on) — the larger, riskier alternative.
+
+New `RateTier` (`DAILY`/`WEEKLY`/`MONTHLY`, default `MONTHLY`) on
+`Booking` (`packages/database/prisma/migrations/20260719084110_add_rate_tier`)
+and `PricingConfig.dailyRate`/`weeklyRate` (`packages/domain`).
+`RecurringLeaseStrategy.computeInitialInvoice` branches on
+`window.rateTier`: `MONTHLY` is the pre-existing anchor-date-prorated path,
+byte-for-byte unchanged (13 new unit tests confirm zero regression, plus
+a same-inputs-with/without-tier equivalence test); `DAILY`/`WEEKLY` charge
+`dailyRate × days` / `weeklyRate × ceil(days/7)` with no proration, the
+same shared `buildInvoiceDraft` tax/deposit assembly every other strategy
+uses. Fixed-term bookings never get an `anchorDay`
+(`BookingService.finalizeActivation` only sets one for `MONTHLY`) — that's
+what excludes them from the recurring-invoice worker job's
+`anchorDay: { not: null }` query with zero changes needed there.
+`BookingService.giveNotice` explicitly 400s for fixed-term bookings
+("has a fixed end date... contact support to modify") rather than letting
+`computeFinalSettlement`'s month-anchor math silently misfire against a
+booking that was never on that cadence — **known v1 shortcut**: nothing
+auto-closes a fixed-term booking at its `endDate`; staff terminate
+manually via existing tools, same "known shortcut, not a bug" pattern as
+Session 10's swap-request proration.
+
+New public `GET /catalog/asset-types/:id/quote` (`CatalogService.quote`)
+reuses `computeInitialInvoice` read-only (no persistence) so the
+storefront's live price preview can never drift from the real charge —
+exported `toPricingConfig` from `@rentos/database` rather than
+hand-duplicating the JSON→PricingConfig parsing a second time. Console's
+Catalog Setup gained optional Daily/Weekly rate fields (RECURRING_LEASE
+only, blank = tier hidden on the storefront). Storefront's `BookingForm`
+gained a Daily/Weekly/Monthly tab picker (only shown when the AssetType
+has at least one of those rates configured), a duration-count input
+(days for Daily, weeks for Weekly) that computes the checkout date
+client-side, and a live quote panel wired to the new endpoint.
+
+Full `turbo run typecheck build --force` passes clean across all 8
+packages. `packages/domain` test suite: 78 tests, 75 passing (the 13 new
+ones for this session all pass) — 3 pre-existing failures in
+`test/seasonal.test.ts` (NIGHTLY seasonal-rate breakdown, unrelated to
+this session) confirmed present on a clean stash of the prior commit
+before this session touched anything; not investigated further here,
+tracked as a pre-existing gap for a future session. Not yet
+live-verified against real HTTP/Postgres in this session (build+unit-test
+verification only) — do that before trusting the quote endpoint or a
+real Daily/Weekly booking against a live tenant.
+
 ### What's explicitly NOT done (don't assume it exists)
 
 **Re-audited in Session 25 — three bullets below were stale/wrong** (automated

@@ -28,13 +28,15 @@ export interface BookingForInvoicing {
   bookingModel: "RECURRING_LEASE" | "NIGHTLY" | "DURATION_ORDER" | "HOURLY_SLOT";
   customerId: string;
   startDate: Date;
-  /** NIGHTLY checkout date — required for that model's nights x rate math, unused otherwise. */
+  /** NIGHTLY checkout date, or RECURRING_LEASE fixed-term (DAILY/WEEKLY rateTier) end date — unused otherwise. */
   endDate?: Date | null;
   anchorDay: number | null;
+  /** RECURRING_LEASE only — see @rentos/domain RateTier. Ignored for other booking models. */
+  rateTier?: "DAILY" | "WEEKLY" | "MONTHLY";
   priceSnapshot: unknown;
 }
 
-function toPricingConfig(priceSnapshot: unknown): PricingConfig {
+export function toPricingConfig(priceSnapshot: unknown): PricingConfig {
   const p = priceSnapshot as {
     basePrice: number;
     currency: string;
@@ -43,6 +45,8 @@ function toPricingConfig(priceSnapshot: unknown): PricingConfig {
     prorationRule?: "ANCHOR_DATE" | "FULL_FIRST_PERIOD";
     taxInclusive?: boolean;
     seasonalRates?: SeasonalRate[];
+    dailyRate?: number;
+    weeklyRate?: number;
   };
   return {
     basePrice: money(p.basePrice),
@@ -52,6 +56,8 @@ function toPricingConfig(priceSnapshot: unknown): PricingConfig {
     prorationRule: p.prorationRule,
     taxInclusive: p.taxInclusive ?? false,
     seasonalRates: p.seasonalRates,
+    dailyRate: p.dailyRate !== undefined ? money(p.dailyRate) : undefined,
+    weeklyRate: p.weeklyRate !== undefined ? money(p.weeklyRate) : undefined,
   };
 }
 
@@ -175,7 +181,11 @@ export async function generateInitialInvoice(
   booking: BookingForInvoicing,
 ) {
   const strategy = getBookingModelStrategy(booking.bookingModel);
-  const window: BookingWindow = { startDate: booking.startDate, endDate: booking.endDate ?? undefined };
+  const window: BookingWindow = {
+    startDate: booking.startDate,
+    endDate: booking.endDate ?? undefined,
+    rateTier: booking.rateTier,
+  };
   const draft = strategy.computeInitialInvoice(window, toPricingConfig(booking.priceSnapshot), { isTenantPkp });
   return persistInvoice(tx, tenantId, tenantSlug, booking, draft);
 }

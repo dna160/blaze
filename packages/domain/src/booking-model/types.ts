@@ -5,7 +5,17 @@ import type { SeasonalRate } from "../pricing/seasonal.js";
 
 export type BookingModelKind = "RECURRING_LEASE" | "NIGHTLY" | "DURATION_ORDER" | "HOURLY_SLOT";
 
+/**
+ * RECURRING_LEASE only — selects which of PricingConfig's three rates a
+ * booking is priced against. MONTHLY (default) is the original indefinite
+ * lease, unchanged. DAILY/WEEKLY are fixed-term bookings (real endDate,
+ * one upfront invoice, no recurring cadence) — see
+ * RecurringLeaseStrategy.computeInitialInvoice.
+ */
+export type RateTier = "DAILY" | "WEEKLY" | "MONTHLY";
+
 export interface PricingConfig {
+  /** The monthly rate for RECURRING_LEASE (rateTier MONTHLY), or the per-unit rate for other booking models. */
   basePrice: Decimal;
   currency: string;
   adminFee?: Decimal;
@@ -14,13 +24,19 @@ export interface PricingConfig {
   taxInclusive: boolean;
   /** NIGHTLY only (PRD §7.2.3 P2) — date-range rate overrides, e.g. peak season. See pricing/seasonal.ts. */
   seasonalRates?: SeasonalRate[];
+  /** RECURRING_LEASE only — per-day rate, used when the booking's rateTier is DAILY. */
+  dailyRate?: Decimal;
+  /** RECURRING_LEASE only — per-week rate, used when the booking's rateTier is WEEKLY. */
+  weeklyRate?: Decimal;
 }
 
 export interface BookingWindow {
   startDate: Date;
   endDate?: Date;
-  /** RECURRING_LEASE only — day-of-month billing anchor. Required once a lease is ACTIVE. */
+  /** RECURRING_LEASE only — day-of-month billing anchor. Required once a lease is ACTIVE (MONTHLY tier only). */
   anchorDay?: number;
+  /** RECURRING_LEASE only — defaults to MONTHLY (the original indefinite lease) when unset. */
+  rateTier?: RateTier;
 }
 
 export type InvoiceLineType = "RENT" | "DEPOSIT" | "ADMIN_FEE" | "TAX" | "DISCOUNT" | "DAMAGE";
