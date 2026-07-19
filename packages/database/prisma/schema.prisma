@@ -473,6 +473,25 @@ model Invoice {
   @@map("invoices")
 }
 
+/// Backing store for `nextInvoiceNumber`'s atomic per-tenant-per-month
+/// sequence (Session 24) — replaces the original `COUNT(*)`-based
+/// derivation, which raced under concurrent invoice creation for the
+/// same tenant (caught by Invoice's own `[tenantId, invoiceNumber]`
+/// unique constraint as a hard failure, never a silent duplicate, but
+/// still a real reliability bug under concurrent load). See
+/// packages/database/src/invoice-number.ts.
+model InvoiceNumberCounter {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @db.Uuid @map("tenant_id")
+  year     Int
+  month    Int
+  counter  Int    @default(0)
+
+  @@unique([tenantId, year, month])
+  @@index([tenantId])
+  @@map("invoice_number_counters")
+}
+
 model InvoiceLine {
   id          String   @id @default(uuid()) @db.Uuid
   tenantId    String   @db.Uuid @map("tenant_id")

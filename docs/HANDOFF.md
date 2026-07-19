@@ -1185,6 +1185,58 @@ already-diagnosed staleness issue — worth a quick sanity check
 (`bcrypt.compareSync("RentOS!Demo2026", DEMO_PASSWORD_HASH)`) if a whole
 tenant's logins ever fail identically on a fresh environment.
 
+**Session 24 (invoice numbering race-condition fix):** Continued the
+Session 23 pattern of picking up engineering debt while Phase 4's three
+remaining named items stay parked on a business decision. Fixed
+`nextInvoiceNumber`'s long-flagged race (present since very early
+sessions, called out in the function's own doc comment every session
+since): it derived the sequence from `tx.invoice.count(...)` inside the
+same transaction as invoice creation, so two invoices for the same
+tenant/month "created simultaneously" could read the same count before
+either committed and both compute the same next number. **Correction to
+what earlier sessions assumed**: `Invoice` already has `@@unique([tenantId,
+invoiceNumber])` (missed in a quick earlier grep this session before
+reading the schema properly) — so the race was never a silent duplicate
+tax-compliance bug, it was a hard `P2002` constraint-violation crash on
+one of the two concurrent requests. Real, but less severe than initially
+assumed; still worth fixing since a random transaction failure under
+concurrent load is a genuine reliability bug.
+
+- New `InvoiceNumberCounter` model (RLS-covered, `@@unique([tenantId,
+  year, month])`) — one row per tenant per month, holding the running
+  counter.
+- The migration backfills each tenant/month's starting counter from the
+  count of invoices already on record for that period, so the switch
+  doesn't collide with already-issued numbers on this (or any other)
+  already-seeded database.
+- `nextInvoiceNumber` (`packages/database/src/invoice-number.ts`) now
+  runs a single `INSERT ... ON CONFLICT (tenant_id, year, month) DO
+  UPDATE SET counter = counter + 1 RETURNING counter` — Postgres's own
+  row-level lock on the conflicting key serializes concurrent callers,
+  so there's no read-then-write window left to race in. No application-level
+  locking, no retry loop, no advisory lock needed — the database does the
+  serialization for free as part of a single atomic statement.
+
+**Live verification**: confirmed the migration's backfill counter
+(9) exactly matched `gudang-aman`'s real existing invoice count for the
+current month. Fired 25 truly concurrent calls to `nextInvoiceNumber`
+directly (`Promise.all` against the pooled `PrismaClient`, so genuinely
+parallel connections, not sequential awaits) — all 25 numbers came back
+unique and correctly sequential (`000010` through `000034`, continuing
+right after the backfilled `9`), zero constraint violations. Then
+exercised the real call site end-to-end through the actual API (OTP
+login → submit booking → staff approve → invoice generated) and
+confirmed it picked up exactly where the concurrency test left off
+(`000035`) — proving the real production code path uses the same fixed
+counter, not just the isolated function in a unit-test-style check.
+Ledger stayed at 0.00 throughout; full `turbo run typecheck build test
+--force` passes clean across all 8 packages. Test invoices/bookings from
+verification were deleted afterward — their consumed sequence numbers
+were deliberately left as permanent gaps rather than decrementing the
+counter back down, matching how real tax-compliant sequential numbering
+is supposed to behave (a voided/deleted invoice still burns its number,
+never gets reused).
+
 ### What's explicitly NOT done (don't assume it exists)
 
 - Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
@@ -1248,16 +1300,20 @@ was quietly wrong for those two specific accounts the whole time. Fixed;
 see the entry above for the exact mechanism and how to sanity-check it
 doesn't recur on a fresh database.
 
+**Session 24** picked up the `nextInvoiceNumber` race condition from
+that same list — fixed, see its HANDOFF entry above.
+
 **If Phase 4's remaining three items are still off the table next
 session** (no business direction given), other real candidates in the
-same "engineering debt, not a feature" spirit as Session 23's catalog
-setup UI: no way to create/edit `Location` rows from the console either
-(same seed-data-only gap, smaller); pooled-inventory UI affordances
-(no "N of M beds" display, no manual unit picker at approval — see
-"Known shortcuts"); `nextInvoiceNumber`'s race condition under
-concurrent invoice creation for the same tenant (flagged since early
-sessions, "correct at demo scale... a dedicated Postgres sequence per
-tenant is the real fix"). None of these require a business decision.
+same "engineering debt, not a feature" spirit as Sessions 23/24: no way
+to create/edit `Location` rows from the console (same seed-data-only
+gap `catalog-setup` closed for `AssetType`/`Asset`, smaller); pooled-
+inventory UI affordances (no "N of M beds" display, no manual unit
+picker at approval — see "Known shortcuts"). Neither requires a
+business decision. Worth a broader sweep of "Known shortcuts" and
+"What's explicitly NOT done" for anything else that's quietly become
+stale after four sessions of fixes, too — Session 24 already found one
+item there (the `nextInvoiceNumber` entry) had drifted from reality.
 
 Read Sessions 20-22's full entries above before touching
 `apps/api/src/webhook-dispatch/`, `apps/api/src/api-keys/`,
@@ -1370,7 +1426,7 @@ Before writing new code:
 - Auto-assignment of a specific unit from a pool (`BookingService.approve`, when a pooled booking has no `assetId`) always picks the lowest-code eligible unit — there's no way for staff to pick a *specific* pooled unit at approval time short of passing an explicit `assetId` directly via the API (no console UI for it). Fine for interchangeable inventory where the specific unit genuinely doesn't matter (the whole premise of pooling); would need a real picker if a tenant's pooled units ever aren't actually interchangeable in practice (e.g. a bed near a window vs. one by the door).
 - Pooled availability's "available now" display number (`CatalogService.availableCount` with no `startDate`/`endDate`) uses a zero-length "right now" window as its default — a reasonable estimate for a walk-in customer, but it's never what actually gates a booking. The real check always runs against the customer's actual requested date range at submission time (`BookingService.createBooking`), so the display number can legitimately be optimistic or pessimistic relative to a specific future date range the customer hasn't picked yet. This is documented behavior, not a bug — no different in spirit from RECURRING_LEASE's pre-existing "point-in-time count, not a range query" shortcut.
 - Contract sign-off and invoice payment are two independent async gates that can complete in either order (`BookingService.computeActivationContext`/`finalizeActivation`, `apps/api/src/booking/booking.service.ts`). `handleInvoicePaid` catches `GuardFailedError` and returns quietly when payment lands before the contract is signed (booking stays `APPROVED`); `AgreementsService.sign()` calls `tryActivateAfterContractSigned` after a signature lands, which is a no-op if the invoice isn't paid yet. Whichever gate closes second is the one that actually fires the `ACTIVATE` transition. Verified live for all three cases: `contract_required` flag off, pay-then-sign, and sign-then-pay.
-- `nextInvoiceNumber` (`packages/database/src/invoice-number.ts`) derives the sequence from a per-tenant monthly `COUNT(*)` inside the same transaction as invoice creation. Correct at demo scale; races under concurrent invoice creation for the same tenant. A dedicated Postgres sequence per tenant is the real fix (Phase 2).
+- **Fixed in Session 24** — `nextInvoiceNumber` no longer derives the sequence from a `COUNT(*)` snapshot; it's an atomic `INSERT ... ON CONFLICT ... DO UPDATE ... RETURNING` against a dedicated `InvoiceNumberCounter` row per tenant/month. Verified race-free with 25 genuinely concurrent calls. See that session's HANDOFF entry.
 - The dunning ladder (`apps/worker/src/jobs/dunning-ladder.job.ts`) hardcodes H-7/H-3/H-0/D+1/D+3/D+7/D+14 uniformly across tenants. `AutomationSetting` rows exist in schema for per-tenant override but the worker doesn't read them yet.
 - Payment idempotency keys are generated server-side per `initiate()` call, not accepted from the client. True request-level idempotency (retry-safe from the storefront) is a TODO; webhook-level idempotency (the important one, preventing double-processing a gateway retry) IS implemented via the `WebhookEvent` unique `(provider, externalId)` constraint.
 - Runtime Docker images copy the *full* installed `node_modules` (including devDependencies) from the build stage rather than doing a second prod-only `pnpm install`. Simpler and more robust for a pnpm workspace with symlinked local packages; costs image size. Revisit once there's a real build environment to validate a leaner runtime install against.
