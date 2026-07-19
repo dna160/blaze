@@ -1108,6 +1108,83 @@ If a future session hits `ECONNREFUSED`/"no response" on either despite
 `.env` being correct, check whether the services are simply not running
 before assuming a config problem.
 
+**Session 23 (Docker verification attempt + catalog setup UI):** Two
+things, not one Phase-4 feature — Phase 4's three remaining named items
+(self-serve signup, billing/metering, the automation builder) are all
+business-shaped decisions per Session 22's own note, so this session
+didn't touch them; instead it (1) re-attempted Docker build verification,
+flagged as unverified debt since Session 1, and (2) built the first
+console UI to create/edit a tenant's own catalog, a real long-standing
+engineering gap unrelated to any Phase 4 business decision.
+
+**Docker verification — still blocked, confirmed again, not a config
+issue**: Docker CLI (29.3.1) and daemon are present in this sandbox; the
+`service docker` init script itself fails silently (a `ulimit` permission
+error swallowed by the script), but running `dockerd` directly works
+fine, including with the session's proxy env vars explicitly passed
+through (`sudo HTTPS_PROXY=... HTTP_PROXY=... dockerd`). `docker pull
+node:22-alpine` still gets a `403 Forbidden` from
+`production.cloudfront.docker.com` — the exact same failure documented
+since Session 1, now confirmed to persist even with the daemon correctly
+proxy-aware. Per the agent-proxy's own README (`/root/.ccr/README.md`):
+"403/407 from the proxy: destination not allowed by org egress policy...
+do not retry or route around it." This is a policy block, not something
+fixable from inside a session — **stop attempting Docker builds in this
+environment** until the policy changes; the Dockerfiles themselves are
+unverified but were never the suspected problem.
+
+**Catalog setup UI (`apps/api/src/catalog/`, `apps/console/src/app/catalog-setup/`)**:
+every `AssetType`/`Asset` row in this codebase was seed-data-only (or a
+direct `psql` edit) through Session 22, called out repeatedly as a real
+gap since Session 1. Added the first write path: `POST`/`PATCH
+/catalog/asset-types` (name, pricing, `isPooled`, `isPublished` —
+`bookingModel`/`slug` are set once at creation and never editable
+afterward, since a booking's FSM and every downstream lifecycle
+assumption is keyed off `bookingModel`), `POST /catalog/assets` (add a
+unit under an AssetType), `PATCH /catalog/assets/:id/status` (manual
+status override, blocked while an asset is tied to an active booking).
+All four are `SUPER_ADMIN`/`OPS_ADMIN`-gated — no per-tenant feature flag
+needed here, since this isn't a premium/optional capability the way
+Sessions 20-22's Phase 4 slices were, it's baseline tenant operations
+that should exist for everyone. `apps/console/src/app/catalog-setup` —
+list/create/edit AssetTypes with a real pricing form (base price, admin
+fee, deposit rule, tax-inclusive toggle) and add units under them.
+
+**Live verification**: logged in as `gudang-aman` staff, created a new
+`AssetType` via the API (not seed data), edited its pricing (raised the
+base price, flipped `taxInclusive` on), confirmed it appeared in the
+*public* (unauthenticated) storefront catalog with the edited pricing,
+added a unit under it, then ran a real booking end-to-end through that
+brand-new unit: submit → approve → invoice generated. The invoice's tax
+math was hand-verified correct for the tax-inclusive edit (PPN backed
+out of a 1,010,000 taxable base — rent + admin fee — as 100,090.09, not
+added on top), proving a console-created AssetType is fully
+production-equivalent to a seed-data one, not a second-class path.
+Confirmed `FINANCE_ADMIN` (no `OPS_ADMIN`/`SUPER_ADMIN`) gets a real 403
+from every new write endpoint. Ledger stayed at 0.00 throughout. Full
+`turbo run typecheck build test --force` passes clean across all 8
+packages. Test AssetType/Asset/booking/invoice/customer were all cleaned
+up afterward.
+
+**Real bug found and fixed during this session's own live
+verification, unrelated to this session's code changes**: logging in as
+`admin@gudang-aman.test` with the documented demo password failed —
+its stored `password_hash`, and separately `finance@gudang-aman.test`'s,
+did not match `RentOS!Demo2026` at all (verified with a direct
+`bcrypt.compareSync`), while every other seeded staff account across all
+three tenants did. These two accounts were created in Session 1, before
+`DEMO_PASSWORD_HASH` in `seed.ts` apparently reached its current value —
+`seedStaffUser`'s upsert never overwrites an existing user's
+`passwordHash` (`update: {}`), so this went unnoticed for 22 sessions
+since nothing in that stretch happened to log in as either account
+directly. Patched via direct SQL (same fix pattern as the seed-upsert
+feature-flag gotcha) to the correct hash for `RentOS!Demo2026`. If a
+fresh database's first seed run ever produces a similar mismatch, it
+would mean `DEMO_PASSWORD_HASH` itself is wrong, not this same
+already-diagnosed staleness issue — worth a quick sanity check
+(`bcrypt.compareSync("RentOS!Demo2026", DEMO_PASSWORD_HASH)`) if a whole
+tenant's logins ever fail identically on a fresh environment.
+
 ### What's explicitly NOT done (don't assume it exists)
 
 - Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
@@ -1124,7 +1201,7 @@ before assuming a config problem.
 ## Resume here
 
 **Phases 0-3 are complete.** Phase 4 (SaaS-ready) is **in progress, not
-finished**. Two sub-features are done and live-verified, each
+finished**. Three sub-features are done and live-verified, each
 self-directed following the same pattern (user said "let's move on to
 phase 4, but only 1 tenant has it," then explicitly rejected a scoping
 question — so every Phase 4 sub-feature since has been chosen
@@ -1144,15 +1221,43 @@ are genuinely business-shaped decisions (a pricing/tiering model, what a
 workflow builder's UI and rule language even look like, how self-serve
 signup interacts with a not-yet-decided billing gate) rather than
 engineering-bounded ones the way Sessions 20-22's slices were — this is
-also why they were left for last three sessions running. If continuing
-Phase 4 autonomously, the same "pick the most engineering-bounded
-remaining item and self-direct" approach runs out here: there isn't a
-clearly engineering-only slice left to peel off any of these three
-without first making a business call the PRD explicitly deferred. Worth
-pausing to ask, or picking the least business-sensitive angle (e.g. a
-tenant provisioning wizard for self-serve signup that stops short of
-actually deciding a pricing model) rather than inventing pricing/tiering
-terms unilaterally.
+also why they were left for last three sessions running. Session 23
+correctly recognized this and did NOT try to force a fourth Phase-4
+slice out of these three — if continuing Phase 4 autonomously, the same
+"pick the most engineering-bounded remaining item and self-direct"
+approach runs out here: there isn't a clearly engineering-only slice
+left to peel off any of these three without first making a business
+call the PRD explicitly deferred. Worth pausing to ask, or picking the
+least business-sensitive angle (e.g. a tenant provisioning wizard for
+self-serve signup that stops short of actually deciding a pricing
+model) rather than inventing pricing/tiering terms unilaterally.
+
+**Session 23** stepped outside Phase 4 entirely and picked up two
+threads of long-standing, purely-technical debt instead: (1) re-tried
+Docker build verification (still blocked by org egress policy on
+`production.cloudfront.docker.com`, confirmed not a config issue — see
+its HANDOFF entry, **don't re-attempt this** until told the policy has
+changed) and (2) built the first console UI for a tenant to create/edit
+its own catalog (`AssetType` pricing, `Asset` units) — every one before
+this session was seed-data-only, flagged as a real gap since Session 1.
+Also found and fixed a real bug while doing this: two of `gudang-aman`'s
+original three staff accounts had stale password hashes from Session 1
+that never matched the documented demo password — every session's
+HANDOFF note claiming "password `RentOS!Demo2026` for every one of them"
+was quietly wrong for those two specific accounts the whole time. Fixed;
+see the entry above for the exact mechanism and how to sanity-check it
+doesn't recur on a fresh database.
+
+**If Phase 4's remaining three items are still off the table next
+session** (no business direction given), other real candidates in the
+same "engineering debt, not a feature" spirit as Session 23's catalog
+setup UI: no way to create/edit `Location` rows from the console either
+(same seed-data-only gap, smaller); pooled-inventory UI affordances
+(no "N of M beds" display, no manual unit picker at approval — see
+"Known shortcuts"); `nextInvoiceNumber`'s race condition under
+concurrent invoice creation for the same tenant (flagged since early
+sessions, "correct at demo scale... a dedicated Postgres sequence per
+tenant is the real fix"). None of these require a business decision.
 
 Read Sessions 20-22's full entries above before touching
 `apps/api/src/webhook-dispatch/`, `apps/api/src/api-keys/`,
@@ -1261,7 +1366,7 @@ Before writing new code:
 - Every seeded staff user (both tenants, `packages/database/prisma/seed.ts`) shares one demo password, `RentOS!Demo2026`, hardcoded as a bcrypt hash in the seed file. Fine for local dev/demo; if this seed ever runs against a real deployment, every seeded account needs a real, unique password set immediately — the seed is not a safe way to provision production credentials.
 - Pooled inventory (`AssetType.isPooled`, `packages/database/src/pooled-availability.ts`, Session 17) only supports `NIGHTLY` and `DURATION_ORDER` — both always carry an `endDate`, which the date-range overlap check needs. Marking a `RECURRING_LEASE` `AssetType` as pooled throws a plain `Error` ("Pooled inventory is not supported for RECURRING_LEASE bookings") rather than computing something wrong; this surfaces as a 500 via the generic exception filter, not a clean 400, since it's a data-configuration mistake rather than a reachable user flow. `HOURLY_SLOT` isn't wired in either (it's still a typed stub with no bookings to overlap-check in the first place).
 - Seasonal pricing (`packages/domain/src/pricing/seasonal.ts`, Session 18) only applies to `NIGHTLY` — `RecurringLeaseStrategy`/`DurationOrderStrategy` never read `PricingConfig.seasonalRates` even if it's present in a snapshot, matching the PRD's own scoping ("needed for hotel vertical"). A `seasonalRates` entry on a non-NIGHTLY `AssetType` is silently inert, not an error — there was no clean way to reject it at the schema level without also blocking legitimate future reuse, and it's a data-configuration mistake, not a reachable user flow.
-- There is no admin/console UI anywhere to create or edit `AssetType.pricing` (base price, deposit rule, admin fee, seasonal rates, or anything else in that JSON blob) — every `AssetType` in this codebase, across both seeded tenants, is created via `packages/database/prisma/seed.ts` or a direct `psql` edit. This has been true since Session 1 and isn't specific to seasonal pricing; noted here because Session 18 is the first feature where a tenant might plausibly want to self-serve-edit pricing on some regular cadence (adding next year's peak season), and there's genuinely no way to do that today short of editing seed data or the database directly.
+- **Superseded by Session 23** — a console UI to create/edit `AssetType.pricing` and add `Asset` units now exists (`/catalog-setup`, `apps/api/src/catalog/`). Two real gaps remain from that session's scope: the form doesn't expose `seasonalRates` at all (a tenant wanting peak-season overrides still needs a direct `psql`/API call — the schema and math both already support it, Session 18, just no UI), and there's no console UI to create/edit `Location` rows either (same seed-data-only gap, one level up — `createAsset` requires an existing `locationId`). Neither blocks the base price/deposit/admin-fee/publish workflow Session 23 actually verified end-to-end.
 - Auto-assignment of a specific unit from a pool (`BookingService.approve`, when a pooled booking has no `assetId`) always picks the lowest-code eligible unit — there's no way for staff to pick a *specific* pooled unit at approval time short of passing an explicit `assetId` directly via the API (no console UI for it). Fine for interchangeable inventory where the specific unit genuinely doesn't matter (the whole premise of pooling); would need a real picker if a tenant's pooled units ever aren't actually interchangeable in practice (e.g. a bed near a window vs. one by the door).
 - Pooled availability's "available now" display number (`CatalogService.availableCount` with no `startDate`/`endDate`) uses a zero-length "right now" window as its default — a reasonable estimate for a walk-in customer, but it's never what actually gates a booking. The real check always runs against the customer's actual requested date range at submission time (`BookingService.createBooking`), so the display number can legitimately be optimistic or pessimistic relative to a specific future date range the customer hasn't picked yet. This is documented behavior, not a bug — no different in spirit from RECURRING_LEASE's pre-existing "point-in-time count, not a range query" shortcut.
 - Contract sign-off and invoice payment are two independent async gates that can complete in either order (`BookingService.computeActivationContext`/`finalizeActivation`, `apps/api/src/booking/booking.service.ts`). `handleInvoicePaid` catches `GuardFailedError` and returns quietly when payment lands before the contract is signed (booking stays `APPROVED`); `AgreementsService.sign()` calls `tryActivateAfterContractSigned` after a signature lands, which is a no-op if the invoice isn't paid yet. Whichever gate closes second is the one that actually fires the `ACTIVATE` transition. Verified live for all three cases: `contract_required` flag off, pay-then-sign, and sign-then-pay.

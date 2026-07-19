@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { authClient } from "@/lib/auth-client";
 
 const NAV = [
+  { href: "/catalog-setup", label: "Catalog Setup" },
   { href: "/bookings", label: "Approval Workbench" },
   { href: "/swap-requests", label: "Swap Requests" },
   { href: "/kyc", label: "KYC Review" },

@@ -52,6 +52,64 @@ export const AssetDtoSchema = z.object({
 });
 export type AssetDto = z.infer<typeof AssetDtoSchema>;
 
+/**
+ * Catalog setup (console-facing, staff-only) — every AssetType/Asset in
+ * this codebase was seed-data-only through Session 21; these are the
+ * first write endpoints for a tenant's own catalog. `bookingModel` and
+ * `slug` are set once at creation and never editable afterward: the FSM
+ * a booking on this AssetType runs through, and every downstream
+ * booking's `priceSnapshot`/lifecycle assumptions, are keyed off
+ * `bookingModel` — changing it after real bookings exist would silently
+ * corrupt them.
+ */
+export const CreateAssetTypeRequestSchema = z.object({
+  name: z.string().min(1).max(200),
+  slug: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[a-z0-9-]+$/, "Slug must be lowercase letters, numbers, and hyphens only."),
+  bookingModel: BookingModelSchema,
+  attributesSchema: z.record(z.unknown()).default({}),
+  pricing: PricingConfigSchema,
+  photos: z.array(z.string()).default([]),
+  isPooled: z.boolean().default(false),
+  isPublished: z.boolean().default(true),
+});
+export type CreateAssetTypeRequest = z.infer<typeof CreateAssetTypeRequestSchema>;
+
+export const UpdateAssetTypeRequestSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  attributesSchema: z.record(z.unknown()).optional(),
+  pricing: PricingConfigSchema.optional(),
+  photos: z.array(z.string()).optional(),
+  isPooled: z.boolean().optional(),
+  isPublished: z.boolean().optional(),
+});
+export type UpdateAssetTypeRequest = z.infer<typeof UpdateAssetTypeRequestSchema>;
+
+export const CreateAssetRequestSchema = z.object({
+  assetTypeId: z.string().uuid(),
+  locationId: z.string().uuid(),
+  code: z.string().min(1).max(50),
+  attributes: z.record(z.unknown()).default({}),
+});
+export type CreateAssetRequest = z.infer<typeof CreateAssetRequestSchema>;
+
+export const UpdateAssetStatusRequestSchema = z.object({
+  status: AssetStatusSchema,
+  statusReason: z.string().max(500).optional(),
+});
+export type UpdateAssetStatusRequest = z.infer<typeof UpdateAssetStatusRequestSchema>;
+
+export const LocationDtoSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  address: z.string().nullable(),
+  timezone: z.string(),
+});
+export type LocationDto = z.infer<typeof LocationDtoSchema>;
+
 export const AvailabilityQuerySchema = z.object({
   assetTypeId: z.string().uuid(),
   startDate: z.string().datetime(),

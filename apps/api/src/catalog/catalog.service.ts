@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
-import { computePooledAvailableCount } from "@rentos/database";
+import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { computePooledAvailableCount, type Prisma } from "@rentos/database";
+import type { CreateAssetRequest, CreateAssetTypeRequest, UpdateAssetTypeRequest } from "@rentos/contracts";
 
 import { PrismaService } from "../prisma/prisma.service.js";
 
@@ -11,6 +12,11 @@ export class CatalogService {
     return this.prisma.runInTenantContext(tenantId, (tx) =>
       tx.assetType.findMany({ where: { isPublished: true }, orderBy: { createdAt: "asc" } }),
     );
+  }
+
+  /** Staff-only — includes unpublished/draft AssetTypes, unlike the public list above. Backs the catalog setup console page. */
+  listAllAssetTypes(tenantId: string) {
+    return this.prisma.runInTenantContext(tenantId, (tx) => tx.assetType.findMany({ orderBy: { createdAt: "asc" } }));
   }
 
   async getAssetType(tenantId: string, assetTypeId: string) {
@@ -93,5 +99,91 @@ export class CatalogService {
         orderBy: [{ locationId: "asc" }, { code: "asc" }],
       }),
     );
+  }
+
+  /**
+   * Catalog setup (Session 23) — the first write path for a tenant's own
+   * AssetType/Asset rows; every one before this was seed-data-only.
+   * `bookingModel`/`slug` are set once here and never editable via
+   * `updateAssetType` (see the request schema's own doc comment).
+   */
+  async createAssetType(tenantId: string, input: CreateAssetTypeRequest) {
+    return this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const existing = await tx.assetType.findUnique({ where: { tenantId_slug: { tenantId, slug: input.slug } } });
+      if (existing) throw new ConflictException(`An AssetType with slug "${input.slug}" already exists.`);
+
+      return tx.assetType.create({
+        data: {
+          tenantId,
+          name: input.name,
+          slug: input.slug,
+          bookingModel: input.bookingModel,
+          attributesSchema: input.attributesSchema as Prisma.InputJsonValue,
+          pricing: input.pricing as unknown as Prisma.InputJsonValue,
+          photos: input.photos,
+          isPooled: input.isPooled,
+          isPublished: input.isPublished,
+        },
+      });
+    });
+  }
+
+  async updateAssetType(tenantId: string, assetTypeId: string, patch: UpdateAssetTypeRequest) {
+    return this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const existing = await tx.assetType.findUnique({ where: { id: assetTypeId } });
+      if (!existing) throw new NotFoundException("AssetType not found.");
+
+      return tx.assetType.update({
+        where: { id: assetTypeId },
+        data: {
+          name: patch.name,
+          attributesSchema: patch.attributesSchema as Prisma.InputJsonValue | undefined,
+          pricing: patch.pricing as unknown as Prisma.InputJsonValue | undefined,
+          photos: patch.photos,
+          isPooled: patch.isPooled,
+          isPublished: patch.isPublished,
+        },
+      });
+    });
+  }
+
+  async createAsset(tenantId: string, input: CreateAssetRequest) {
+    return this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const assetType = await tx.assetType.findUnique({ where: { id: input.assetTypeId } });
+      if (!assetType) throw new NotFoundException("AssetType not found.");
+      const location = await tx.location.findUnique({ where: { id: input.locationId } });
+      if (!location) throw new NotFoundException("Location not found.");
+
+      const existing = await tx.asset.findUnique({
+        where: { tenantId_locationId_code: { tenantId, locationId: input.locationId, code: input.code } },
+      });
+      if (existing) throw new ConflictException(`A unit with code "${input.code}" already exists at this location.`);
+
+      return tx.asset.create({
+        data: {
+          tenantId,
+          locationId: input.locationId,
+          assetTypeId: input.assetTypeId,
+          code: input.code,
+          attributes: input.attributes as Prisma.InputJsonValue,
+        },
+      });
+    });
+  }
+
+  async updateAssetStatus(tenantId: string, assetId: string, status: string, statusReason?: string) {
+    return this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const existing = await tx.asset.findUnique({ where: { id: assetId } });
+      if (!existing) throw new NotFoundException("Asset not found.");
+      if (existing.status !== "AVAILABLE" && existing.status !== "MAINTENANCE" && existing.status !== "RETIRED") {
+        throw new ConflictException(
+          `Unit is currently ${existing.status} (tied to an active booking) — status can only be changed manually when it's AVAILABLE, MAINTENANCE, or RETIRED.`,
+        );
+      }
+      return tx.asset.update({
+        where: { id: assetId },
+        data: { status: status as never, statusReason },
+      });
+    });
   }
 }
