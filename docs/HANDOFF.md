@@ -1237,16 +1237,77 @@ counter back down, matching how real tax-compliant sequential numbering
 is supposed to behave (a voided/deleted invoice still burns its number,
 never gets reused).
 
+**Session 25 (documentation-integrity audit, no application code changes):**
+Continued Sessions 23/24's pattern of picking up engineering debt while
+Phase 4's three remaining named items stay parked on a business
+decision, but this time the "debt" was HANDOFF.md itself. After 24
+sessions of incremental feature work, this file's own "What's
+explicitly NOT done" section had drifted from reality in three places —
+each one checked against actual code, not assumed:
+
+- Automated KYC verification was still described as "v1 review is 100%
+  manual, by design" — wrong since Session 21's `KycVerificationProvider`
+  port shipped (`sewa-alat` runs it live).
+- The unit map was still described as "list view only" — wrong since
+  Session 9; `apps/console/src/app/assets/page.tsx` has had a real
+  grid/list toggle the whole time.
+- Swap/upgrade requests were still described as "schema exists, zero
+  application logic" — wrong since Sessions 10/13, which built the full
+  request/approve/reject flow with computed mid-cycle proration and
+  storefront/console UI.
+
+Corrected all three in place, with a strikethrough-style annotation
+naming which session actually closed each gap, so a future session
+doesn't have to re-derive this. Also split promo codes/duration
+discounts out from the swap-requests bullet they'd been lumped into —
+confirmed via `grep` that `PromoCode` genuinely has zero application
+logic in `apps/api`, so that part of the old bullet was still accurate
+even though the swap-requests part it was bundled with wasn't. Fixed a
+smaller drift in "Known shortcuts": the shared-demo-password bullet
+still said "both tenants" from before a third tenant existed (Session
+19); now says "all three," with a pointer to Session 23's stale-password-hash
+bug for context on the one real exception to "one password fits all."
+
+**Why this matters as its own unit of work, not just a typo fix**: this
+file is the *only* continuity mechanism across context resets — a
+future session has no way to independently notice a claim here is wrong
+short of the same kind of manual grep-and-verify pass this session did.
+An incorrect "NOT done" claim is worse than no claim at all, since it
+actively steers a future session away from work that's already
+finished (or, worse, toward redoing it). No code changed this session;
+`turbo run typecheck build test` was not re-run since nothing it checks
+was touched — the standing per-session verification step doesn't apply
+usefully to a docs-only diff.
+
+**Methodology, for the next time this file needs the same treatment**:
+for each claim in "What's explicitly NOT done" and "Known shortcuts,"
+grep for the feature by name before trusting the prose — the three
+wrong claims here had each been sitting unchallenged for anywhere from
+4 to 16 sessions after the code that disproved them landed. Worth
+another pass like this periodically, not just when a claim happens to
+get noticed by accident (which is how Session 24 found the
+`nextInvoiceNumber` entry was stale — this session made the check
+deliberate instead of incidental).
+
 ### What's explicitly NOT done (don't assume it exists)
 
-- Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config
-- Invoice-payment refunds (as opposed to deposit refunds) — no endpoint; `PaymentProvider.refund()` is only called from the deposit-refund flow today
-- Automated KYC verification (Verihubs or similar) — PRD explicitly scopes this to P2; v1 review is 100% manual, by design.
-- Unit map (visual grid) — list view only (P1 in PRD anyway)
-- Swap/upgrade requests, promo codes, duration discounts — schema exists, zero application logic
-- Platform admin console (multi-tenant switcher, tenant provisioning wizard) — out of scope until Phase 4; today, provisioning a tenant means writing rows directly (see `packages/database/prisma/seed.ts` as the template)
-- Real Xendit/WhatsApp Cloud credentials — adapters are coded against the real APIs but unconfigured; `PAYMENT_PROVIDER=mock` / `MESSAGING_PROVIDER=console_log` is what actually runs today
-- **Docker builds were never actually executed in this sandbox** — Docker Hub registry access is blocked by this environment's egress policy (confirmed via repeated 403s on `production.cloudfront.docker.com`, same class of block as `backboard.railway.com`). The Dockerfiles follow standard, well-established patterns (Turborepo `prune --docker`, Next.js `output: standalone`) and `turbo prune` itself was verified working locally, but nobody has run `docker build` or `docker compose up` against them. **Validate this first** in any environment with real registry access before trusting it blindly.
+**Re-audited in Session 25 — three bullets below were stale/wrong** (automated
+KYC and unit-map-grid claims described pre-Session-9/21 reality; swap
+requests were lumped in with genuinely-unbuilt promo codes). Read this
+list itself with some skepticism going forward — a quick `grep` for the
+feature in question is cheap insurance against repeating this.
+
+- Per-tenant `AutomationSetting` rows are schema-only — `apps/worker`'s dunning ladder hardcodes the H-7/H-3/H-0/D+1/D+3/D+7/D+14 steps uniformly, doesn't read tenant config. Still accurate as of Session 25.
+- Invoice-payment refunds (as opposed to deposit refunds) — no endpoint; `PaymentProvider.refund()` is only called from the deposit-refund flow today (`apps/api/src/deposits/deposits.service.ts`, the only call site). Still accurate as of Session 25.
+- **Promo codes and duration discounts** — `PromoCode` exists in the schema with zero application logic anywhere in `apps/api` (confirmed via grep, Session 25). Genuinely unbuilt, unlike swap/upgrade requests below.
+- Platform admin console (multi-tenant switcher, tenant provisioning wizard, self-serve signup) — still doesn't exist. Today, provisioning a brand-new tenant still means writing rows directly (`packages/database/prisma/seed.ts` is the template) — Session 23's `/catalog-setup` only lets an *existing* tenant manage its own `AssetType`/`Asset` rows, it doesn't create tenants. This is squarely Phase 4's still-unstarted "self-serve tenant signup," flagged repeatedly since Session 20 as a business decision, not an engineering gap.
+- Real Xendit/WhatsApp Cloud credentials — adapters are coded against the real APIs but unconfigured; `PAYMENT_PROVIDER=mock` / `MESSAGING_PROVIDER=console_log` is what actually runs today. Same is true of Session 21's `VerihubsKycVerificationProvider` (`KYC_VERIFICATION_PROVIDER=mock` is the default).
+- **Docker builds were never actually executed in this sandbox** — Docker Hub registry access is blocked by this environment's egress policy (`production.cloudfront.docker.com` returns 403, an org policy denial per the agent-proxy's own README, not a config problem — re-confirmed in Session 23 with the daemon correctly proxy-aware). The Dockerfiles follow standard, well-established patterns (Turborepo `prune --docker`, Next.js `output: standalone`) and `turbo prune` itself was verified working locally, but nobody has run `docker build` or `docker compose up` against them. **Validate this first** in any environment with real registry access before trusting it blindly — and don't re-attempt it in this sandbox, it's a policy block, not a transient failure.
+
+**Corrected — these are actually done, despite older phrasing here claiming otherwise:**
+- ~~Automated KYC verification — v1 review is 100% manual, by design~~ — **wrong since Session 21**. Real automated verification exists (`KycVerificationProvider` port, `MockKycVerificationProvider`/`VerihubsKycVerificationProvider`), gated per tenant by `featureFlags.kyc_auto_verification_enabled`, on for `sewa-alat` only. Manual review is still the default for tenants without the flag — that part of the original claim holds, just not universally.
+- ~~Unit map — list view only~~ — **wrong since Session 9**. `apps/console/src/app/assets/page.tsx` has a real grid/list toggle (`view === "grid"`), grouping units into rows by their code's leading letters as a pragmatic floor-layout stand-in.
+- ~~Swap/upgrade requests — schema exists, zero application logic~~ — **wrong since Sessions 10/13**. Full request/approve/reject flow with computed mid-cycle proration and storefront/console UI. (Promo codes and duration discounts, bundled in the same old bullet, are still genuinely unbuilt — split out above.)
 
 ---
 
@@ -1303,6 +1364,14 @@ doesn't recur on a fresh database.
 **Session 24** picked up the `nextInvoiceNumber` race condition from
 that same list — fixed, see its HANDOFF entry above.
 
+**Session 25** did the broader sweep Session 24's entry called for:
+audited "What's explicitly NOT done" and "Known shortcuts" claim-by-claim
+against actual code, found and corrected three stale "NOT done" claims
+(automated KYC, unit map, swap requests — all had been done for a while)
+plus one smaller drift in "Known shortcuts" (tenant count). No
+application code changed. See its HANDOFF entry above for the full
+list and methodology.
+
 **If Phase 4's remaining three items are still off the table next
 session** (no business direction given), other real candidates in the
 same "engineering debt, not a feature" spirit as Sessions 23/24: no way
@@ -1310,10 +1379,10 @@ to create/edit `Location` rows from the console (same seed-data-only
 gap `catalog-setup` closed for `AssetType`/`Asset`, smaller); pooled-
 inventory UI affordances (no "N of M beds" display, no manual unit
 picker at approval — see "Known shortcuts"). Neither requires a
-business decision. Worth a broader sweep of "Known shortcuts" and
-"What's explicitly NOT done" for anything else that's quietly become
-stale after four sessions of fixes, too — Session 24 already found one
-item there (the `nextInvoiceNumber` entry) had drifted from reality.
+business decision. The documentation itself was just re-audited
+(Session 25) and should be trustworthy again, but it's worth repeating
+that sweep periodically rather than waiting for another accidental
+find like Session 24's.
 
 Read Sessions 20-22's full entries above before touching
 `apps/api/src/webhook-dispatch/`, `apps/api/src/api-keys/`,
@@ -1419,7 +1488,7 @@ Before writing new code:
 
 ## Known shortcuts (intentional, not bugs)
 
-- Every seeded staff user (both tenants, `packages/database/prisma/seed.ts`) shares one demo password, `RentOS!Demo2026`, hardcoded as a bcrypt hash in the seed file. Fine for local dev/demo; if this seed ever runs against a real deployment, every seeded account needs a real, unique password set immediately — the seed is not a safe way to provision production credentials.
+- Every seeded staff user (all three tenants, `packages/database/prisma/seed.ts`) shares one demo password, `RentOS!Demo2026`, hardcoded as a bcrypt hash in the seed file. Fine for local dev/demo; if this seed ever runs against a real deployment, every seeded account needs a real, unique password set immediately — the seed is not a safe way to provision production credentials. (Session 23 found two of `gudang-aman`'s original accounts had drifted from this hash entirely, unrelated to the "one shared password" design — see that session's entry.)
 - Pooled inventory (`AssetType.isPooled`, `packages/database/src/pooled-availability.ts`, Session 17) only supports `NIGHTLY` and `DURATION_ORDER` — both always carry an `endDate`, which the date-range overlap check needs. Marking a `RECURRING_LEASE` `AssetType` as pooled throws a plain `Error` ("Pooled inventory is not supported for RECURRING_LEASE bookings") rather than computing something wrong; this surfaces as a 500 via the generic exception filter, not a clean 400, since it's a data-configuration mistake rather than a reachable user flow. `HOURLY_SLOT` isn't wired in either (it's still a typed stub with no bookings to overlap-check in the first place).
 - Seasonal pricing (`packages/domain/src/pricing/seasonal.ts`, Session 18) only applies to `NIGHTLY` — `RecurringLeaseStrategy`/`DurationOrderStrategy` never read `PricingConfig.seasonalRates` even if it's present in a snapshot, matching the PRD's own scoping ("needed for hotel vertical"). A `seasonalRates` entry on a non-NIGHTLY `AssetType` is silently inert, not an error — there was no clean way to reject it at the schema level without also blocking legitimate future reuse, and it's a data-configuration mistake, not a reachable user flow.
 - **Superseded by Session 23** — a console UI to create/edit `AssetType.pricing` and add `Asset` units now exists (`/catalog-setup`, `apps/api/src/catalog/`). Two real gaps remain from that session's scope: the form doesn't expose `seasonalRates` at all (a tenant wanting peak-season overrides still needs a direct `psql`/API call — the schema and math both already support it, Session 18, just no UI), and there's no console UI to create/edit `Location` rows either (same seed-data-only gap, one level up — `createAsset` requires an existing `locationId`). Neither blocks the base price/deposit/admin-fee/publish workflow Session 23 actually verified end-to-end.
