@@ -14,6 +14,7 @@ const CSV_COLUMNS = {
   invoices: ["invoiceNumber", "status", "customer", "issueDate", "dueDate", "subtotal", "taxAmount", "totalAmount", "supersededByInvoiceId"],
   payments: ["invoiceNumber", "provider", "method", "status", "amount", "paidAt", "createdAt"],
   ledger: ["date", "account", "entryType", "amount", "currency", "referenceType", "referenceId", "description"],
+  contracts: ["contractId", "rentalOrderId", "bookingId", "customer", "periodStart", "periodEnd", "esignProvider", "esignStatus", "signedAt", "documentUrl"],
 } as const;
 
 @ApiTags("reporting")
@@ -86,6 +87,14 @@ export class ReportingController {
   async exportLedger(@CurrentTenantId() tenantId: string, @Res() res: Response, @Query("from") from?: string, @Query("to") to?: string) {
     const rows = await this.reporting.exportLedger(tenantId, this.parseDate(from), this.parseDate(to));
     this.sendCsv(res, "ledger.csv", toCsv(rows, CSV_COLUMNS.ledger));
+  }
+
+  /** #37 — contract bundle export (metadata CSV; PDF-zip deferred until real signed docs). */
+  @Get("export/contracts.csv")
+  @RequireCapability("run_reports")
+  async exportContracts(@CurrentTenantId() tenantId: string, @Res() res: Response, @Query("from") from?: string, @Query("to") to?: string) {
+    const rows = await this.reporting.exportContracts(tenantId, this.parseDate(from), this.parseDate(to));
+    this.sendCsv(res, "contracts.csv", toCsv(rows, CSV_COLUMNS.contracts));
   }
 
   private parseDate(value?: string): Date | undefined {

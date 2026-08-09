@@ -207,6 +207,40 @@ export class ReportingService {
     });
   }
 
+  /**
+   * BUILD-SPEC #37 — bulk export of contracts (with their order/booking + customer)
+   * by month, for the finance/legal bundle. This is the DATA layer; zipping the
+   * actual signed PDFs is deferred until real signed documents exist (today's
+   * contracts are MockESign-signed with no document bytes) — documented in HANDOFF.
+   */
+  async exportContracts(tenantId: string, from?: Date, to?: Date): Promise<CsvRow[]> {
+    return this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const contracts = await tx.contract.findMany({
+        where: this.dateRangeWhere("createdAt", from, to),
+        include: {
+          booking: { select: { id: true, customer: { select: { fullName: true, phone: true } } } },
+          rentalOrder: { select: { id: true, periodStart: true, periodEnd: true, customer: { select: { fullName: true, phone: true } } } },
+        },
+        orderBy: { createdAt: "asc" },
+      });
+      return contracts.map((c) => {
+        const cust = c.rentalOrder?.customer ?? c.booking?.customer;
+        return {
+          contractId: c.id,
+          rentalOrderId: c.rentalOrderId,
+          bookingId: c.bookingId,
+          customer: cust?.fullName ?? cust?.phone ?? null,
+          periodStart: c.rentalOrder?.periodStart ? c.rentalOrder.periodStart.toISOString() : null,
+          periodEnd: c.rentalOrder?.periodEnd ? c.rentalOrder.periodEnd.toISOString() : null,
+          esignProvider: c.esignProvider,
+          esignStatus: c.esignStatus,
+          signedAt: c.signedAt ? c.signedAt.toISOString() : null,
+          documentUrl: c.documentUrl,
+        };
+      });
+    });
+  }
+
   async exportLedger(tenantId: string, from?: Date, to?: Date): Promise<CsvRow[]> {
     return this.prisma.runInTenantContext(tenantId, async (tx) => {
       const entries = await tx.ledgerEntry.findMany({

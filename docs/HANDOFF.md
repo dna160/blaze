@@ -953,9 +953,11 @@ database-seed + live-verification session, same shape as Session 16).
   3 OTP orders, 0 extra certs); invoice **void #33** (`invoice-void-verify.ts`,
   ledger-balanced); manual **price override #32**; **backdate #34** (`backdate-verify.ts`:
   original VOID + superseded link, replacement ISSUED for shifted period, ledger
-  balanced — no pile-up). All SPV-gated. STILL TO DO: **bulk export contract bundle
-  (#37)** — that's the only remaining R2 item. Mekari stays behind `MockESignProvider`
-  until `MEKARI_*` keys land (`ESIGN_PROVIDER=mekari` selects it).
+  balanced — no pile-up). All SPV-gated. Also DONE: **bulk export by month**
+  (#37) — `GET /reports/export/contracts.csv` (contracts + order/booking + customer +
+  sign status); the actual PDF-zip is deferred until real signed docs exist (today's
+  contracts are MockESign-signed, no bytes). **R2 backend is complete.** Mekari stays
+  behind `MockESignProvider` until `MEKARI_*` keys land (`ESIGN_PROVIDER=mekari`).
 - **R3 — comms/ops.** DONE + verified: **backup + restore-verify** (#50 —
   `infra/backup/dump.sh` + `restore-verify.sh`; drill PASS, ledger balanced on the
   restored copy; RUNBOOK §8 log) and the **forward-occupancy calendar** (#47 —
@@ -970,9 +972,14 @@ database-seed + live-verification session, same shape as Session 16).
   single-env-credential design already means one number for all branches;
   `Organization.messagingConfig` is the override seam, not yet resolved by the provider);
   the onboarding wizard's *console UI*; Railway backup scheduling + object-storage upload;
-  Railway security brief (#51); Google OAuth (#2); business multi-number flow (#3 —
-  `CustomerPhone` table exists, no add-number flow); individual/business storefront forms
-  (#4 — `Customer.type` exists).
+  Railway security brief (#51); Google OAuth (#2 — needs real OAuth creds/flow).
+  Also DONE: **business multi-number (#3) at the service layer** —
+  `CrmService.getOrCreateByPhone` resolves a customer by the canonical phone OR any
+  VERIFIED `CustomerPhone`, plus `addPhone`/`confirmPhone`/`listPhones`; the OTP-confirm
+  wiring into auth + the portal add-number UI remain. Individual/business fields
+  (#4 — `Customer.type`/`companyName`/`taxId` columns exist; the conditional form is
+  storefront UI). **Remaining is now essentially R4 UI + external integrations (Google
+  OAuth, real WA/Mekari keys) + Railway ops wiring.**
 - **R4 — UI + launch.** Mobile-first storefront (#49), remove unit selection UI (#11 —
   backend already ignores customer unit choice), console screens for the new
   rental-order/waitlist/renewal/org-switcher flows, staff training, cutover. No Next.js
