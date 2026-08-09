@@ -92,6 +92,7 @@ export {
 export {
   nextArmedEntry,
   resequencePositions,
+  computeFireExpiry,
   isFireExpired,
   type WaitlistStatus,
   type WaitlistEntryLike,

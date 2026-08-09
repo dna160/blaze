@@ -10,7 +10,9 @@ export {
   markInvoicePaid,
   markInvoiceOverdue,
   createCreditReplacementInvoice,
+  generateRentalOrderInvoice,
   type BookingForInvoicing,
+  type RentalOrderForInvoicing,
   type InvoiceForCredit,
   type InvoiceLineForCredit,
 } from "./invoicing.js";
@@ -23,3 +25,4 @@ export {
   computeLedgerBalance,
 } from "./ledger.js";
 export { computePooledAvailableCount, findAvailablePooledAsset, type PooledAssetType } from "./pooled-availability.js";
+export { fireNextWaitlistEntry } from "./waitlist.js";
