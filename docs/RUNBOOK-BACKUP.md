@@ -5,9 +5,13 @@ delta-register item **#50** and its Gate R3 requirement. Item #51 (Railway secur
 assurance brief) is a related but separate deliverable.
 
 > **#50 is the item the client asked about directly and received no answer.** This
-> runbook is that answer. It is a *plan of record* — the scripts under `infra/backup/`
-> and the `backup-verify.job.ts` worker job are R3 deliverables and do not exist yet.
-> A backup strategy that has never restored is not a backup; see §5.
+> runbook is that answer. The dump + restore-drill scripts now EXIST and have been
+> run: `infra/backup/dump.sh` (custom-format compressed dump + TOC integrity check +
+> retention) and `infra/backup/restore-verify.sh` (restore the latest dump into a
+> throwaway scratch DB, assert core tables populated AND the ledger balances, drop
+> the scratch DB). Drill log in §8 records a live PASS. Still to wire: scheduling
+> these on Railway (cron/pre-deploy) and the object-storage upload of the dump; the
+> optional `backup-verify.job.ts` worker wrapper is not yet added.
 
 ---
 
@@ -112,4 +116,4 @@ Record every drill (automated failures worth noting, and every manual drill) her
 
 | Date | Type (auto/manual) | Source backup | Restore time | Ledger balanced? | Result | Run by |
 |---|---|---|---|---|---|---|
-| _pending_ | _—_ | _—_ | _—_ | _—_ | _—_ | _—_ |
+| 2026-08-09 | manual (first drill) | `rentos-20260809T101501Z.dump` (local PG16) | <2s | ✅ DEBIT=CREDIT=3,496,500 | **PASS** | Session 20/21 (`infra/backup/restore-verify.sh`) |
