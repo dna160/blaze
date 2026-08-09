@@ -107,13 +107,18 @@ production.
 | Field | Value |
 |---|---|
 | Question (B3) | Will B2B counterparties accept order-level OTP acceptance under a signed master agreement? |
-| Counsel (name / firm) | _pending_ |
-| Date asked | _pending_ |
-| Date answered | _pending_ |
-| Decision | _pending_ — one of: APPROVED · APPROVED WITH CONDITIONS · REJECTED |
-| Conditions (if any) | _pending_ |
-| If REJECTED — repriced running-cost line item | _pending_ |
-| Recorded by | _pending_ |
+| Counsel (name / firm) | Client-side (relayed via client, 2026-08-09) |
+| Date answered | 2026-08-09 |
+| Decision | **APPROVED** — order-level OTP acceptance under a signed master is acceptable |
+| Conditions (if any) | None recorded. B9: **no e-Meterai** — signature only. |
+| If REJECTED — repriced running-cost line item | n/a (approved) |
+| Recorded by | Session 20 (this remediation session) |
+
+> Consequence for the build: the §2 structure (master signed once + per-order OTP
+> acceptance) stands. e-Meterai is **out of scope** (B9). The `OrderAcceptance`
+> model (schema, landed R0/R1) records the evidence bundle; the Mekari Sign adapter
+> behind the existing `ESignProvider` port is the R2 task, with `MockESignProvider`
+> as the default until sandbox keys land.
 
 **On REJECTED:** switch the order path to certified-signature-per-order, update the
 commercial quotation's running-cost line, and record the change in `docs/HANDOFF.md`

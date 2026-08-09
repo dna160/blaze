@@ -7,10 +7,14 @@ wins. The single in-code source of truth must be
 `apps/api/src/auth/rbac/capability.matrix.ts` — that file and this document must
 stay in lockstep; changing one without the other is a defect.
 
-Status: **specification only.** As of this writing the codebase still has the flat
-`GlobalRole` enum (`PLATFORM_ADMIN SUPER_ADMIN OPS_ADMIN FINANCE_ADMIN VIEWER`) and
-a `UserRole` model with no scope column. This document defines the target of the R0
-remediation, not the current state.
+Status: **IMPLEMENTED (R0, 2026-08-09).** The flat `GlobalRole` enum is gone;
+`UserRole` is now `{ role: BaseRole, scope: RoleScope, tenantIds[] }`. The
+authoritative matrix is pure code in `packages/domain/src/rbac/capability-matrix.ts`
+(re-exported by `apps/api/src/auth/rbac/capability.matrix.ts`), enforced by
+`CapabilityGuard` + `@RequireCapability`, and verified cell-by-cell in
+`packages/domain/test/rbac.test.ts` (23 tests). Keep this file and that matrix in
+lockstep. Note: one capability beyond the original spec table was added —
+`fire_waitlist` (ADMIN + SUPERVISOR), per B10 ("an SPV is enough to approve").
 
 ---
 

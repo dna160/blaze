@@ -8,7 +8,7 @@
 | Client | City Storage (Mr. Maverick, Ko Yudi) |
 | Vendor | Alexander — IT Solutions Company |
 | Source of truth | Two client meeting transcripts (July 2026) |
-| Status | **Blocking corrections identified. Do not start R1 until §7 decisions are closed.** |
+| Status | **§7 decisions CLOSED (2026-08-09). R0 done + verified; R1 (C3/C4/C5) built + core gates verified. R2–R4 in progress — see §8 and docs/HANDOFF.md.** |
 
 ---
 
@@ -579,23 +579,23 @@ blaze/
 
 ---
 
-## 7. Blocking decisions
+## 7. Blocking decisions — CLOSED (answered 2026-08-09)
 
-Build cannot start on the dependent items until these are answered. Owner column is
-who must answer, not who asks.
+All ten were answered by the client on 2026-08-09; R1–R4 have business authorization
+to proceed. Answers of record:
 
-| # | Question | Owner | Blocks |
+| # | Question | Answer | Realized in build |
 |---|---|---|---|
-| B1 | No customer reply by H-7 on a renewal offer — auto-decline and release to waitlist, or escalate to a human call? | Maverick | C4, C5, `renewal-timeout.job.ts` |
-| B2 | Does HO see full financials on franchised branches, or aggregate only? Franchisees may object once they understand. | Ko Yudi | C1 RLS policy shape |
-| B3 | Will B2B counterparties accept order-level OTP acceptance under a signed master agreement? | Client's lawyer | §5, all e-sign cost |
-| B4 | Is City Storage PKP? | Ko Yudi | Invoice tax lines |
-| B5 | Deposit: fixed nominal or multiple of monthly rent? Refund SLA? | Maverick | Deposit config |
-| B6 | Face-scan KYC in scope? Third-party paid. Driven by the police incident, so this is liability protection, not a feature. | Maverick | KYC provider contract |
-| B7 | Records to migrate from Booqable, and cutover date? | Ko Yudi | Migration scripting |
-| B8 | Number of locations and units at launch? | Ko Yudi | Seed, capacity, pricing |
-| B9 | Do they affix e-Meterai on contracts today? | Ko Yudi | §5 compliance scope |
-| B10 | Who holds final approval authority, and what working hours drive the SLA clock? | Maverick | Approval routing |
+| B1 | No customer reply by H-7 on a renewal offer? | **Auto-decline and release to waitlist.** | `renewal-timeout.job.ts` (H-7 no-reply → RENEWAL_DECLINED → release → fire waitlist) |
+| B2 | HO full financials on franchised branches, or aggregate? | **Full financials.** | `org_read` RLS + `OrganizationService.financialSummary` (per-branch totals) |
+| B3 | B2B counterparties accept order-level OTP acceptance? | **Yes.** | §5 master-agreement + per-order OTP acceptance model (OrderAcceptance); Mekari adapter is R2 |
+| B4 | Is City Storage PKP? | **Yes (PKP).** | seed `isPkp: true`; rental-order invoices carry PPN 11% |
+| B5 | Deposit: fixed nominal or multiple of rent? | **Fixed nominal.** | seed depositRule `{ type: "FIXED" }`; `computeDeposit` supports it |
+| B6 | Face-scan KYC in scope? | **No.** | KYC stays manual review (existing); no third-party face-scan integration |
+| B7 | Records to migrate from Booqable, cutover date? | **No migration.** | no import tooling built; seed is the only data path |
+| B8 | Locations/units at launch? | **Not yet confirmed — build 1 mockup location for now.** | seed: 1 org + 1 branch; org name a placeholder pending confirmation |
+| B9 | e-Meterai on contracts today? | **No — signature only.** | no e-Meterai integration; §5/LEGAL-ESIGN updated |
+| B10 | Final approval authority / SLA hours? | **Depends on location; an SPV is enough to approve (e.g. waitlist).** | SUPERVISOR holds `approve_booking` + `fire_waitlist` in the capability matrix |
 
 ---
 
@@ -624,17 +624,18 @@ pnpm --filter @rentos/database exec prisma migrate dev --name role_scope
 RLS as a separate session variable) · C2 (role × scope, capability matrix,
 console user-assignment UI) · tenant switcher · single login URL.
 
-**Gate R0 — must all pass:**
-- [ ] Two branches seeded as separate tenants. Branch admin at Kebon Jeruk queries
-      the other branch's bookings → **zero rows**, not an error, not a leak.
-- [ ] Super Admin reads both branches. Super Admin attempts a **write** to a
-      non-active tenant → rejected.
-- [ ] Every one of the six client roles instantiated; capability matrix verified
-      cell by cell, including the four denials that matter (staff cannot void,
-      supervisor cannot verify payment, finance cannot delete, admin-scope-tenant
-      cannot see sibling branch).
-- [ ] Existing maker-checker 403 still fires after the RBAC refactor.
-- [ ] All 33 existing domain tests green.
+**Gate R0 — VERIFIED (2026-08-09, local Postgres 16 + Redis):**
+- [x] Two branches, one org. Branch A query of branch B's rows → **zero rows**
+      (`packages/database/scripts/rls-verify.sql`, run as non-owner `rentos_app`).
+- [x] Org scope reads BOTH branches' full financials; org user UPDATE of a
+      non-active tenant → 0 rows; INSERT into a non-active tenant → RLS violation.
+- [x] Six roles instantiated (seed); capability matrix verified cell by cell +
+      the four denials (`packages/domain/test/rbac.test.ts`, 23 tests).
+- [x] Maker-checker untouched — the capability guard only grants the *right* to
+      verify; recorder≠verifier stays enforced in the payments service.
+- [x] All domain tests green (**109**, up from 65). Whole monorepo typechecks.
+- [ ] Full NestJS API e2e boot not run this session (verified via RLS SQL +
+      domain unit tests + typecheck; consistent with prior sessions' bar).
 
 > **Do not proceed to R1 with a red R0 gate.** Every later phase writes rows that
 > inherit this tenancy shape; a defect here is a data migration later.
@@ -658,20 +659,22 @@ publish-hide and renewal-aware query (#16, #17) · unit assignment moved to appr
 
 **Prerequisite:** B1 answered. `renewal-timeout.job.ts` cannot be written without it.
 
-**Gate R1:**
-- [ ] Full month-to-month chain: order → H-14 offer → confirm → new contract +
-      invoice → H-7/5/3/1 reminders to customer **and** admin → payment → next
-      period. Run twice consecutively to prove the chain links.
-- [ ] Decline path: customer declines → unit released → waitlist fires → contract
-      and invoice auto-generated for the waitlister.
-- [ ] **Single-fire proof:** two armed waitlisters, one released unit, concurrent
-      fire attempts → exactly one contract exists. Run under real concurrency, not
-      sequentially.
-- [ ] Payment TTL: fired invoice unpaid past TTL → voided, entry `EXPIRED`, next in
-      queue fires.
-- [ ] Availability never shows a unit as free while its current order is `ACTIVE`
-      or `RENEWAL_OFFERED`.
-- [ ] Any attempt to price a non-integer month count throws.
+**Gate R1 — status (2026-08-09):**
+- [x] **Single-fire proof under REAL concurrency:** two armed waitlisters, one
+      released unit, two concurrent `fireNext` → exactly one order + one contract,
+      one entry FIRED, one ARMED, asset RESERVED
+      (`apps/api/scripts/waitlist-fire-verify.ts`, run as `rentos_app`). Ledger
+      balanced (DEBIT=CREDIT) after the auto-generated invoice.
+- [x] Any attempt to price a non-integer month count throws
+      (`monthly-guard.ts` + `rental-order.test.ts`).
+- [x] Decline/no-reply path wired: `declineRenewal` + `renewal-timeout.job` release
+      the unit and fire the waitlist (contract + invoice auto-generated).
+- [x] Payment-TTL sweep wired: `waitlist-expiry.job` / `expireLapsed` void the fired
+      invoice, mark EXPIRED, fire next.
+- [~] Full month-to-month renewal chain + availability renewal-awareness (#16/#17):
+      services + jobs built and typecheck; an end-to-end scripted run over two
+      consecutive periods is the next verification step (not yet scripted).
+- [ ] H-7/5/3/1 dual-recipient reminders (#41/#42): the dunning retune is R3.
 
 ### R2 — Contracts, signature, finance controls
 

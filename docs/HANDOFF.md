@@ -877,13 +877,106 @@ database-seed + live-verification session, same shape as Session 16).
 > **[`docs/RUNBOOK-BACKUP.md`](./RUNBOOK-BACKUP.md)** (#50 — the backup answer the
 > client asked for and never got).
 >
-> **Session 20 did NOT write any remediation code.** It landed the spec and companion
-> docs as the source of truth only — deliberately: the R0+ gates need real-infra
-> verification this sandbox can't provide (egress-blocked, Docker unverified — see
-> below), and most of R1+ is blocked on B1–B10. Longest-lead external dependency is
-> **Meta business verification** (§8 R3 note: NPWP/NIB + ~2 days) — start it now
-> regardless of everything else. Everything below this box describes the pre-spec
-> state (PRD Phases 0–4) and remains accurate as *what is built*.
+> **Session 20/21 status (2026-08-09): §7 decisions CLOSED, R0 done + verified, R1
+> built + core-verified.** The client answered B1–B10 (see BUILD-SPEC §7) and
+> authorized R1–R4. This sandbox turned out to HAVE local Postgres 16 + Redis, so
+> the schema/RLS work was verified live (unlike the egress-blocked prior sessions).
+> See the **"Session 20/21 — Remediation R0 + R1"** log entry below for the full
+> evidence and the precise remaining-work list (R2 finance/e-sign, R3 comms/ops/
+> backup, R4 UI). Longest-lead external dependency remains **Meta business
+> verification** (NPWP/NIB + ~2 days) — start it now. Everything below the session
+> log describes the pre-spec state (PRD Phases 0–4) and remains accurate as prior
+> context.
+>
+> **Verification quick-reference (re-runnable):**
+> ```
+> # from repo root, with local PG (rentos db, postgres trust) + rentos_app role:
+> export DATABASE_URL=postgresql://postgres@localhost:5432/rentos?schema=public
+> export DATABASE_URL_APP=postgresql://rentos_app:changeme_in_production@localhost:5432/rentos?schema=public
+> pnpm --filter @rentos/database exec prisma migrate deploy   # 8 migrations, clean
+> pnpm --filter @rentos/domain test                           # 109 tests
+> psql -h localhost -U postgres -d rentos -f packages/database/scripts/rls-verify.sql  # C1 RLS
+> JWT_SECRET=x pnpm --filter @rentos/database exec tsx apps/api/scripts/waitlist-fire-verify.ts  # C5 single-fire
+> ```
+
+### Session 20/21 — Remediation R0 + R1 (2026-08-09)
+
+**What's proven (live against local Postgres 16 + Redis):**
+
+- **C1 (org → tenant + org-read RLS).** New `organizations` table, `Tenant.organizationId`,
+  `Location`/`Asset.locationId` made optional. Cross-tenant HO reads go through a
+  SEPARATE `app.organization_id` session var + a `FOR SELECT` `org_read` policy
+  (migration `20260809120100`), OR'd with `tenant_isolation` for reads only — the
+  write `WITH CHECK` is never widened. Hardened `tenant_isolation` to a NULL-tolerant
+  cast (`20260809120200`) so a reused pooled connection with no tenant context returns
+  zero rows, not a `uuid: ""` error. `withOrgReadContext()` added to `@rentos/database`
+  (mirror of `withTenantContext`, read-only). **Evidence:** `packages/database/scripts/rls-verify.sql`
+  as `rentos_app` — tenant A sees only A; no-context = 0 rows; org scope sees BOTH
+  branches' full financials (B2); org UPDATE of non-active tenant = 0 rows; INSERT into
+  non-active tenant = RLS violation.
+- **C2 (role × scope RBAC).** `UserRole` is now `{ role: BaseRole, scope: RoleScope, tenantIds[] }`.
+  Authoritative capability matrix is **pure code in `packages/domain/src/rbac/capability-matrix.ts`**
+  (single source; `docs/RBAC.md` mirrors it; `apps/api/src/auth/rbac/capability.matrix.ts`
+  re-exports). New `@RequireCapability` + `CapabilityGuard` (+ `StaffGuard`); all 10
+  controllers converted off `@Roles`/`RolesGuard` (both deleted). JWT carries
+  `organizationId` + `roleAssignments`. **Maker-checker preserved verbatim** — the guard
+  only grants the *right* to verify. **Evidence:** `packages/domain/test/rbac.test.ts`
+  (23 tests: every matrix cell + the four denials + scope).
+- **C3 (monthly-only).** `monthly-guard.ts`: `wholeMonthsBetween`/`assertWholeMonths`
+  throw `NonIntegerMonthError`; `assertBillingUnitAllowed` gates DAILY/WEEKLY behind
+  `featureFlags.allowSubMonthly` (off). Rental-order invoices are whole-month, no proration.
+- **C4 (RentalOrder + renewal).** `RentalOrder`/`RentalOrderEvent`/`OrderAcceptance` +
+  FSM (`rental-order-fsm.ts`). `RentalOrderService`: create (customer picks TYPE+months,
+  not a unit — #11), approve (assign unit + issue mock-signed contract + first invoice
+  incl. deposit), markPaidAndActivate (two-gate), offerRenewal (H-14), confirmRenewal
+  (spawns successor in the renewal chain), declineRenewal (release + fire waitlist).
+  Worker: `renewal-offer.job` (H-14), `renewal-timeout.job` (B1: H-7 no-reply → decline
+  → release → fire).
+- **C5 (waitlist).** `WaitlistEntry` + `waitlist-rules.ts` (pure) + shared
+  `fireNextWaitlistEntry()` in `@rentos/database` (single source used by the API service
+  AND the worker jobs — no drift). Single-fire via `SELECT ... FOR UPDATE` on the asset.
+  Worker: `waitlist-expiry.job` (hourly TTL sweep → void + EXPIRED + fire next).
+  **Evidence:** `apps/api/scripts/waitlist-fire-verify.ts` — two concurrent fires on one
+  released unit → exactly 1 order/1 contract/1 FIRED/1 ARMED, asset RESERVED, **ledger
+  balanced** (DEBIT=CREDIT).
+- **#30/#31/#32 pricing** (`pricing/discounts.ts`): bundle + duration + manual override,
+  composed base→bundle→duration→override. Tested (`discounts.test.ts`).
+- Seed rewritten: City Storage org + 1 mockup branch (B8) + the six role×scope users +
+  catalog + signed master agreement + one active rental order.
+- **8 migrations apply clean via `prisma migrate deploy`, zero drift; 109 domain tests
+  pass; all 7 packages typecheck.**
+
+**What is NOT done yet (remaining R2–R4, precise):**
+
+- **R2 — finance controls + e-sign.** Schema is ready (`MasterAgreement`,
+  `OrderAcceptance`, `Invoice.voidedByUserId`/`voidReason`, discount tiers in pricing),
+  but the *services* are not built: invoice void (#33, gate `void_invoice`), backdate +
+  supersede (#34), price-override recording (#32 — domain math exists, no service/audit
+  wiring), bulk export contract bundle (#37), master-agreement + order-acceptance OTP
+  services, and the **Mekari Sign adapter** behind `ESignProvider` (still
+  `MockESignProvider`; rental-order/waitlist contracts are auto-created as MOCK-signed).
+- **R3 — comms/ops.** Dunning retune to H-7/5/3/1 **dual-recipient** (#41/#42 — schema
+  has `Notification.recipientRole`, job not retuned); org-level single WA number (#40 —
+  `Organization.messagingConfig` exists, not wired into the provider); forward-occupancy
+  calendar (#47); branch onboarding wizard (#45); **backup + restore-verify scripts/job**
+  (#50 — see RUNBOOK-BACKUP.md, `infra/backup/` not created); Railway brief (#51); Google
+  OAuth (#2); business multi-number flow (#3 — `CustomerPhone` table exists, no add-number
+  flow); individual/business storefront forms (#4 — `Customer.type` exists).
+- **R4 — UI + launch.** Mobile-first storefront (#49), remove unit selection UI (#11 —
+  backend already ignores customer unit choice), console screens for the new
+  rental-order/waitlist/renewal/org-switcher flows, staff training, cutover. No Next.js
+  UI was changed this session.
+- **Verification gaps to close next:** a scripted end-to-end renewal chain over two
+  consecutive periods; availability query renewal-awareness (#16/#17); full NestJS API
+  e2e boot (this session verified via RLS SQL + domain tests + the waitlist concurrency
+  script + typecheck, not a running API).
+
+**Local infra note:** this sandbox runs Postgres 16 (`/usr/lib/postgresql/16`, cluster
+under `/home/pg/pgdata`, unprivileged `pg` user, port 5432, trust auth) + Redis. The
+`rentos_app` role is created by the `enable_rls` migration. Docker/Railway still
+unverified (unchanged from prior sessions).
+
+---
 
 **Phase 2 is complete. Phase 3 is complete** — every named item on PRD
 §13's Phase 3 list is done: NIGHTLY (Session 14) and DURATION_ORDER
