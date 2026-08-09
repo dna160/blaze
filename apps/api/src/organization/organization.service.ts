@@ -1,6 +1,6 @@
-import { ForbiddenException, Injectable } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable } from "@nestjs/common";
 import { withOrgReadContext } from "@rentos/database";
-import { hasOrganizationScope } from "@rentos/domain";
+import { can, hasOrganizationScope } from "@rentos/domain";
 
 import { PrismaService } from "../prisma/prisma.service.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
@@ -67,5 +67,48 @@ export class OrganizationService {
       }
       return { organizationId: orgId, branches: byTenant };
     });
+  }
+
+  /**
+   * BUILD-SPEC #45 — branch onboarding wizard (backend). Provisions a NEW,
+   * EMPTY branch (Tenant) under the caller's organization. Requires an
+   * ORGANIZATION-scoped role holding manage_users (a Super Admin). The new
+   * branch starts empty — no assets, no customers — ready for the catalog to be
+   * built up. Supports B8 (one mockup now, more branches once confirmed) and the
+   * verbally-promised "unlimited tenants" without a code change per branch.
+   *
+   * `tenants` is the bootstrap registry (not RLS-scoped), so this is a safe raw
+   * write filtered to the caller's own org — a branch can only be created under
+   * the org the caller belongs to.
+   */
+  async provisionBranch(
+    user: AuthenticatedUser,
+    params: { slug: string; name: string; timezone?: string; isPkp?: boolean; primaryDomain?: string; locationAddress?: string },
+  ) {
+    const orgId = this.assertOrgScope(user);
+    if (!can(user.roleAssignments, "manage_users")) {
+      throw new ForbiddenException("Provisioning a branch requires an admin (manage_users) role.");
+    }
+    if (!/^[a-z0-9-]{3,}$/.test(params.slug)) {
+      throw new BadRequestException("slug must be lowercase alphanumeric/dashes, min 3 chars.");
+    }
+
+    const existing = await this.prisma.raw.tenant.findUnique({ where: { slug: params.slug } });
+    if (existing) throw new BadRequestException(`A branch with slug "${params.slug}" already exists.`);
+
+    const tenant = await this.prisma.raw.tenant.create({
+      data: {
+        organizationId: orgId,
+        slug: params.slug,
+        name: params.name,
+        isPkp: params.isPkp ?? false,
+        timezone: params.timezone ?? "Asia/Jakarta",
+        // Monthly-only + bank-transfer/card defaults (C3, #27) match the org's storage vertical.
+        featureFlags: { allowSubMonthly: false, paymentMethods: ["MANUAL_TRANSFER", "CARD"], deposits_enabled: true, kyc_required: true, contract_required: true },
+        ...(params.primaryDomain ? { domains: { create: { domain: params.primaryDomain, isPrimary: true } } } : {}),
+        ...(params.locationAddress ? { locations: { create: { name: params.name, address: params.locationAddress } } } : {}),
+      },
+    });
+    return { id: tenant.id, slug: tenant.slug, name: tenant.name, organizationId: orgId };
   }
 }

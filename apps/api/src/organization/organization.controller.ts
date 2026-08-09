@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Post, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
@@ -24,5 +24,14 @@ export class OrganizationController {
   @Get("financials")
   financials(@CurrentUser() user: AuthenticatedUser) {
     return this.organization.financialSummary(user);
+  }
+
+  /** #45 — onboard a new empty branch under the org (org-scoped admin only). */
+  @Post("branches")
+  provision(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: { slug: string; name: string; timezone?: string; isPkp?: boolean; primaryDomain?: string; locationAddress?: string },
+  ) {
+    return this.organization.provisionBranch(user, body);
   }
 }

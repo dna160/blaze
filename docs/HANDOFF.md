@@ -963,13 +963,16 @@ database-seed + live-verification session, same shape as Session 16).
   per #17; live-checked against seed). Also DONE: **dunning retune to
   H-7/5/3/1 dual-recipient (#41/#42)** — `dunning-ladder.job` now reminds the customer
   AND the branch admin (`tenant.featureFlags.adminNotifyRecipient`), each with its own
-  dedupe; `notify()` carries `recipientRole`. STILL TO DO: org-level single WA number
-  (#40 — the current single-env-credential design already means one number for all
-  branches; `Organization.messagingConfig` is the override seam, not yet resolved by the
-  provider); branch onboarding wizard (#45); Railway backup scheduling + object-storage
-  upload; Railway security brief (#51); Google OAuth (#2); business multi-number flow
-  (#3 — `CustomerPhone` table exists, no add-number flow); individual/business
-  storefront forms (#4 — `Customer.type` exists).
+  dedupe; `notify()` carries `recipientRole`. Also DONE: **branch onboarding
+  (#45, backend)** — `OrganizationService.provisionBranch` + `POST /organization/branches`
+  creates a new empty branch under the org (org-scoped admin only); clean-slate
+  migrate+seed re-verified. STILL TO DO: org-level single WA number (#40 — the current
+  single-env-credential design already means one number for all branches;
+  `Organization.messagingConfig` is the override seam, not yet resolved by the provider);
+  the onboarding wizard's *console UI*; Railway backup scheduling + object-storage upload;
+  Railway security brief (#51); Google OAuth (#2); business multi-number flow (#3 —
+  `CustomerPhone` table exists, no add-number flow); individual/business storefront forms
+  (#4 — `Customer.type` exists).
 - **R4 — UI + launch.** Mobile-first storefront (#49), remove unit selection UI (#11 —
   backend already ignores customer unit choice), console screens for the new
   rental-order/waitlist/renewal/org-switcher flows, staff training, cutover. No Next.js
