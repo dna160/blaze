@@ -32,11 +32,33 @@ export class AuthService {
     const valid = await compare(password, user.passwordHash);
     if (!valid) throw new UnauthorizedException("Invalid credentials.");
 
-    const roles = user.roles.map((r) => r.role);
-    const accessToken = await this.jwt.signAsync({ sub: user.id, tenantId: tenant.id, kind: "STAFF", roles });
+    // BUILD-SPEC C2 — carry full role × scope assignments in the token so the
+    // CapabilityGuard can authorize per-tenant without a DB round-trip.
+    const roleAssignments = user.roles.map((r) => ({
+      role: r.role,
+      scope: r.scope,
+      tenantIds: r.tenantIds,
+    }));
+    const roles = roleAssignments.map((r) => r.role);
+    const accessToken = await this.jwt.signAsync({
+      sub: user.id,
+      tenantId: tenant.id,
+      organizationId: tenant.organizationId,
+      kind: "STAFF",
+      roles,
+      roleAssignments,
+    });
     return {
       accessToken,
-      user: { id: user.id, tenantId: tenant.id, email: user.email, displayName: user.displayName, roles },
+      user: {
+        id: user.id,
+        tenantId: tenant.id,
+        organizationId: tenant.organizationId,
+        email: user.email,
+        displayName: user.displayName,
+        roles,
+        roleAssignments,
+      },
     };
   }
 
@@ -65,8 +87,10 @@ export class AuthService {
     const accessToken = await this.jwt.signAsync({
       sub: customer.id,
       tenantId: tenant.id,
+      organizationId: tenant.organizationId,
       kind: "CUSTOMER",
       roles: ["CUSTOMER"],
+      roleAssignments: [],
     });
     return {
       accessToken,

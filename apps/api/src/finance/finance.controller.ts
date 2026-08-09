@@ -5,8 +5,9 @@ import { CreateCreditNoteRequestSchema } from "@rentos/contracts";
 import { CurrentTenant, CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
-import { Roles } from "../common/decorators/roles.decorator.js";
-import { RolesGuard } from "../common/guards/roles.guard.js";
+import { RequireCapability } from "../common/decorators/require-capability.decorator.js";
+import { CapabilityGuard } from "../common/guards/capability.guard.js";
+import { StaffGuard } from "../common/guards/staff.guard.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
@@ -33,23 +34,21 @@ export class FinanceController {
 
   /** Console: AR list / finance module (PRD §7.2.4). */
   @Get()
-  @UseGuards(RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN", "VIEWER")
+  @UseGuards(StaffGuard)
   list(@CurrentTenantId() tenantId: string, @Query("status") status?: string) {
     return this.finance.listInvoices(tenantId, { status });
   }
 
   @Get(":id/credit-notes")
-  @UseGuards(RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN", "VIEWER")
+  @UseGuards(StaffGuard)
   listCreditNotes(@CurrentTenantId() tenantId: string, @Param("id") id: string) {
     return this.finance.listCreditNotesForInvoice(tenantId, id);
   }
 
   /** PRD Appendix C RBAC: "Issue credit notes / refunds" — Super Admin, Finance Admin only. */
   @Post(":id/credit-notes")
-  @UseGuards(RolesGuard)
-  @Roles("SUPER_ADMIN", "FINANCE_ADMIN")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("void_invoice", "approve_deposit_refund")
   createCreditNote(
     @CurrentTenant() tenant: ResolvedTenant,
     @CurrentUser() user: AuthenticatedUser,

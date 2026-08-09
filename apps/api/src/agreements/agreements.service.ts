@@ -133,7 +133,9 @@ export class AgreementsService {
       }),
     );
 
-    if (event.status === "SIGNED") {
+    if (event.status === "SIGNED" && contract.bookingId) {
+      // Legacy booking-based activation. RentalOrder contracts (bookingId null)
+      // are activated via the rental-order/renewal service, not this path.
       await this.booking.tryActivateAfterContractSigned(tenant, contract.bookingId);
     }
     return { status: "processed" };

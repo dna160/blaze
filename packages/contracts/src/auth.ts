@@ -7,14 +7,29 @@ export const ConsoleLoginRequestSchema = z.object({
 });
 export type ConsoleLoginRequest = z.infer<typeof ConsoleLoginRequestSchema>;
 
+/** BUILD-SPEC C2 — role × scope. Mirrors Prisma BaseRole/RoleScope + UserRole. */
+export const BaseRoleSchema = z.enum(["ADMIN", "FINANCE", "SUPERVISOR", "STAFF"]);
+export type BaseRoleName = z.infer<typeof BaseRoleSchema>;
+
+export const RoleScopeSchema = z.enum(["ORGANIZATION", "TENANT"]);
+export type RoleScopeName = z.infer<typeof RoleScopeSchema>;
+
+export const RoleAssignmentSchema = z.object({
+  role: BaseRoleSchema,
+  scope: RoleScopeSchema,
+  tenantIds: z.array(z.string().uuid()),
+});
+export type RoleAssignmentDto = z.infer<typeof RoleAssignmentSchema>;
+
 export const SessionUserSchema = z.object({
   id: z.string().uuid(),
   tenantId: z.string().uuid().nullable(),
+  organizationId: z.string().uuid().nullable(),
   email: z.string().email(),
   displayName: z.string().nullable(),
-  roles: z.array(
-    z.enum(["PLATFORM_ADMIN", "SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN", "VIEWER"]),
-  ),
+  /** Base role names (or ["CUSTOMER"]). */
+  roles: z.array(z.string()),
+  roleAssignments: z.array(RoleAssignmentSchema),
 });
 export type SessionUser = z.infer<typeof SessionUserSchema>;
 

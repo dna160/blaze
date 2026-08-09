@@ -4,8 +4,8 @@ import type { Response } from "express";
 
 import { CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
-import { Roles } from "../common/decorators/roles.decorator.js";
-import { RolesGuard } from "../common/guards/roles.guard.js";
+import { RequireCapability } from "../common/decorators/require-capability.decorator.js";
+import { CapabilityGuard } from "../common/guards/capability.guard.js";
 
 import { toCsv } from "./csv.util.js";
 import { ReportingService } from "./reporting.service.js";
@@ -18,8 +18,8 @@ const CSV_COLUMNS = {
 
 @ApiTags("reporting")
 @Controller("reports")
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles("SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN", "VIEWER")
+@UseGuards(JwtAuthGuard, CapabilityGuard)
+@RequireCapability("run_reports")
 export class ReportingController {
   constructor(private readonly reporting: ReportingService) {}
 
@@ -40,7 +40,7 @@ export class ReportingController {
 
   /** PRD Appendix C: Reports are "limited" for Ops Admin — month-end close and accounting export are finance-only. */
   @Get("month-end")
-  @Roles("SUPER_ADMIN", "FINANCE_ADMIN", "VIEWER")
+  @RequireCapability("run_reports")
   monthEnd(@CurrentTenantId() tenantId: string, @Query("year") year?: string, @Query("month") month?: string) {
     const now = new Date();
     return this.reporting.monthEndClose(
@@ -51,21 +51,21 @@ export class ReportingController {
   }
 
   @Get("export/invoices.csv")
-  @Roles("SUPER_ADMIN", "FINANCE_ADMIN", "VIEWER")
+  @RequireCapability("run_reports")
   async exportInvoices(@CurrentTenantId() tenantId: string, @Res() res: Response, @Query("from") from?: string, @Query("to") to?: string) {
     const rows = await this.reporting.exportInvoices(tenantId, this.parseDate(from), this.parseDate(to));
     this.sendCsv(res, "invoices.csv", toCsv(rows, CSV_COLUMNS.invoices));
   }
 
   @Get("export/payments.csv")
-  @Roles("SUPER_ADMIN", "FINANCE_ADMIN", "VIEWER")
+  @RequireCapability("run_reports")
   async exportPayments(@CurrentTenantId() tenantId: string, @Res() res: Response, @Query("from") from?: string, @Query("to") to?: string) {
     const rows = await this.reporting.exportPayments(tenantId, this.parseDate(from), this.parseDate(to));
     this.sendCsv(res, "payments.csv", toCsv(rows, CSV_COLUMNS.payments));
   }
 
   @Get("export/ledger.csv")
-  @Roles("SUPER_ADMIN", "FINANCE_ADMIN", "VIEWER")
+  @RequireCapability("run_reports")
   async exportLedger(@CurrentTenantId() tenantId: string, @Res() res: Response, @Query("from") from?: string, @Query("to") to?: string) {
     const rows = await this.reporting.exportLedger(tenantId, this.parseDate(from), this.parseDate(to));
     this.sendCsv(res, "ledger.csv", toCsv(rows, CSV_COLUMNS.ledger));

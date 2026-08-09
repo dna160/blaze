@@ -19,9 +19,9 @@ import type { Response } from "express";
 
 import { CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
-import { Roles } from "../common/decorators/roles.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
-import { RolesGuard } from "../common/guards/roles.guard.js";
+import { RequireCapability } from "../common/decorators/require-capability.decorator.js";
+import { CapabilityGuard } from "../common/guards/capability.guard.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
 
@@ -62,15 +62,15 @@ export class KycController {
 
   /** PRD §7.2.1 approval workbench context / §8.4 automation A9: staff review queue. */
   @Get("documents")
-  @UseGuards(RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN", "VIEWER")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("approve_booking", "approve_deposit_refund")
   listForReview(@CurrentTenantId() tenantId: string, @Query("status") status?: string) {
     return this.kyc.listForReview(tenantId, { status });
   }
 
   @Get("documents/:id/file")
-  @UseGuards(RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("approve_booking", "approve_deposit_refund")
   async getFile(@CurrentTenantId() tenantId: string, @Param("id") id: string, @Res() res: Response) {
     const result = await this.kyc.getFile(tenantId, id);
     if (result.kind === "redirect") {
@@ -83,8 +83,8 @@ export class KycController {
 
   /** PRD §7.2.1: KYC verification is manual by an ops/finance reviewer in v1. */
   @Post("documents/:id/review")
-  @UseGuards(RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("approve_booking", "approve_deposit_refund")
   review(
     @CurrentTenantId() tenantId: string,
     @CurrentUser() user: AuthenticatedUser,

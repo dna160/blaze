@@ -5,16 +5,15 @@ import { ApproveSwapRequestSchema, CreateSwapRequestSchema, RejectSwapRequestSch
 import { BookingService } from "../booking/booking.service.js";
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
-import { Roles } from "../common/decorators/roles.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
-import { RolesGuard } from "../common/guards/roles.guard.js";
+import { RequireCapability } from "../common/decorators/require-capability.decorator.js";
+import { CapabilityGuard } from "../common/guards/capability.guard.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 
 import { SwapRequestsService } from "./swap-requests.service.js";
 
-const STAFF_ROLES = new Set(["SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN", "VIEWER"]);
 
 @ApiTags("swap-requests")
 @Controller("swap-requests")
@@ -38,8 +37,8 @@ export class SwapRequestsController {
 
   /** Staff approval queue (PRD Appendix C: same roles as the booking approval workbench). */
   @Get()
-  @UseGuards(RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("approve_booking")
   listQueue(@CurrentTenant() tenant: ResolvedTenant, @Query("status") status?: string) {
     return this.swapRequests.listQueue(tenant.id, { status });
   }
@@ -53,15 +52,15 @@ export class SwapRequestsController {
     if (user.kind === "CUSTOMER") {
       const booking = await this.booking.getBooking(tenant.id, bookingId);
       if (booking.customerId !== user.id) throw new ForbiddenException("This booking does not belong to you.");
-    } else if (!user.roles.some((r) => STAFF_ROLES.has(r))) {
+    } else if (user.kind !== "STAFF") {
       throw new ForbiddenException();
     }
     return this.swapRequests.listForBooking(tenant.id, bookingId);
   }
 
   @Post(":id/approve")
-  @UseGuards(RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("approve_booking")
   approve(
     @CurrentTenant() tenant: ResolvedTenant,
     @CurrentUser() user: AuthenticatedUser,
@@ -72,8 +71,8 @@ export class SwapRequestsController {
   }
 
   @Post(":id/reject")
-  @UseGuards(RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("approve_booking")
   reject(
     @CurrentTenant() tenant: ResolvedTenant,
     @CurrentUser() user: AuthenticatedUser,

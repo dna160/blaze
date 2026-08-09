@@ -4,6 +4,8 @@ import { PrismaService } from "../prisma/prisma.service.js";
 
 export interface ResolvedTenant {
   id: string;
+  /** BUILD-SPEC C1 — the Organization this branch belongs to. */
+  organizationId: string;
   slug: string;
   name: string;
   isPkp: boolean;
@@ -52,6 +54,7 @@ export class TenancyService {
 
   private toResolvedTenant(tenant: {
     id: string;
+    organizationId: string;
     slug: string;
     name: string;
     isPkp: boolean;
@@ -61,6 +64,7 @@ export class TenancyService {
   }): ResolvedTenant {
     return {
       id: tenant.id,
+      organizationId: tenant.organizationId,
       slug: tenant.slug,
       name: tenant.name,
       isPkp: tenant.isPkp,

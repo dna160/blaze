@@ -5,8 +5,8 @@ import { ApproveBookingRequestSchema, CreateBookingRequestSchema, GiveNoticeRequ
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
-import { Roles } from "../common/decorators/roles.decorator.js";
-import { RolesGuard } from "../common/guards/roles.guard.js";
+import { RequireCapability } from "../common/decorators/require-capability.decorator.js";
+import { CapabilityGuard } from "../common/guards/capability.guard.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
@@ -41,8 +41,8 @@ export class BookingController {
   }
 
   @Get("pending")
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("approve_booking")
   listPending(@CurrentTenant() tenant: ResolvedTenant) {
     return this.booking.listPendingApproval(tenant.id);
   }
@@ -54,8 +54,8 @@ export class BookingController {
   }
 
   @Post(":id/approve")
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("approve_booking")
   approve(
     @CurrentTenant() tenant: ResolvedTenant,
     @CurrentUser() user: AuthenticatedUser,
@@ -66,8 +66,8 @@ export class BookingController {
   }
 
   @Post(":id/reject")
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("approve_booking")
   reject(
     @CurrentTenant() tenant: ResolvedTenant,
     @CurrentUser() user: AuthenticatedUser,
@@ -79,40 +79,40 @@ export class BookingController {
 
   /** Staff check-in (PRD Appendix B, NIGHTLY): PAID -> CHECKED_IN. */
   @Post(":id/check-in")
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("approve_booking")
   checkIn(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
     return this.booking.checkIn(tenant, id, user.id);
   }
 
   /** Staff check-out (PRD Appendix B, NIGHTLY): CHECKED_IN -> CHECKED_OUT -> CLOSED. */
   @Post(":id/check-out")
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("approve_booking")
   checkOut(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
     return this.booking.checkOut(tenant, id, user.id);
   }
 
   /** Staff pickup (PRD Appendix B, DURATION_ORDER): PAID -> PICKED_UP. */
   @Post(":id/pickup")
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("approve_booking")
   pickUp(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
     return this.booking.pickUp(tenant, id, user.id);
   }
 
   /** Staff return (PRD Appendix B, DURATION_ORDER): PICKED_UP -> RETURNED -> INSPECTION. */
   @Post(":id/return")
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("approve_booking")
   returnEquipment(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
     return this.booking.returnEquipment(tenant, id, user.id);
   }
 
   /** Staff inspection complete (PRD Appendix B, DURATION_ORDER): INSPECTION -> CLOSED. */
   @Post(":id/complete-inspection")
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("approve_booking")
   completeInspection(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
     return this.booking.completeInspection(tenant, id, user.id);
   }
