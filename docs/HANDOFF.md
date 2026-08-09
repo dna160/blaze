@@ -958,13 +958,17 @@ database-seed + live-verification session, same shape as Session 16).
   (schema `MasterAgreement`/`OrderAcceptance` exist), and the **Mekari Sign adapter**
   behind `ESignProvider` (still `MockESignProvider`; rental-order/waitlist contracts
   are auto-created MOCK-signed).
-- **R3 — comms/ops.** Dunning retune to H-7/5/3/1 **dual-recipient** (#41/#42 — schema
-  has `Notification.recipientRole`, job not retuned); org-level single WA number (#40 —
-  `Organization.messagingConfig` exists, not wired into the provider); forward-occupancy
-  calendar (#47); branch onboarding wizard (#45); **backup + restore-verify scripts/job**
-  (#50 — see RUNBOOK-BACKUP.md, `infra/backup/` not created); Railway brief (#51); Google
-  OAuth (#2); business multi-number flow (#3 — `CustomerPhone` table exists, no add-number
-  flow); individual/business storefront forms (#4 — `Customer.type` exists).
+- **R3 — comms/ops.** DONE + verified: **backup + restore-verify** (#50 —
+  `infra/backup/dump.sh` + `restore-verify.sh`; drill PASS, ledger balanced on the
+  restored copy; RUNBOOK §8 log) and the **forward-occupancy calendar** (#47 —
+  `ReportingService.forwardOccupancy` + `GET /reports/forward-occupancy`, renewal-aware
+  per #17; live-checked against seed). STILL TO DO: dunning retune to H-7/5/3/1
+  **dual-recipient** (#41/#42 — schema has `Notification.recipientRole`, job not retuned);
+  org-level single WA number (#40 — `Organization.messagingConfig` exists, not wired into
+  the provider); branch onboarding wizard (#45); Railway scheduling + object-storage
+  upload for the backups; Railway security brief (#51); Google OAuth (#2); business
+  multi-number flow (#3 — `CustomerPhone` table exists, no add-number flow);
+  individual/business storefront forms (#4 — `Customer.type` exists).
 - **R4 — UI + launch.** Mobile-first storefront (#49), remove unit selection UI (#11 —
   backend already ignores customer unit choice), console screens for the new
   rental-order/waitlist/renewal/org-switcher flows, staff training, cutover. No Next.js

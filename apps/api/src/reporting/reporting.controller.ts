@@ -38,6 +38,23 @@ export class ReportingController {
     return this.reporting.bookingFunnel(tenantId);
   }
 
+  /** #47 — forward-occupancy calendar ("which units are empty next month"). */
+  @Get("forward-occupancy")
+  forwardOccupancy(
+    @CurrentTenantId() tenantId: string,
+    @Query("year") year?: string,
+    @Query("month") month?: string,
+  ) {
+    const now = new Date();
+    // Default to next month.
+    const y = year ? Number(year) : now.getUTCMonth() === 11 ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
+    const m = month ? Number(month) : ((now.getUTCMonth() + 1) % 12) + 1;
+    if (!Number.isInteger(y) || !Number.isInteger(m) || m < 1 || m > 12) {
+      throw new BadRequestException("year and month must be valid integers (month 1–12).");
+    }
+    return this.reporting.forwardOccupancy(tenantId, y, m);
+  }
+
   /** PRD Appendix C: Reports are "limited" for Ops Admin — month-end close and accounting export are finance-only. */
   @Get("month-end")
   @RequireCapability("run_reports")

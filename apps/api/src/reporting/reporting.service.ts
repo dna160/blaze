@@ -20,6 +20,49 @@ export class ReportingService {
     });
   }
 
+  /**
+   * BUILD-SPEC #47 — the forward-occupancy calendar ("which units are empty next
+   * month"), the client's favourite screen in the old system. For a target month,
+   * per asset type: total units, how many are held by a rental order overlapping
+   * that month, and how many are free. #17: an order counts as occupying while it
+   * is ACTIVE or RENEWAL_OFFERED (a unit is NOT free until non-renewal is
+   * confirmed), as well as while it is being approved/paid.
+   */
+  async forwardOccupancy(tenantId: string, year: number, month: number) {
+    const monthStart = new Date(Date.UTC(year, month - 1, 1));
+    const monthEnd = new Date(Date.UTC(year, month, 1));
+    const OCCUPYING = ["APPROVED", "AWAITING_PAYMENT", "ACTIVE", "RENEWAL_OFFERED", "RENEWAL_CONFIRMED", "EXPIRING"] as const;
+
+    return this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const assetTypes = await tx.assetType.findMany({ orderBy: { name: "asc" } });
+      const rows = [];
+      for (const at of assetTypes) {
+        const totalUnits = await tx.asset.count({ where: { assetTypeId: at.id, status: { not: "RETIRED" } } });
+        // Distinct units held by an overlapping, occupying order.
+        const orders = await tx.rentalOrder.findMany({
+          where: {
+            assetTypeId: at.id,
+            assetId: { not: null },
+            status: { in: [...OCCUPYING] },
+            periodStart: { lt: monthEnd },
+            periodEnd: { gt: monthStart },
+          },
+          select: { assetId: true },
+          distinct: ["assetId"],
+        });
+        const occupied = orders.length;
+        rows.push({
+          assetTypeId: at.id,
+          assetType: at.name,
+          totalUnits,
+          occupiedNextPeriod: occupied,
+          freeNextPeriod: Math.max(0, totalUnits - occupied),
+        });
+      }
+      return { month: `${year}-${String(month).padStart(2, "0")}`, assetTypes: rows };
+    });
+  }
+
   async arAging(tenantId: string) {
     return this.prisma.runInTenantContext(tenantId, async (tx) => {
       const unpaid = await tx.invoice.findMany({
