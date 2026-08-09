@@ -1,11 +1,22 @@
-// RentOS core data model — PRD Appendix A.
-// Every tenant-owned table carries tenant_id and is protected by a Postgres
-// RLS policy (see prisma/migrations/*_enable_rls/migration.sql). The app
-// connects with a non-owner role so RLS cannot be silently bypassed by
-// table ownership — see docs/HANDOFF.md "RLS enforcement" for the full
-// rationale. Prisma models use camelCase; every column is explicitly
-// @map'd to snake_case so the database itself stays conventional SQL,
+// RentOS core data model — docs/BUILD-SPEC.md (v2.0) supersedes PRD Appendix A
+// where they conflict. Every tenant-owned table carries tenant_id and is
+// protected by a Postgres RLS policy (see prisma/migrations/*_enable_rls and
+// *_org_read_rls). The app connects with a non-owner role so RLS cannot be
+// silently bypassed by table ownership — see docs/HANDOFF.md "RLS enforcement"
+// for the full rationale. Prisma models use camelCase; every column is
+// explicitly @map'd to snake_case so the database itself stays conventional SQL,
 // independent of the ORM.
+//
+// BUILD-SPEC corrections realized here:
+//   C1 — Organization → Tenant(=branch). Tenant.organizationId added; Location
+//        kept as an optional descriptive row; Asset.locationId is now nullable.
+//        Cross-tenant HO reads use a SEPARATE app.organization_id session var
+//        (org_read_rls migration), read paths only. app.tenant_id write policy
+//        is never widened.
+//   C2 — UserRole is role × scope: BaseRole × RoleScope + tenantIds[].
+//   C4 — RentalOrder (discrete, closed-ended monthly agreement) + renewal chain.
+//   C5 — WaitlistEntry (an armed, conditionally-approved booking).
+//   §5 — MasterAgreement (signed once) + OrderAcceptance (per-order OTP record).
 
 generator client {
   provider      = "prisma-client-js"
@@ -26,12 +37,22 @@ datasource db {
 // Enums
 // ---------------------------------------------------------------------------
 
-enum GlobalRole {
-  PLATFORM_ADMIN
-  SUPER_ADMIN
-  OPS_ADMIN
-  FINANCE_ADMIN
-  VIEWER
+/// C2 — the "what" axis of authorization. The six client role names are
+/// (BaseRole × RoleScope) pairs; see docs/RBAC.md and packages/domain/src/rbac.
+/// The vendor/platform super-user is modelled separately (User.tenantId = null),
+/// not as a BaseRole.
+enum BaseRole {
+  ADMIN
+  FINANCE
+  SUPERVISOR
+  STAFF
+}
+
+/// C2 — the "where" axis. ORGANIZATION = across all branches in the org (reads
+/// only, per C1); TENANT = scoped to the tenantIds listed on the UserRole.
+enum RoleScope {
+  ORGANIZATION
+  TENANT
 }
 
 enum BookingModel {
@@ -76,6 +97,54 @@ enum BookingStatus {
   PICKED_UP
   RETURNED
   INSPECTION
+}
+
+/// C4 — the discrete monthly rental lifecycle. Every month is its own
+/// closed-ended RentalOrder; renewal produces a NEW order, gated on the
+/// customer's H-14 confirmation. See packages/domain/src/rental-order.
+enum RentalOrderStatus {
+  PENDING_APPROVAL
+  APPROVED
+  AWAITING_PAYMENT
+  ACTIVE
+  RENEWAL_OFFERED
+  RENEWAL_CONFIRMED
+  RENEWAL_DECLINED
+  EXPIRING
+  COMPLETED
+  DEFAULTED
+  CANCELLED
+}
+
+/// C5 — a waitlist entry is an armed, conditionally-approved booking. FIRED =
+/// a unit was released to it and a contract+invoice auto-generated; EXPIRED =
+/// its fired invoice went unpaid past the payment TTL and the next entry fired.
+enum WaitlistStatus {
+  ARMED
+  FIRED
+  EXPIRED
+  CONVERTED
+  CANCELLED
+}
+
+enum CustomerType {
+  INDIVIDUAL
+  BUSINESS
+}
+
+/// §5 — the once-per-customer master agreement, carrying all enforceable terms.
+enum MasterAgreementStatus {
+  DRAFT
+  SENT
+  SIGNED
+  DECLINED
+  EXPIRED
+}
+
+/// §5 — how a monthly RentalOrder was accepted against the signed master.
+enum OrderAcceptanceMethod {
+  OTP
+  CLICK
 }
 
 enum InvoiceStatus {
@@ -142,40 +211,71 @@ enum LedgerAccount {
 }
 
 // ---------------------------------------------------------------------------
-// Tenancy
+// Organization & Tenancy  (C1)
 // ---------------------------------------------------------------------------
 
+/// C1 — the business entity (City Storage). Sits ABOVE Tenant. Not tenant-scoped;
+/// like `tenants`, it is deliberately excluded from per-row tenant RLS (it is the
+/// bootstrapping layer HO cross-tenant reads resolve through). Org-level
+/// messaging config (#40 — one WA number for all branches) lives here.
+model Organization {
+  id              String   @id @default(uuid()) @db.Uuid
+  slug            String   @unique
+  name            String
+  legalName       String?  @map("legal_name")
+  /// #40 — org-level MessagingProvider credentials (one WA number, all branches).
+  /// { provider, waPhoneNumberId, ... } — secrets injected at runtime, not stored raw.
+  messagingConfig Json     @default("{}") @map("messaging_config")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  tenants          Tenant[]
+  masterAgreements MasterAgreement[]
+
+  @@map("organizations")
+}
+
 model Tenant {
-  id            String   @id @default(uuid()) @db.Uuid
-  slug          String   @unique
-  name          String
-  legalName     String?  @map("legal_name")
-  isPkp         Boolean  @default(false) @map("is_pkp")
-  defaultLocale String   @default("id") @map("default_locale")
-  timezone      String   @default("Asia/Jakarta")
-  branding      Json     @default("{}")
-  featureFlags  Json     @default("{}") @map("feature_flags")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  id             String       @id @default(uuid()) @db.Uuid
+  /// C1 — every Tenant (= one branch/location) belongs to an Organization.
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  slug           String       @unique
+  name           String
+  legalName      String?      @map("legal_name")
+  isPkp          Boolean      @default(false) @map("is_pkp")
+  defaultLocale  String       @default("id") @map("default_locale")
+  timezone       String       @default("Asia/Jakarta")
+  branding       Json         @default("{}")
+  /// Per-tenant feature flags. C3: { allowSubMonthly?: bool } gates DAILY/WEEKLY
+  /// (default off). #27: { paymentMethods?: string[] } restricts allowed methods.
+  featureFlags   Json         @default("{}") @map("feature_flags")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
 
   domains            TenantDomain[]
   locations          Location[]
   users              User[]
   customers          Customer[]
+  customerPhones     CustomerPhone[]
   assetTypes         AssetType[]
   assets             Asset[]
   bookings           Booking[]
+  rentalOrders       RentalOrder[]
+  waitlistEntries    WaitlistEntry[]
+  masterAgreements   MasterAgreement[]
   invoices           Invoice[]
   payments           Payment[]
   automationSettings AutomationSetting[]
   promoCodes         PromoCode[]
 
+  @@index([organizationId])
   @@map("tenants")
 }
 
 model TenantDomain {
   id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String   @db.Uuid @map("tenant_id")
+  tenantId  String   @map("tenant_id") @db.Uuid
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   domain    String   @unique
   isPrimary Boolean  @default(false) @map("is_primary")
@@ -185,9 +285,12 @@ model TenantDomain {
   @@map("tenant_domains")
 }
 
+/// C1 — kept as an OPTIONAL descriptive row (address, timezone) for one release,
+/// then droppable. The Tenant IS the branch now; Location no longer owns assets
+/// as the primary scope (Asset.tenantId does), it just annotates them.
 model Location {
   id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String   @db.Uuid @map("tenant_id")
+  tenantId  String   @map("tenant_id") @db.Uuid
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name      String
   address   String?
@@ -203,8 +306,8 @@ model Location {
 
 model User {
   id           String     @id @default(uuid()) @db.Uuid
-  /// null => platform admin (no tenant scope)
-  tenantId     String?    @db.Uuid @map("tenant_id")
+  /// null => platform admin (vendor super-user, no tenant scope). See BUILD-SPEC C2.
+  tenantId     String?    @map("tenant_id") @db.Uuid
   tenant       Tenant?    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   email        String
   passwordHash String?    @map("password_hash")
@@ -219,13 +322,19 @@ model User {
   @@map("users")
 }
 
+/// C2 — role × scope. `tenantIds` is empty when scope = ORGANIZATION (applies
+/// across the whole org, reads only per C1); one or more when scope = TENANT.
+/// An array (not a single column) so covering two branches is a data edit, not a
+/// migration (Ko Yudi's scenario). Encoding table: docs/RBAC.md §2.
 model UserRole {
-  id     String     @id @default(uuid()) @db.Uuid
-  userId String     @db.Uuid @map("user_id")
-  user   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role   GlobalRole
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      BaseRole
+  scope     RoleScope @default(TENANT)
+  tenantIds String[]  @default([]) @map("tenant_ids") @db.Uuid
 
-  @@unique([userId, role])
+  @@unique([userId, role, scope])
   @@map("user_roles")
 }
 
@@ -234,38 +343,68 @@ model UserRole {
 // ---------------------------------------------------------------------------
 
 model Customer {
-  id              String    @id @default(uuid()) @db.Uuid
-  tenantId        String    @db.Uuid @map("tenant_id")
-  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id              String       @id @default(uuid()) @db.Uuid
+  tenantId        String       @map("tenant_id") @db.Uuid
+  tenant          Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// #4 — individual vs business registration drives which fields are required.
+  type            CustomerType @default(INDIVIDUAL)
+  /// The primary phone. Additional WA numbers (#3, business accounts) live in
+  /// CustomerPhone. Kept here for back-compat and as the canonical login handle.
   phone           String
   email           String?
-  fullName        String?   @map("full_name")
-  kycStatus       KycStatus @default(NOT_SUBMITTED) @map("kyc_status")
-  isBlocklisted   Boolean   @default(false) @map("is_blocklisted")
-  blocklistReason String?   @map("blocklist_reason")
+  fullName        String?      @map("full_name")
+  /// #4 — business fields (null for INDIVIDUAL): company name, NPWP, PIC.
+  companyName     String?      @map("company_name")
+  taxId           String?      @map("tax_id")
+  kycStatus       KycStatus    @default(NOT_SUBMITTED) @map("kyc_status")
+  isBlocklisted   Boolean      @default(false) @map("is_blocklisted")
+  blocklistReason String?      @map("blocklist_reason")
   notes           String?
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
 
-  kycDocuments KycDocument[]
-  bookings     Booking[]
-  invoices     Invoice[]
+  kycDocuments     KycDocument[]
+  phones           CustomerPhone[]
+  bookings         Booking[]
+  rentalOrders     RentalOrder[]
+  waitlistEntries  WaitlistEntry[]
+  masterAgreements MasterAgreement[]
+  invoices         Invoice[]
 
   @@unique([tenantId, phone])
   @@index([tenantId])
   @@map("customers")
 }
 
+/// #3 — a business account maps multiple WhatsApp numbers to one Customer.
+/// Each number is confirmed via OTP (verifiedAt) before it can act on the account.
+model CustomerPhone {
+  id         String    @id @default(uuid()) @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId String    @map("customer_id") @db.Uuid
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  phone      String
+  isPrimary  Boolean   @default(false) @map("is_primary")
+  verifiedAt DateTime? @map("verified_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@unique([tenantId, phone])
+  @@index([tenantId])
+  @@index([customerId])
+  @@map("customer_phones")
+}
+
 model KycDocument {
   id               String    @id @default(uuid()) @db.Uuid
-  tenantId         String    @db.Uuid @map("tenant_id")
-  customerId       String    @db.Uuid @map("customer_id")
+  tenantId         String    @map("tenant_id") @db.Uuid
+  customerId       String    @map("customer_id") @db.Uuid
   customer         Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
   documentType     String    @map("document_type")
   /// Encrypted object-storage key. The raw file never lands in this table.
   storageKey       String    @map("storage_key")
   status           KycStatus @default(PENDING_REVIEW)
-  reviewedByUserId String?   @db.Uuid @map("reviewed_by_user_id")
+  reviewedByUserId String?   @map("reviewed_by_user_id") @db.Uuid
   reviewedAt       DateTime? @map("reviewed_at")
   createdAt        DateTime  @default(now()) @map("created_at")
 
@@ -280,7 +419,7 @@ model KycDocument {
 
 model AssetType {
   id               String       @id @default(uuid()) @db.Uuid
-  tenantId         String       @db.Uuid @map("tenant_id")
+  tenantId         String       @map("tenant_id") @db.Uuid
   tenant           Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name             String
   slug             String
@@ -294,9 +433,11 @@ model AssetType {
   createdAt        DateTime     @default(now()) @map("created_at")
   updatedAt        DateTime     @updatedAt @map("updated_at")
 
-  assets       Asset[]
-  bookings     Booking[]
-  swapRequests SwapRequest[]
+  assets          Asset[]
+  bookings        Booking[]
+  rentalOrders    RentalOrder[]
+  waitlistEntries WaitlistEntry[]
+  swapRequests    SwapRequest[]
 
   @@unique([tenantId, slug])
   @@index([tenantId])
@@ -305,11 +446,12 @@ model AssetType {
 
 model Asset {
   id           String      @id @default(uuid()) @db.Uuid
-  tenantId     String      @db.Uuid @map("tenant_id")
+  tenantId     String      @map("tenant_id") @db.Uuid
   tenant       Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  locationId   String      @db.Uuid @map("location_id")
-  location     Location    @relation(fields: [locationId], references: [id], onDelete: Cascade)
-  assetTypeId  String      @db.Uuid @map("asset_type_id")
+  /// C1 — now nullable: the Tenant is the branch; Location only annotates.
+  locationId   String?     @map("location_id") @db.Uuid
+  location     Location?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  assetTypeId  String      @map("asset_type_id") @db.Uuid
   assetType    AssetType   @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
   code         String
   status       AssetStatus @default(AVAILABLE)
@@ -319,9 +461,10 @@ model Asset {
   updatedAt    DateTime    @updatedAt @map("updated_at")
 
   bookings           Booking[]
+  rentalOrders       RentalOrder[]
   swapRequestTargets SwapRequest[]
 
-  @@unique([tenantId, locationId, code])
+  @@unique([tenantId, code])
   @@index([tenantId])
   @@index([assetTypeId])
   @@map("assets")
@@ -333,19 +476,20 @@ model Asset {
 
 model Booking {
   id                  String        @id @default(uuid()) @db.Uuid
-  tenantId            String        @db.Uuid @map("tenant_id")
+  tenantId            String        @map("tenant_id") @db.Uuid
   tenant              Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  customerId          String        @db.Uuid @map("customer_id")
+  customerId          String        @map("customer_id") @db.Uuid
   customer            Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  assetTypeId         String        @db.Uuid @map("asset_type_id")
+  assetTypeId         String        @map("asset_type_id") @db.Uuid
   assetType           AssetType     @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
-  assetId             String?       @db.Uuid @map("asset_id")
+  assetId             String?       @map("asset_id") @db.Uuid
   asset               Asset?        @relation(fields: [assetId], references: [id])
   bookingModel        BookingModel  @map("booking_model")
   status              BookingStatus @default(DRAFT)
   startDate           DateTime      @map("start_date")
   endDate             DateTime?     @map("end_date")
-  /// Day-of-month billing anchor, RECURRING_LEASE only.
+  /// Day-of-month billing anchor, RECURRING_LEASE only. Legacy — new RECURRING_LEASE
+  /// flows use RentalOrder (C4); retained for NIGHTLY/DURATION_ORDER verticals.
   anchorDay           Int?          @map("anchor_day")
   /// Pricing terms frozen at submission time — never re-derived from AssetType later.
   priceSnapshot       Json          @map("price_snapshot")
@@ -353,7 +497,7 @@ model Booking {
   reservedUntil       DateTime?     @map("reserved_until")
   noticeGivenAt       DateTime?     @map("notice_given_at")
   noticeEffectiveDate DateTime?     @map("notice_effective_date")
-  approvedByUserId    String?       @db.Uuid @map("approved_by_user_id")
+  approvedByUserId    String?       @map("approved_by_user_id") @db.Uuid
   rejectionReason     String?       @map("rejection_reason")
   createdAt           DateTime      @default(now()) @map("created_at")
   updatedAt           DateTime      @updatedAt @map("updated_at")
@@ -374,13 +518,13 @@ model Booking {
 /// Append-only audit trail — "every transition writes actor, timestamp, reason" (PRD §8.1).
 model BookingEvent {
   id         String         @id @default(uuid()) @db.Uuid
-  tenantId   String         @db.Uuid @map("tenant_id")
-  bookingId  String         @db.Uuid @map("booking_id")
+  tenantId   String         @map("tenant_id") @db.Uuid
+  bookingId  String         @map("booking_id") @db.Uuid
   booking    Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   fromStatus BookingStatus? @map("from_status")
   toStatus   BookingStatus  @map("to_status")
   actorType  String         @map("actor_type")
-  actorId    String?        @db.Uuid @map("actor_id")
+  actorId    String?        @map("actor_id") @db.Uuid
   reason     String?
   metadata   Json           @default("{}")
   createdAt  DateTime       @default(now()) @map("created_at")
@@ -390,55 +534,221 @@ model BookingEvent {
   @@map("booking_events")
 }
 
+/// §5 — the once-per-customer signed contract that RentalOrders reference.
+/// Carries ALL enforceable terms; the certified e-signature is consumed here,
+/// exactly once, not per monthly order.
+model MasterAgreement {
+  id              String                @id @default(uuid()) @db.Uuid
+  tenantId        String                @map("tenant_id") @db.Uuid
+  tenant          Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// Denormalised org ref so HO can list master agreements across branches.
+  organizationId  String                @map("organization_id") @db.Uuid
+  organization    Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customerId      String                @map("customer_id") @db.Uuid
+  customer        Customer              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  templateVersion String                @map("template_version")
+  status          MasterAgreementStatus @default(DRAFT)
+  documentUrl     String?               @map("document_url")
+  esignProvider   String?               @map("esign_provider")
+  esignEnvelopeId String?               @map("esign_envelope_id")
+  signedAt        DateTime?             @map("signed_at")
+  signedByName    String?               @map("signed_by_name")
+  createdAt       DateTime              @default(now()) @map("created_at")
+  updatedAt       DateTime              @updatedAt @map("updated_at")
+
+  rentalOrders RentalOrder[]
+
+  @@index([tenantId])
+  @@index([organizationId])
+  @@index([customerId])
+  @@map("master_agreements")
+}
+
+/// C4 — a single month's rental, a discrete closed-ended agreement. Renewal
+/// generates a NEW order (previousOrderId chains them), gated on the customer's
+/// H-14 confirmation. Replaces the old "one long-lived Booking + recurring
+/// invoice cron" shape for RECURRING_LEASE (City Storage).
+model RentalOrder {
+  id                 String            @id @default(uuid()) @db.Uuid
+  tenantId           String            @map("tenant_id") @db.Uuid
+  tenant             Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// §5 — the signed master this order accepts against. Null only for the very
+  /// first order created before onboarding signature completes.
+  masterAgreementId  String?           @map("master_agreement_id") @db.Uuid
+  masterAgreement    MasterAgreement?  @relation(fields: [masterAgreementId], references: [id])
+  customerId         String            @map("customer_id") @db.Uuid
+  customer           Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  assetTypeId        String            @map("asset_type_id") @db.Uuid
+  assetType          AssetType         @relation(fields: [assetTypeId], references: [id])
+  /// C4/#11 — assigned by staff at approval, not chosen by the customer.
+  assetId            String?           @map("asset_id") @db.Uuid
+  asset              Asset?            @relation(fields: [assetId], references: [id])
+  status             RentalOrderStatus @default(PENDING_APPROVAL)
+  /// Real dates, both ends — every period is closed-ended (the client's core ask).
+  periodStart        DateTime          @map("period_start")
+  periodEnd          DateTime          @map("period_end")
+  /// Pricing frozen at order creation — never re-derived from AssetType later.
+  priceSnapshot      Json              @map("price_snapshot")
+  /// C4 — the renewal chain. Null for a customer's first order.
+  previousOrderId    String?           @map("previous_order_id") @db.Uuid
+  previousOrder      RentalOrder?      @relation("RenewalChain", fields: [previousOrderId], references: [id])
+  renewalOf          RentalOrder[]     @relation("RenewalChain")
+  renewalOfferedAt   DateTime?         @map("renewal_offered_at")
+  renewalRespondedAt DateTime?         @map("renewal_responded_at")
+  reservedUntil      DateTime?         @map("reserved_until")
+  approvedByUserId   String?           @map("approved_by_user_id") @db.Uuid
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
+
+  invoices          Invoice[]
+  contracts         Contract[]
+  events            RentalOrderEvent[]
+  acceptances       OrderAcceptance[]
+  waitlistFiredFrom WaitlistEntry[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([customerId])
+  @@index([assetId])
+  @@index([previousOrderId])
+  @@map("rental_orders")
+}
+
+/// Append-only audit trail for RentalOrder transitions — same discipline as
+/// BookingEvent (actor, timestamp, reason on every transition).
+model RentalOrderEvent {
+  id            String             @id @default(uuid()) @db.Uuid
+  tenantId      String             @map("tenant_id") @db.Uuid
+  rentalOrderId String             @map("rental_order_id") @db.Uuid
+  rentalOrder   RentalOrder        @relation(fields: [rentalOrderId], references: [id], onDelete: Cascade)
+  fromStatus    RentalOrderStatus? @map("from_status")
+  toStatus      RentalOrderStatus  @map("to_status")
+  actorType     String             @map("actor_type")
+  actorId       String?            @map("actor_id") @db.Uuid
+  reason        String?
+  metadata      Json               @default("{}")
+  createdAt     DateTime           @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([rentalOrderId])
+  @@map("rental_order_events")
+}
+
+/// §5 — per-order acceptance evidence. NO certified signature is consumed here;
+/// the master agreement carries the enforceable terms. This records the
+/// OTP/click acceptance with a tamper-evidence bundle (UU ITE Art. 11).
+model OrderAcceptance {
+  id             String                @id @default(uuid()) @db.Uuid
+  tenantId       String                @map("tenant_id") @db.Uuid
+  rentalOrderId  String                @map("rental_order_id") @db.Uuid
+  rentalOrder    RentalOrder           @relation(fields: [rentalOrderId], references: [id], onDelete: Cascade)
+  method         OrderAcceptanceMethod
+  acceptedAt     DateTime              @default(now()) @map("accepted_at")
+  ipAddress      String?               @map("ip_address")
+  userAgent      String?               @map("user_agent")
+  /// OTP challenge id / verification record (NOT the OTP value itself).
+  otpChallengeId String?               @map("otp_challenge_id")
+  proof          Json                  @default("{}")
+  createdAt      DateTime              @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([rentalOrderId])
+  @@map("order_acceptances")
+}
+
+/// C5 — an armed, conditionally-approved booking. Full customer data + KYC +
+/// frozen price snapshot; everything except an assigned unit and a date. When a
+/// unit is released it FIRES exactly one entry (single-fire row lock in the
+/// service), auto-generating a contract + invoice. Payment TTL → EXPIRED → next.
+model WaitlistEntry {
+  id                 String         @id @default(uuid()) @db.Uuid
+  tenantId           String         @map("tenant_id") @db.Uuid
+  tenant             Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assetTypeId        String         @map("asset_type_id") @db.Uuid
+  assetType          AssetType      @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
+  customerId         String         @map("customer_id") @db.Uuid
+  customer           Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  position           Int
+  status             WaitlistStatus @default(ARMED)
+  /// KYC must be submitted & reviewed before arming — a fired entry auto-issues
+  /// a contract, so we cannot wait on identity at fire time.
+  kycVerified        Boolean        @default(false) @map("kyc_verified")
+  priceSnapshot      Json           @map("price_snapshot")
+  firedAt            DateTime?      @map("fired_at")
+  expiresAt          DateTime?      @map("expires_at")
+  firedRentalOrderId String?        @map("fired_rental_order_id") @db.Uuid
+  firedRentalOrder   RentalOrder?   @relation(fields: [firedRentalOrderId], references: [id])
+  createdAt          DateTime       @default(now()) @map("created_at")
+  updatedAt          DateTime       @updatedAt @map("updated_at")
+
+  @@unique([tenantId, assetTypeId, position])
+  @@index([tenantId])
+  @@index([tenantId, assetTypeId, status])
+  @@map("waitlist_entries")
+}
+
 model Contract {
-  id              String    @id @default(uuid()) @db.Uuid
-  tenantId        String    @db.Uuid @map("tenant_id")
-  bookingId       String    @db.Uuid @map("booking_id")
-  booking         Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  templateVersion String    @map("template_version")
+  id              String       @id @default(uuid()) @db.Uuid
+  tenantId        String       @map("tenant_id") @db.Uuid
+  /// Legacy path (NIGHTLY/DURATION_ORDER bookings). Nullable now that
+  /// RECURRING_LEASE contracts hang off RentalOrder instead.
+  bookingId       String?      @map("booking_id") @db.Uuid
+  booking         Booking?     @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  /// C4 — the monthly order this contract documents (RECURRING_LEASE / City Storage).
+  rentalOrderId   String?      @map("rental_order_id") @db.Uuid
+  rentalOrder     RentalOrder? @relation(fields: [rentalOrderId], references: [id], onDelete: Cascade)
+  templateVersion String       @map("template_version")
   /// The uploaded document — under MockESignProvider this is already the
   /// final signed record (v1's wet-sign behavior); under a real ESignProvider
   /// it's the document that was sent out, replaced with the signed version
   /// once the provider's webhook confirms completion.
-  documentUrl     String?   @map("document_url")
-  signedAt        DateTime? @map("signed_at")
-  signedByName    String?   @map("signed_by_name")
+  documentUrl     String?      @map("document_url")
+  signedAt        DateTime?    @map("signed_at")
+  signedByName    String?      @map("signed_by_name")
   /// Set by whichever ESignProvider handled this contract (MOCK by default).
-  esignProvider   String?   @map("esign_provider")
-  esignEnvelopeId String?   @map("esign_envelope_id")
+  esignProvider   String?      @map("esign_provider")
+  esignEnvelopeId String?      @map("esign_envelope_id")
   /// PENDING | SIGNED | DECLINED | EXPIRED — null until sendForSignature() is called.
-  esignStatus     String?   @map("esign_status")
-  createdAt       DateTime  @default(now()) @map("created_at")
+  esignStatus     String?      @map("esign_status")
+  createdAt       DateTime     @default(now()) @map("created_at")
 
   @@index([tenantId])
   @@index([bookingId])
+  @@index([rentalOrderId])
   @@map("contracts")
 }
 
 model Invoice {
   id                    String        @id @default(uuid()) @db.Uuid
-  tenantId              String        @db.Uuid @map("tenant_id")
+  tenantId              String        @map("tenant_id") @db.Uuid
   tenant                Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  bookingId             String?       @db.Uuid @map("booking_id")
+  bookingId             String?       @map("booking_id") @db.Uuid
   booking               Booking?      @relation(fields: [bookingId], references: [id])
-  customerId            String        @db.Uuid @map("customer_id")
+  /// C4 — the monthly order this invoice bills (RECURRING_LEASE / City Storage).
+  rentalOrderId         String?       @map("rental_order_id") @db.Uuid
+  rentalOrder           RentalOrder?  @relation(fields: [rentalOrderId], references: [id])
+  customerId            String        @map("customer_id") @db.Uuid
   customer              Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
   /// Tenant-prefixed, sequential, tax-compliant (e.g. "STG/2026/07/000123").
   invoiceNumber         String        @map("invoice_number")
   status                InvoiceStatus @default(SCHEDULED)
   currency              String        @default("IDR")
   subtotal              Decimal       @db.Decimal(14, 2)
-  taxAmount             Decimal       @default(0) @db.Decimal(14, 2) @map("tax_amount")
-  totalAmount           Decimal       @db.Decimal(14, 2) @map("total_amount")
+  taxAmount             Decimal       @default(0) @map("tax_amount") @db.Decimal(14, 2)
+  totalAmount           Decimal       @map("total_amount") @db.Decimal(14, 2)
   issueDate             DateTime      @map("issue_date")
   dueDate               DateTime      @map("due_date")
   paidAt                DateTime?     @map("paid_at")
   voidedAt              DateTime?     @map("voided_at")
+  /// #33 — who voided and why (SPV-gated). #34 — backdate supersede chain uses
+  /// supersededByInvoiceId below.
+  voidedByUserId        String?       @map("voided_by_user_id") @db.Uuid
+  voidReason            String?       @map("void_reason")
   periodStart           DateTime?     @map("period_start")
   periodEnd             DateTime?     @map("period_end")
-  supersededByInvoiceId String?       @db.Uuid @map("superseded_by_invoice_id")
-  createdAt              DateTime     @default(now()) @map("created_at")
-  updatedAt               DateTime    @updatedAt @map("updated_at")
+  supersededByInvoiceId String?       @map("superseded_by_invoice_id") @db.Uuid
+  createdAt             DateTime      @default(now()) @map("created_at")
+  updatedAt             DateTime      @updatedAt @map("updated_at")
 
   lines       InvoiceLine[]
   payments    Payment[]
@@ -448,17 +758,18 @@ model Invoice {
   @@index([tenantId])
   @@index([tenantId, status])
   @@index([customerId])
+  @@index([rentalOrderId])
   @@map("invoices")
 }
 
 model InvoiceLine {
   id          String   @id @default(uuid()) @db.Uuid
-  tenantId    String   @db.Uuid @map("tenant_id")
-  invoiceId   String   @db.Uuid @map("invoice_id")
+  tenantId    String   @map("tenant_id") @db.Uuid
+  invoiceId   String   @map("invoice_id") @db.Uuid
   invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   description String
   quantity    Decimal  @default(1) @db.Decimal(10, 2)
-  unitPrice   Decimal  @db.Decimal(14, 2) @map("unit_price")
+  unitPrice   Decimal  @map("unit_price") @db.Decimal(14, 2)
   amount      Decimal  @db.Decimal(14, 2)
   /// RENT | DEPOSIT | ADMIN_FEE | TAX | DISCOUNT | DAMAGE
   lineType    String   @map("line_type")
@@ -471,9 +782,9 @@ model InvoiceLine {
 
 model Payment {
   id                String        @id @default(uuid()) @db.Uuid
-  tenantId          String        @db.Uuid @map("tenant_id")
+  tenantId          String        @map("tenant_id") @db.Uuid
   tenant            Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  invoiceId         String        @db.Uuid @map("invoice_id")
+  invoiceId         String        @map("invoice_id") @db.Uuid
   invoice           Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   /// XENDIT | MIDTRANS | MANUAL | MOCK
   provider          String
@@ -484,8 +795,8 @@ model Payment {
   amount            Decimal       @db.Decimal(14, 2)
   paidAt            DateTime?     @map("paid_at")
   /// Set for manual entries — maker-checker: recorder != verifier (PRD §7.2.4).
-  recordedByUserId  String?       @db.Uuid @map("recorded_by_user_id")
-  verifiedByUserId  String?       @db.Uuid @map("verified_by_user_id")
+  recordedByUserId  String?       @map("recorded_by_user_id") @db.Uuid
+  verifiedByUserId  String?       @map("verified_by_user_id") @db.Uuid
   proofUrl          String?       @map("proof_url")
   rawWebhookPayload Json?         @map("raw_webhook_payload")
   createdAt         DateTime      @default(now()) @map("created_at")
@@ -498,12 +809,12 @@ model Payment {
 
 model CreditNote {
   id             String   @id @default(uuid()) @db.Uuid
-  tenantId       String   @db.Uuid @map("tenant_id")
-  invoiceId      String   @db.Uuid @map("invoice_id")
+  tenantId       String   @map("tenant_id") @db.Uuid
+  invoiceId      String   @map("invoice_id") @db.Uuid
   invoice        Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   amount         Decimal  @db.Decimal(14, 2)
   reason         String
-  issuedByUserId String   @db.Uuid @map("issued_by_user_id")
+  issuedByUserId String   @map("issued_by_user_id") @db.Uuid
   createdAt      DateTime @default(now()) @map("created_at")
 
   @@index([tenantId])
@@ -511,18 +822,18 @@ model CreditNote {
 }
 
 model Deposit {
-  id                    String        @id @default(uuid()) @db.Uuid
-  tenantId              String        @db.Uuid @map("tenant_id")
-  bookingId             String        @db.Uuid @map("booking_id")
-  booking               Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  amount                Decimal       @db.Decimal(14, 2)
-  status                DepositStatus @default(HELD)
-  appliedAmount         Decimal       @default(0) @db.Decimal(14, 2) @map("applied_amount")
-  refundApprovedByUserId String?      @db.Uuid @map("refund_approved_by_user_id")
-  refundedAt             DateTime?    @map("refunded_at")
-  payoutRef               String?     @map("payout_ref")
-  createdAt                DateTime   @default(now()) @map("created_at")
-  updatedAt                 DateTime  @updatedAt @map("updated_at")
+  id                     String        @id @default(uuid()) @db.Uuid
+  tenantId               String        @map("tenant_id") @db.Uuid
+  bookingId              String        @map("booking_id") @db.Uuid
+  booking                Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  amount                 Decimal       @db.Decimal(14, 2)
+  status                 DepositStatus @default(HELD)
+  appliedAmount          Decimal       @default(0) @map("applied_amount") @db.Decimal(14, 2)
+  refundApprovedByUserId String?       @map("refund_approved_by_user_id") @db.Uuid
+  refundedAt             DateTime?     @map("refunded_at")
+  payoutRef              String?       @map("payout_ref")
+  createdAt              DateTime      @default(now()) @map("created_at")
+  updatedAt              DateTime      @updatedAt @map("updated_at")
 
   @@index([tenantId])
   @@index([bookingId])
@@ -535,26 +846,26 @@ model Deposit {
 /// customer only picks a target AssetType, staff picks the actual unit from
 /// what's AVAILABLE.
 model SwapRequest {
-  id                   String            @id @default(uuid()) @db.Uuid
-  tenantId             String            @db.Uuid @map("tenant_id")
-  bookingId            String            @db.Uuid @map("booking_id")
-  booking              Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  requestedAssetTypeId String            @db.Uuid @map("requested_asset_type_id")
-  requestedAssetType   AssetType         @relation(fields: [requestedAssetTypeId], references: [id])
-  reason               String?
-  status               SwapRequestStatus @default(PENDING)
-  newAssetId           String?           @db.Uuid @map("new_asset_id")
-  newAsset             Asset?            @relation(fields: [newAssetId], references: [id])
-  reviewedByUserId     String?           @db.Uuid @map("reviewed_by_user_id")
-  reviewedAt           DateTime?         @map("reviewed_at")
-  rejectionReason      String?           @map("rejection_reason")
+  id                     String            @id @default(uuid()) @db.Uuid
+  tenantId               String            @map("tenant_id") @db.Uuid
+  bookingId              String            @map("booking_id") @db.Uuid
+  booking                Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  requestedAssetTypeId   String            @map("requested_asset_type_id") @db.Uuid
+  requestedAssetType     AssetType         @relation(fields: [requestedAssetTypeId], references: [id])
+  reason                 String?
+  status                 SwapRequestStatus @default(PENDING)
+  newAssetId             String?           @map("new_asset_id") @db.Uuid
+  newAsset               Asset?            @relation(fields: [newAssetId], references: [id])
+  reviewedByUserId       String?           @map("reviewed_by_user_id") @db.Uuid
+  reviewedAt             DateTime?         @map("reviewed_at")
+  rejectionReason        String?           @map("rejection_reason")
   /// Computed at approval (computeSwapProration) for staff to act on manually — positive means the
   /// customer owes more, negative means they're owed a credit. Null when no PAID invoice existed yet
   /// to derive the current billing period from.
-  prorationNetAdjustment Decimal?        @db.Decimal(14, 2) @map("proration_net_adjustment")
-  prorationDaysRemaining Int?            @map("proration_days_remaining")
-  createdAt            DateTime          @default(now()) @map("created_at")
-  updatedAt            DateTime          @updatedAt @map("updated_at")
+  prorationNetAdjustment Decimal?          @map("proration_net_adjustment") @db.Decimal(14, 2)
+  prorationDaysRemaining Int?              @map("proration_days_remaining")
+  createdAt              DateTime          @default(now()) @map("created_at")
+  updatedAt              DateTime          @updatedAt @map("updated_at")
 
   @@index([tenantId])
   @@index([bookingId])
@@ -564,14 +875,14 @@ model SwapRequest {
 /// Double-entry, append-only. Balances are checked nightly (PRD §10 Reliability).
 model LedgerEntry {
   id            String          @id @default(uuid()) @db.Uuid
-  tenantId      String          @db.Uuid @map("tenant_id")
+  tenantId      String          @map("tenant_id") @db.Uuid
   account       LedgerAccount
   entryType     LedgerEntryType @map("entry_type")
   amount        Decimal         @db.Decimal(14, 2)
   currency      String          @default("IDR")
   /// INVOICE | PAYMENT | DEPOSIT | CREDIT_NOTE
   referenceType String          @map("reference_type")
-  referenceId   String          @db.Uuid @map("reference_id")
+  referenceId   String          @map("reference_id") @db.Uuid
   description   String?
   createdAt     DateTime        @default(now()) @map("created_at")
 
@@ -585,20 +896,23 @@ model LedgerEntry {
 // ---------------------------------------------------------------------------
 
 model Notification {
-  id          String    @id @default(uuid()) @db.Uuid
-  tenantId    String    @db.Uuid @map("tenant_id")
-  customerId  String?   @db.Uuid @map("customer_id")
+  id            String    @id @default(uuid()) @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  customerId    String?   @map("customer_id") @db.Uuid
   /// WHATSAPP | EMAIL
-  channel     String
-  templateKey String    @map("template_key")
-  recipient   String
-  payload     Json      @default("{}")
+  channel       String
+  templateKey   String    @map("template_key")
+  /// #42 — a reminder fans out to both the customer and the branch admin;
+  /// recipientRole records which side this row is (CUSTOMER | ADMIN).
+  recipientRole String    @default("CUSTOMER") @map("recipient_role")
+  recipient     String
+  payload       Json      @default("{}")
   /// QUEUED | SENT | FAILED
-  status      String    @default("QUEUED")
-  providerRef String?   @map("provider_ref")
-  error       String?
-  sentAt      DateTime? @map("sent_at")
-  createdAt   DateTime  @default(now()) @map("created_at")
+  status        String    @default("QUEUED")
+  providerRef   String?   @map("provider_ref")
+  error         String?
+  sentAt        DateTime? @map("sent_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
 
   @@index([tenantId])
   @@map("notifications")
@@ -606,7 +920,7 @@ model Notification {
 
 model AutomationSetting {
   id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String   @db.Uuid @map("tenant_id")
+  tenantId  String   @map("tenant_id") @db.Uuid
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   /// e.g. "A5_INVOICE_REMINDER_LADDER" — see PRD §8.4 automation catalog.
   key       String
@@ -620,7 +934,7 @@ model AutomationSetting {
 
 model PromoCode {
   id             String    @id @default(uuid()) @db.Uuid
-  tenantId       String    @db.Uuid @map("tenant_id")
+  tenantId       String    @map("tenant_id") @db.Uuid
   tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   code           String
   /// FLAT | PERCENT
@@ -641,8 +955,8 @@ model PromoCode {
 /// Immutable — protects the owner from his own staff (PRD §7.2.7).
 model AuditLog {
   id          String   @id @default(uuid()) @db.Uuid
-  tenantId    String?  @db.Uuid @map("tenant_id")
-  actorUserId String?  @db.Uuid @map("actor_user_id")
+  tenantId    String?  @map("tenant_id") @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
   action      String
   entityType  String   @map("entity_type")
   entityId    String?  @map("entity_id")
@@ -657,7 +971,7 @@ model AuditLog {
 /// Idempotency + replay ledger for inbound gateway webhooks (PRD §10 Availability).
 model WebhookEvent {
   id          String    @id @default(uuid()) @db.Uuid
-  tenantId    String?   @db.Uuid @map("tenant_id")
+  tenantId    String?   @map("tenant_id") @db.Uuid
   /// XENDIT | MIDTRANS | WHATSAPP
   provider    String
   externalId  String    @map("external_id")
