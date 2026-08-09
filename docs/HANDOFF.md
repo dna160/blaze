@@ -843,6 +843,48 @@ database-seed + live-verification session, same shape as Session 16).
 
 ## Resume here
 
+> ### ⛔ READ FIRST — `docs/BUILD-SPEC.md` now supersedes the PRD (Session 20)
+>
+> A new source of truth landed: **[`docs/BUILD-SPEC.md`](./BUILD-SPEC.md)** — the
+> *Infrastructure & Remediation Build Spec (v2.0)*. It is derived from two client
+> meeting transcripts that happened **after** `docs/PRD.md` was written, and it
+> establishes this precedence: **BUILD-SPEC > meeting transcripts > PRD > HANDOFF**.
+> Where the PRD and BUILD-SPEC disagree, BUILD-SPEC wins.
+>
+> **The headline:** five of the PRD's foundational assumptions are wrong, and the
+> codebase (Phases 0–4) was built faithfully against them, so the corrections are
+> **schema-breaking, not cosmetic**:
+> - **C1** — Tenant should equal one *location/branch*, under a new **Organization**;
+>   today it's `Tenant → Location[]` (the opposite shape). HO needs read-across-tenants
+>   via a *separate* `app.organization_id` session var, read paths only — never widen
+>   `app.tenant_id`.
+> - **C2** — Six client roles = **role × scope** (`BaseRole × RoleScope`, `tenantIds[]`),
+>   not six enum values. Authoritative matrix: **[`docs/RBAC.md`](./RBAC.md)**.
+> - **C3** — Monthly only. Gate `DAILY`/`WEEKLY` behind a per-tenant flag (off); a
+>   non-integer month count must throw, not round. Keep proration only in swap requests.
+> - **C4** — Renewal is a **new closed-ended contract gated on H-14 confirmation**
+>   (`RentalOrder`), not a silent recurring-invoice job against one long-lived Booking.
+> - **C5** — Waitlist is an **armed conditionally-approved booking** that auto-issues
+>   contract+invoice on release, with a single-fire row lock and a payment TTL.
+>
+> **Do NOT start remediation R1 until the §7 blocking decisions (B1–B10) are closed.**
+> Several are client-owned (Maverick, Ko Yudi, the client's lawyer) and cannot be
+> answered from code — see BUILD-SPEC §7. The phased plan is **R0 → R4** in §8, each
+> with a handoff gate that requires *recorded evidence against real Postgres/Redis*
+> (match the ledger-balance standard). Companion authoritative docs also landed:
+> **[`docs/RBAC.md`](./RBAC.md)**, **[`docs/LEGAL-ESIGN.md`](./LEGAL-ESIGN.md)** (§5
+> e-sign cost architecture + B3 lawyer sign-off record), and
+> **[`docs/RUNBOOK-BACKUP.md`](./RUNBOOK-BACKUP.md)** (#50 — the backup answer the
+> client asked for and never got).
+>
+> **Session 20 did NOT write any remediation code.** It landed the spec and companion
+> docs as the source of truth only — deliberately: the R0+ gates need real-infra
+> verification this sandbox can't provide (egress-blocked, Docker unverified — see
+> below), and most of R1+ is blocked on B1–B10. Longest-lead external dependency is
+> **Meta business verification** (§8 R3 note: NPWP/NIB + ~2 days) — start it now
+> regardless of everything else. Everything below this box describes the pre-spec
+> state (PRD Phases 0–4) and remains accurate as *what is built*.
+
 **Phase 2 is complete. Phase 3 is complete** — every named item on PRD
 §13's Phase 3 list is done: NIGHTLY (Session 14) and DURATION_ORDER
 (Session 15) real logic, pooled inventory (Session 17), seasonal
