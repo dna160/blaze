@@ -57,4 +57,30 @@ export class FinanceController {
   ) {
     return this.finance.createCreditNote(tenant, user.id, id, body.amount, body.reason);
   }
+
+  /** #33 — void an unpaid invoice. SPV-gated (void_invoice); staff → 403. */
+  @Post(":id/void")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("void_invoice")
+  voidInvoice(
+    @CurrentTenant() tenant: ResolvedTenant,
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id") id: string,
+    @Body() body: { reason: string },
+  ) {
+    return this.finance.voidInvoice(tenant, user.id, id, body.reason);
+  }
+
+  /** #32 — manual per-order price override. SPV-gated (price_override). */
+  @Post("rental-orders/:orderId/price-override")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("price_override")
+  overridePrice(
+    @CurrentTenant() tenant: ResolvedTenant,
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("orderId") orderId: string,
+    @Body() body: { overrideMonthlyRate: number; reason: string },
+  ) {
+    return this.finance.overrideRentalOrderPrice(tenant, user.id, orderId, body.overrideMonthlyRate, body.reason);
+  }
 }

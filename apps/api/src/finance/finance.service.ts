@@ -6,6 +6,7 @@ import {
   generateNextCycleInvoice,
   markInvoicePaid,
   recordCreditNoteEntries,
+  recordInvoiceVoidedEntries,
   type BookingForInvoicing,
   type Prisma,
 } from "@rentos/database";
@@ -143,5 +144,66 @@ export class FinanceService {
 
   listCreditNotesForInvoice(tenantId: string, invoiceId: string) {
     return this.prisma.runInTenantContext(tenantId, (tx) => tx.creditNote.findMany({ where: { invoiceId } }));
+  }
+
+  /**
+   * BUILD-SPEC #33 — void an UNPAID invoice (SPV-gated via the void_invoice
+   * capability). Reverses exactly the issue entries so the ledger stays balanced,
+   * stamps who/why, and writes an immutable audit log row. The client named
+   * "invoice pile-up" as a live pain — this is the clean exit for a wrong invoice.
+   */
+  async voidInvoice(tenant: { id: string }, userId: string, invoiceId: string, reason: string) {
+    if (!reason?.trim()) throw new BadRequestException("A void reason is required.");
+    return this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
+      if (!invoice) throw new NotFoundException("Invoice not found.");
+      if (!["SCHEDULED", "ISSUED", "OVERDUE"].includes(invoice.status)) {
+        throw new ConflictException(`Invoice is ${invoice.status} — only an unpaid invoice can be voided (use a credit note for a paid one).`);
+      }
+      await tx.invoice.update({
+        where: { id: invoiceId },
+        data: { status: "VOID", voidedAt: new Date(), voidedByUserId: userId, voidReason: reason },
+      });
+      await recordInvoiceVoidedEntries(tx, tenant.id, invoiceId);
+      await tx.auditLog.create({
+        data: { tenantId: tenant.id, actorUserId: userId, action: "INVOICE_VOID", entityType: "Invoice", entityId: invoiceId, metadata: { reason } },
+      });
+      return { id: invoiceId, status: "VOID" };
+    });
+  }
+
+  /**
+   * BUILD-SPEC #32 — manual per-order price override (SPV-gated via price_override).
+   * The client's real rates are 4.5/5/6% then HAND-ROUNDED, so rules alone never
+   * reproduce their quotes. Records the hand-rounded monthly rate on the order's
+   * price snapshot (generateRentalOrderInvoice reads overrideMonthlyRate) and
+   * audit-logs it. Applies to the order's FUTURE invoices, not ones already issued.
+   */
+  async overrideRentalOrderPrice(
+    tenant: { id: string },
+    userId: string,
+    rentalOrderId: string,
+    overrideMonthlyRate: number,
+    reason: string,
+  ) {
+    if (!(overrideMonthlyRate > 0)) throw new BadRequestException("overrideMonthlyRate must be positive.");
+    if (!reason?.trim()) throw new BadRequestException("An override reason is required.");
+    return this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const order = await tx.rentalOrder.findUnique({ where: { id: rentalOrderId } });
+      if (!order) throw new NotFoundException("Rental order not found.");
+      const snapshot = { ...(order.priceSnapshot as Record<string, unknown>), overrideMonthlyRate };
+      await tx.rentalOrder.update({ where: { id: rentalOrderId }, data: { priceSnapshot: snapshot } });
+      await tx.auditLog.create({
+        data: {
+          tenantId: tenant.id,
+          actorUserId: userId,
+          action: "PRICE_OVERRIDE",
+          entityType: "RentalOrder",
+          entityId: rentalOrderId,
+          metadata: { overrideMonthlyRate, reason },
+        },
+      });
+      return { id: rentalOrderId, overrideMonthlyRate };
+    });
   }
 }

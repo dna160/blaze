@@ -948,13 +948,16 @@ database-seed + live-verification session, same shape as Session 16).
 
 **What is NOT done yet (remaining R2–R4, precise):**
 
-- **R2 — finance controls + e-sign.** Schema is ready (`MasterAgreement`,
-  `OrderAcceptance`, `Invoice.voidedByUserId`/`voidReason`, discount tiers in pricing),
-  but the *services* are not built: invoice void (#33, gate `void_invoice`), backdate +
-  supersede (#34), price-override recording (#32 — domain math exists, no service/audit
-  wiring), bulk export contract bundle (#37), master-agreement + order-acceptance OTP
-  services, and the **Mekari Sign adapter** behind `ESignProvider` (still
-  `MockESignProvider`; rental-order/waitlist contracts are auto-created as MOCK-signed).
+- **R2 — finance controls + e-sign.** DONE + verified: invoice **void (#33)**,
+  SPV-gated (`void_invoice`), with a balanced ledger reversal — evidence
+  `apps/api/scripts/invoice-void-verify.ts` (ledger balanced after issue AND void;
+  status VOID; audit-logged). Manual **price override (#32)**, SPV-gated
+  (`price_override`), records `overrideMonthlyRate` on the order snapshot (read by
+  `generateRentalOrderInvoice`) + audit log. STILL TO DO: backdate + supersede (#34),
+  bulk export contract bundle (#37), master-agreement + order-acceptance OTP *services*
+  (schema `MasterAgreement`/`OrderAcceptance` exist), and the **Mekari Sign adapter**
+  behind `ESignProvider` (still `MockESignProvider`; rental-order/waitlist contracts
+  are auto-created MOCK-signed).
 - **R3 — comms/ops.** Dunning retune to H-7/5/3/1 **dual-recipient** (#41/#42 — schema
   has `Notification.recipientRole`, job not retuned); org-level single WA number (#40 —
   `Organization.messagingConfig` exists, not wired into the provider); forward-occupancy
