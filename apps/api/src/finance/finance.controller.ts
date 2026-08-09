@@ -71,6 +71,19 @@ export class FinanceController {
     return this.finance.voidInvoice(tenant, user.id, id, body.reason);
   }
 
+  /** #34 — backdate / shift a rental order's period. SPV-gated (backdate). Voids the superseded invoice. */
+  @Post("rental-orders/:orderId/backdate")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("backdate")
+  backdate(
+    @CurrentTenant() tenant: ResolvedTenant,
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("orderId") orderId: string,
+    @Body() body: { newPeriodStart: string },
+  ) {
+    return this.finance.backdateRentalOrder(tenant, user.id, orderId, new Date(body.newPeriodStart));
+  }
+
   /** #32 — manual per-order price override. SPV-gated (price_override). */
   @Post("rental-orders/:orderId/price-override")
   @UseGuards(CapabilityGuard)

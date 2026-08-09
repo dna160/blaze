@@ -4,13 +4,14 @@ import {
   generateFinalSettlement,
   generateInitialInvoice,
   generateNextCycleInvoice,
+  generateRentalOrderInvoice,
   markInvoicePaid,
   recordCreditNoteEntries,
   recordInvoiceVoidedEntries,
   type BookingForInvoicing,
   type Prisma,
 } from "@rentos/database";
-import { invoiceFsm, money } from "@rentos/domain";
+import { invoiceFsm, money, monthlyPeriodEnd, wholeMonthsBetween } from "@rentos/domain";
 
 import { PrismaService } from "../prisma/prisma.service.js";
 
@@ -169,6 +170,68 @@ export class FinanceService {
         data: { tenantId: tenant.id, actorUserId: userId, action: "INVOICE_VOID", entityType: "Invoice", entityId: invoiceId, metadata: { reason } },
       });
       return { id: invoiceId, status: "VOID" };
+    });
+  }
+
+  /**
+   * BUILD-SPEC #34 — backdate / shift a rental order's period (SPV-gated via
+   * `backdate`). The client named invoice PILE-UP as a live pain, so this MUST
+   * void the superseded invoice, not leave it hanging: it voids the order's
+   * current unpaid invoice (balanced ledger reversal), shifts the period keeping
+   * the same whole-month length (C3), reissues a fresh invoice for the new period,
+   * and audit-logs the shift. Only an order with an unpaid invoice can be shifted.
+   */
+  async backdateRentalOrder(
+    tenant: { id: string; slug: string; isPkp: boolean },
+    userId: string,
+    rentalOrderId: string,
+    newPeriodStart: Date,
+  ) {
+    return this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const order = await tx.rentalOrder.findUnique({ where: { id: rentalOrderId } });
+      if (!order) throw new NotFoundException("Rental order not found.");
+      const months = wholeMonthsBetween(order.periodStart, order.periodEnd); // C3 — throws if not whole
+      const newPeriodEnd = monthlyPeriodEnd(newPeriodStart, months);
+
+      // Void the superseded (unpaid) invoice(s) for this order — no pile-up.
+      const supersededable = await tx.invoice.findMany({
+        where: { rentalOrderId, status: { in: ["SCHEDULED", "ISSUED", "OVERDUE"] } },
+      });
+      for (const inv of supersededable) {
+        await tx.invoice.update({
+          where: { id: inv.id },
+          data: { status: "VOID", voidedAt: new Date(), voidedByUserId: userId, voidReason: `Backdated to ${newPeriodStart.toISOString().slice(0, 10)}` },
+        });
+        await recordInvoiceVoidedEntries(tx, tenant.id, inv.id);
+      }
+
+      await tx.rentalOrder.update({ where: { id: rentalOrderId }, data: { periodStart: newPeriodStart, periodEnd: newPeriodEnd } });
+
+      // Reissue for the shifted period. Deposit not recharged (first order already carried it).
+      const replacement = await generateRentalOrderInvoice(
+        tx,
+        tenant.id,
+        tenant.slug,
+        tenant.isPkp,
+        { id: order.id, customerId: order.customerId, periodStart: newPeriodStart, periodEnd: newPeriodEnd, priceSnapshot: order.priceSnapshot },
+        { includeDeposit: false },
+      );
+      // Link the newest voided invoice to its replacement for the paper trail.
+      if (supersededable[0]) {
+        await tx.invoice.update({ where: { id: supersededable[0].id }, data: { supersededByInvoiceId: replacement.id } });
+      }
+
+      await tx.auditLog.create({
+        data: {
+          tenantId: tenant.id,
+          actorUserId: userId,
+          action: "BACKDATE_RENTAL_ORDER",
+          entityType: "RentalOrder",
+          entityId: rentalOrderId,
+          metadata: { newPeriodStart: newPeriodStart.toISOString(), newPeriodEnd: newPeriodEnd.toISOString(), voided: supersededable.map((i) => i.id) },
+        },
+      });
+      return { id: rentalOrderId, periodStart: newPeriodStart, periodEnd: newPeriodEnd, replacementInvoiceId: replacement.id, voidedInvoiceIds: supersededable.map((i) => i.id) };
     });
   }
 

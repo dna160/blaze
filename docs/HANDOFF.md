@@ -948,27 +948,28 @@ database-seed + live-verification session, same shape as Session 16).
 
 **What is NOT done yet (remaining R2–R4, precise):**
 
-- **R2 — finance controls + e-sign.** DONE + verified: invoice **void (#33)**,
-  SPV-gated (`void_invoice`), with a balanced ledger reversal — evidence
-  `apps/api/scripts/invoice-void-verify.ts` (ledger balanced after issue AND void;
-  status VOID; audit-logged). Manual **price override (#32)**, SPV-gated
-  (`price_override`), records `overrideMonthlyRate` on the order snapshot (read by
-  `generateRentalOrderInvoice`) + audit log. STILL TO DO: backdate + supersede (#34),
-  bulk export contract bundle (#37), master-agreement + order-acceptance OTP *services*
-  (schema `MasterAgreement`/`OrderAcceptance` exist), and the **Mekari Sign adapter**
-  behind `ESignProvider` (still `MockESignProvider`; rental-order/waitlist contracts
-  are auto-created MOCK-signed).
+- **R2 — finance controls + e-sign.** DONE + verified: **§5 master agreement +
+  order-acceptance (OTP) + Mekari adapter** (`esign-cost-verify.ts`: 1 certified sig,
+  3 OTP orders, 0 extra certs); invoice **void #33** (`invoice-void-verify.ts`,
+  ledger-balanced); manual **price override #32**; **backdate #34** (`backdate-verify.ts`:
+  original VOID + superseded link, replacement ISSUED for shifted period, ledger
+  balanced — no pile-up). All SPV-gated. STILL TO DO: **bulk export contract bundle
+  (#37)** — that's the only remaining R2 item. Mekari stays behind `MockESignProvider`
+  until `MEKARI_*` keys land (`ESIGN_PROVIDER=mekari` selects it).
 - **R3 — comms/ops.** DONE + verified: **backup + restore-verify** (#50 —
   `infra/backup/dump.sh` + `restore-verify.sh`; drill PASS, ledger balanced on the
   restored copy; RUNBOOK §8 log) and the **forward-occupancy calendar** (#47 —
   `ReportingService.forwardOccupancy` + `GET /reports/forward-occupancy`, renewal-aware
-  per #17; live-checked against seed). STILL TO DO: dunning retune to H-7/5/3/1
-  **dual-recipient** (#41/#42 — schema has `Notification.recipientRole`, job not retuned);
-  org-level single WA number (#40 — `Organization.messagingConfig` exists, not wired into
-  the provider); branch onboarding wizard (#45); Railway scheduling + object-storage
-  upload for the backups; Railway security brief (#51); Google OAuth (#2); business
-  multi-number flow (#3 — `CustomerPhone` table exists, no add-number flow);
-  individual/business storefront forms (#4 — `Customer.type` exists).
+  per #17; live-checked against seed). Also DONE: **dunning retune to
+  H-7/5/3/1 dual-recipient (#41/#42)** — `dunning-ladder.job` now reminds the customer
+  AND the branch admin (`tenant.featureFlags.adminNotifyRecipient`), each with its own
+  dedupe; `notify()` carries `recipientRole`. STILL TO DO: org-level single WA number
+  (#40 — the current single-env-credential design already means one number for all
+  branches; `Organization.messagingConfig` is the override seam, not yet resolved by the
+  provider); branch onboarding wizard (#45); Railway backup scheduling + object-storage
+  upload; Railway security brief (#51); Google OAuth (#2); business multi-number flow
+  (#3 — `CustomerPhone` table exists, no add-number flow); individual/business
+  storefront forms (#4 — `Customer.type` exists).
 - **R4 — UI + launch.** Mobile-first storefront (#49), remove unit selection UI (#11 —
   backend already ignores customer unit choice), console screens for the new
   rental-order/waitlist/renewal/org-switcher flows, staff training, cutover. No Next.js
