@@ -77,8 +77,15 @@ export class MekariSignProvider implements ESignProvider {
     const envelopeId = payload.data?.id;
     if (!envelopeId) throw new Error("Mekari webhook missing document id.");
     const raw = (payload.data?.status ?? "").toLowerCase();
-    const status: ParsedEsignWebhookEvent["status"] =
-      raw === "completed" || raw === "signed" ? "SIGNED" : raw === "declined" || raw === "rejected" ? "DECLINED" : "EXPIRED";
+    // Only map KNOWN TERMINAL statuses. An intermediate/unknown status (e.g.
+    // "processing", "sent") must NOT be coerced to a terminal EXPIRED — that
+    // would wrongly kill a still-in-progress signing. Throw so the webhook
+    // handler ignores it and the envelope stays PENDING until a terminal event.
+    let status: ParsedEsignWebhookEvent["status"];
+    if (raw === "completed" || raw === "signed") status = "SIGNED";
+    else if (raw === "declined" || raw === "rejected") status = "DECLINED";
+    else if (raw === "expired") status = "EXPIRED";
+    else throw new Error(`Mekari webhook: non-terminal/unrecognized status "${raw}" — ignoring.`);
     return { envelopeId, status, signedDocumentUrl: payload.data?.signed_document_url };
   }
 }

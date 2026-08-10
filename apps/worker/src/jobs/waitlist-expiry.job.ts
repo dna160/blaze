@@ -1,4 +1,4 @@
-import { fireNextWaitlistEntry, getPrismaClient, withTenantContext } from "@rentos/database";
+import { fireNextWaitlistEntry, getPrismaClient, recordInvoiceVoidedEntries, withTenantContext } from "@rentos/database";
 
 /**
  * BUILD-SPEC C5 rule 3 — payment TTL. A fired waitlist entry that goes unpaid
@@ -20,14 +20,29 @@ export async function runWaitlistExpiry(): Promise<void> {
     await withTenantContext(prisma, tenant.id, async (tx) => {
       const lapsed = await tx.waitlistEntry.findMany({ where: { status: "FIRED", expiresAt: { lt: now } } });
       for (const entry of lapsed) {
-        if (!entry.firedRentalOrderId) continue;
-        const order = await tx.rentalOrder.findUnique({ where: { id: entry.firedRentalOrderId } });
-        if (!order) continue;
+        // Always retire the lapsed entry so it isn't reprocessed every sweep,
+        // even if its fired order has gone missing (orphaned).
+        const order = entry.firedRentalOrderId
+          ? await tx.rentalOrder.findUnique({ where: { id: entry.firedRentalOrderId } })
+          : null;
+        if (!order) {
+          await tx.waitlistEntry.update({ where: { id: entry.id }, data: { status: "EXPIRED" } });
+          continue;
+        }
 
-        await tx.invoice.updateMany({
+        // Void the unpaid fired invoice(s) AND reverse the ledger entries recorded
+        // at issue — otherwise A/R + revenue stay on the books for an invoice that
+        // was cancelled and never collected (the ledger-balance invariant).
+        const unpaid = await tx.invoice.findMany({
           where: { rentalOrderId: order.id, status: { in: ["ISSUED", "SCHEDULED", "OVERDUE"] } },
-          data: { status: "VOID", voidedAt: now, voidReason: "Waitlist payment TTL lapsed" },
         });
+        for (const inv of unpaid) {
+          await tx.invoice.update({
+            where: { id: inv.id },
+            data: { status: "VOID", voidedAt: now, voidReason: "Waitlist payment TTL lapsed" },
+          });
+          await recordInvoiceVoidedEntries(tx, tenant.id, inv.id);
+        }
         await tx.rentalOrder.update({ where: { id: order.id }, data: { status: "CANCELLED" } });
         await tx.waitlistEntry.update({ where: { id: entry.id }, data: { status: "EXPIRED" } });
 

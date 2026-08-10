@@ -45,10 +45,16 @@ export class FinanceController {
     return this.finance.listCreditNotesForInvoice(tenantId, id);
   }
 
-  /** PRD Appendix C RBAC: "Issue credit notes / refunds" — Super Admin, Finance Admin only. */
+  /**
+   * Issue credit notes — a finance reversal. Gated to ADMIN + FINANCE via
+   * `approve_deposit_refund` (the matrix capability whose holders are exactly
+   * {ADMIN, FINANCE}), preserving the old SUPER_ADMIN/FINANCE_ADMIN rule. A
+   * SUPERVISOR (who can void an unpaid invoice) deliberately CANNOT issue credit
+   * notes — that stays a finance action.
+   */
   @Post(":id/credit-notes")
   @UseGuards(CapabilityGuard)
-  @RequireCapability("void_invoice", "approve_deposit_refund")
+  @RequireCapability("approve_deposit_refund")
   createCreditNote(
     @CurrentTenant() tenant: ResolvedTenant,
     @CurrentUser() user: AuthenticatedUser,

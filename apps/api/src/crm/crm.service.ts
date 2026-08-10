@@ -48,8 +48,17 @@ export class CrmService {
    */
   async addPhone(tenantId: string, customerId: string, phone: string) {
     return this.prisma.runInTenantContext(tenantId, async (tx) => {
-      const clash = await tx.customerPhone.findUnique({ where: { tenantId_phone: { tenantId, phone } } });
-      if (clash) throw new ForbiddenException("That number is already attached to an account.");
+      // Clash check must cover BOTH the additional-numbers table AND the canonical
+      // Customer.phone — a legacy customer (created before CustomerPhone existed)
+      // has a login phone but no CustomerPhone row, and that number must not be
+      // attachable to a different account.
+      const [phoneClash, canonicalClash] = await Promise.all([
+        tx.customerPhone.findUnique({ where: { tenantId_phone: { tenantId, phone } } }),
+        tx.customer.findUnique({ where: { tenantId_phone: { tenantId, phone } } }),
+      ]);
+      if (phoneClash || (canonicalClash && canonicalClash.id !== customerId)) {
+        throw new ForbiddenException("That number is already attached to an account.");
+      }
       return tx.customerPhone.create({ data: { tenantId, customerId, phone, isPrimary: false } });
     });
   }

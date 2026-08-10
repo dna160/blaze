@@ -82,39 +82,9 @@ export class WaitlistService {
     );
   }
 
-  /**
-   * C5 rule 3 — sweep FIRED entries whose payment TTL lapsed: void the fired
-   * invoice, mark the entry EXPIRED, free the unit, and fire the next in queue.
-   * Called by the waitlist-expiry worker job; returns the count expired.
-   */
-  async expireLapsed(tenant: ResolvedTenant, now = new Date()): Promise<number> {
-    const lapsed = await this.prisma.runInTenantContext(tenant.id, (tx) =>
-      tx.waitlistEntry.findMany({ where: { status: "FIRED", expiresAt: { lt: now } } }),
-    );
-
-    let expired = 0;
-    for (const entry of lapsed) {
-      if (!entry.firedRentalOrderId) continue;
-      const releasedAssetId = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
-        const order = await tx.rentalOrder.findUnique({ where: { id: entry.firedRentalOrderId! } });
-        if (!order) return null;
-        // Void the unpaid fired invoice(s).
-        await tx.invoice.updateMany({
-          where: { rentalOrderId: order.id, status: { in: ["ISSUED", "SCHEDULED", "OVERDUE"] } },
-          data: { status: "VOID", voidedAt: now, voidReason: "Waitlist payment TTL lapsed" },
-        });
-        await tx.rentalOrder.update({ where: { id: order.id }, data: { status: "CANCELLED" } });
-        await tx.waitlistEntry.update({ where: { id: entry.id }, data: { status: "EXPIRED" } });
-        if (order.assetId) {
-          await tx.asset.update({ where: { id: order.assetId }, data: { status: "AVAILABLE" } });
-        }
-        return order.assetId;
-      });
-      expired++;
-      // Fire the next in queue for the freed unit (own transaction / own lock).
-      if (releasedAssetId) await this.fireNext(tenant, releasedAssetId);
-    }
-    if (expired > 0) this.logger.log(`Expired ${expired} waitlist fire(s) for tenant ${tenant.slug}`);
-    return expired;
-  }
+  // C5 rule 3 — the payment-TTL sweep (void fired invoice + reverse ledger, mark
+  // EXPIRED, free unit, fire next) lives in the waitlist-expiry worker job, which
+  // is the scheduled path. Keeping a second copy here risked drift and a
+  // ledger-reversal omission, so it was removed — see apps/worker/src/jobs/
+  // waitlist-expiry.job.ts.
 }
