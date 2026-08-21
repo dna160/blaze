@@ -77,7 +77,7 @@ pnpm --filter @rentos/database seed             # seeds the demo storage tenant
 pnpm dev   # runs api (:4000), worker, storefront (:3000), console (:3001) in parallel
 ```
 
-Default local tenant: `gudang-aman` (seeded storage operator demo data —
+Default local tenant: `city-storage-kebon-jeruk` (seeded City Storage demo data —
 see `packages/database/prisma/seed.ts`). `NEXT_PUBLIC_DEV_TENANT_SLUG` /
 `NEXT_PUBLIC_TENANT_SLUG` point the frontends at it without needing
 wildcard DNS.
