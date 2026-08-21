@@ -922,6 +922,23 @@ database-seed + live-verification session, same shape as Session 16).
   `organizationId` + `roleAssignments`. **Maker-checker preserved verbatim** — the guard
   only grants the *right* to verify. **Evidence:** `packages/domain/test/rbac.test.ts`
   (23 tests: every matrix cell + the four denials + scope).
+- **C2 user administration (the "set up the hierarchy" surface).** `UsersService` +
+  `UsersController` (`/users` — list/create/update-role/set-status), all `manage_users`
+  gated, plus the console **`/settings/users`** page (admin-only nav; org-scoped admins
+  see every branch and can grant ORGANIZATION scope, branch admins see only their branch).
+  Two guards enforced + verified (`apps/api/scripts/users-admin-verify.ts`): (1) WRITES
+  stay single-tenant — users are created in the console's active tenant (a Super Admin
+  switches branches to add elsewhere), org admins only LIST across the org (read-only);
+  (2) NO privilege escalation — a branch Admin is blocked from granting an ORGANIZATION
+  role. Console builds clean (`/settings/users` in the route manifest).
+  > **Known follow-up (regression from the R0 RBAC rename):** other console pages
+  > (e.g. `deposits`) still gate action buttons on the OLD flat role names
+  > ("SUPER_ADMIN"/"OPS_ADMIN"/"FINANCE_ADMIN"), which the API no longer returns
+  > (`user.roles` now holds base roles ADMIN/FINANCE/SUPERVISOR/STAFF). Those buttons
+  > will not render for anyone until each page is updated to the base roles /
+  > capabilities. The API still enforces correctly; this is UI-gating only. Fix as part
+  > of the R4 console pass. The new `/settings/users` page and `ConsoleShell` already use
+  > the base-role helpers (`isAdmin`/`isOrgScoped` in `lib/auth-client.ts`).
 - **C3 (monthly-only).** `monthly-guard.ts`: `wholeMonthsBetween`/`assertWholeMonths`
   throw `NonIntegerMonthError`; `assertBillingUnitAllowed` gates DAILY/WEEKLY behind
   `featureFlags.allowSubMonthly` (off). Rental-order invoices are whole-month, no proration.

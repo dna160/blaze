@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 
-import { authClient } from "@/lib/auth-client";
+import { authClient, isAdmin } from "@/lib/auth-client";
 
 const NAV = [
   { href: "/bookings", label: "Approval Workbench" },
@@ -15,6 +15,9 @@ const NAV = [
   { href: "/deposits", label: "Deposits" },
   { href: "/reports", label: "Reports" },
 ];
+
+/** Admin-only nav (manage_users). BUILD-SPEC C2 user & role administration. */
+const ADMIN_NAV = [{ href: "/settings/users", label: "Users & Roles" }];
 
 /** Console shell — sidebar nav + top bar, shown once staff is authenticated. */
 export function ConsoleShell({ children }: { children: ReactNode }) {
@@ -32,7 +35,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
       <aside className="w-56 border-r border-brand-600/10 bg-white p-4">
         <div className="mb-6 px-2 text-lg font-semibold">RentOS Console</div>
         <nav className="space-y-1">
-          {NAV.map((item) => (
+          {[...NAV, ...(isAdmin(user) ? ADMIN_NAV : [])].map((item) => (
             <Link
               key={item.href}
               href={item.href}

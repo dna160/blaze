@@ -22,6 +22,7 @@ import { RentalOrderModule } from "./rental-order/rental-order.module.js";
 import { ReportingModule } from "./reporting/reporting.module.js";
 import { SwapRequestsModule } from "./swap-requests/swap-requests.module.js";
 import { TenancyModule } from "./tenancy/tenancy.module.js";
+import { UsersModule } from "./users/users.module.js";
 import { WaitlistModule } from "./waitlist/waitlist.module.js";
 
 @Module({
@@ -43,6 +44,7 @@ import { WaitlistModule } from "./waitlist/waitlist.module.js";
     OrganizationModule,
     RentalOrderModule,
     WaitlistModule,
+    UsersModule,
     ReportingModule,
     SwapRequestsModule,
   ],

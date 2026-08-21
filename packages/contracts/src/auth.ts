@@ -39,6 +39,23 @@ export const ConsoleLoginResponseSchema = z.object({
 });
 export type ConsoleLoginResponse = z.infer<typeof ConsoleLoginResponseSchema>;
 
+/** BUILD-SPEC C2 — staff user creation / role assignment (manage_users, admin only). */
+export const CreateStaffUserRequestSchema = z.object({
+  email: z.string().email(),
+  displayName: z.string().min(1).max(120),
+  password: z.string().min(8),
+  role: BaseRoleSchema,
+  /** ORGANIZATION scope is only grantable by an org-scoped admin (privilege guard, API-enforced). */
+  scope: RoleScopeSchema,
+});
+export type CreateStaffUserRequest = z.infer<typeof CreateStaffUserRequestSchema>;
+
+export const UpdateStaffRoleRequestSchema = z.object({
+  role: BaseRoleSchema,
+  scope: RoleScopeSchema,
+});
+export type UpdateStaffRoleRequest = z.infer<typeof UpdateStaffRoleRequestSchema>;
+
 /**
  * Customer auth — "phone number + WhatsApp OTP (primary)... No passwords
  * in v1 for customers; OTP-only" (PRD §7.1.2). v1 ships the request/verify

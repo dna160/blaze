@@ -8,7 +8,14 @@ import { authClient } from "@/lib/auth-client";
 
 interface LoginResponse {
   accessToken: string;
-  user: { id: string; email: string; displayName: string | null; roles: string[] };
+  user: {
+    id: string;
+    email: string;
+    displayName: string | null;
+    organizationId?: string | null;
+    roles: string[];
+    roleAssignments?: { role: "ADMIN" | "FINANCE" | "SUPERVISOR" | "STAFF"; scope: "ORGANIZATION" | "TENANT"; tenantIds: string[] }[];
+  };
 }
 
 export default function LoginPage() {
