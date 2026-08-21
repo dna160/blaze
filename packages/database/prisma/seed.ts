@@ -38,11 +38,12 @@ async function seedStaffUser(
   email: string,
   displayName: string,
   roleSpecs: RoleSpec[],
+  passwordHash: string = DEMO_PASSWORD_HASH,
 ) {
   const user = await prisma.user.upsert({
     where: { tenantId_email: { tenantId, email } },
-    update: {},
-    create: { tenantId, email, displayName, passwordHash: DEMO_PASSWORD_HASH, status: "ACTIVE" },
+    update: { passwordHash },
+    create: { tenantId, email, displayName, passwordHash, status: "ACTIVE" },
   });
   for (const spec of roleSpecs) {
     await prisma.userRole.upsert({
@@ -128,6 +129,16 @@ async function main() {
   await seedStaffUser(tenant.id, "finance@citystorage.test", "Branch Finance", [
     { role: BaseRole.FINANCE, scope: RoleScope.TENANT, tenantIds: [tenant.id] },
   ]);
+  // Dummy finance login for quick demo/testing — its OWN password (Finance123!),
+  // distinct from the shared RentOS!Demo2026. Same dev-only caveat: never a real
+  // credential. bcrypt(cost 10) hash of "Finance123!".
+  await seedStaffUser(
+    tenant.id,
+    "finance@dummy.test",
+    "Dummy Finance",
+    [{ role: BaseRole.FINANCE, scope: RoleScope.TENANT, tenantIds: [tenant.id] }],
+    "$2a$10$pgX057J4t1FJBYVPPwYG7Ozpi4YIfIbB55VnBgkvd14LUGzANVWxy",
+  );
   await seedStaffUser(tenant.id, "spv@citystorage.test", "Supervisor", [
     { role: BaseRole.SUPERVISOR, scope: RoleScope.TENANT, tenantIds: [tenant.id] },
   ]);
