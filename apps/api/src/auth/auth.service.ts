@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { Injectable, Logger, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { compare } from "bcryptjs";
 import { randomInt } from "node:crypto";
@@ -11,8 +11,23 @@ import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 
 const OTP_TTL_SECONDS = 5 * 60;
 
+/**
+ * DEV-ONLY OTP bypass — for demos/testing before the WhatsApp Cloud API is live.
+ * Returns the accepted bypass code only when BOTH are true: we are NOT in
+ * production (`NODE_ENV !== "production"`) AND `DEV_OTP_BYPASS_CODE` is explicitly
+ * set. Both gates must hold, so the bypass can never authenticate anyone in a
+ * production build even if the env var leaks into it. Returns null when disabled.
+ */
+function devOtpBypassCode(): string | null {
+  if (process.env.NODE_ENV === "production") return null;
+  const code = process.env.DEV_OTP_BYPASS_CODE;
+  return code && code.length > 0 ? code : null;
+}
+
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
@@ -76,12 +91,23 @@ export class AuthService {
   }
 
   async verifyOtp(tenant: ResolvedTenant, phone: string, code: string) {
-    const key = this.otpKey(tenant.id, phone);
-    const stored = await this.redis.client.get(key);
-    if (!stored || stored !== code) {
-      throw new UnauthorizedException("Invalid or expired code.");
+    const bypass = devOtpBypassCode();
+    if (bypass && code === bypass) {
+      // Dev/demo only — accept the fixed code without a real WhatsApp round-trip.
+      // Cannot run in production (see devOtpBypassCode). Loud so it never hides.
+      this.logger.warn(
+        `DEV OTP BYPASS accepted for ${phone} on tenant ${tenant.slug} — disable by unsetting DEV_OTP_BYPASS_CODE / running with NODE_ENV=production.`,
+      );
+      // Clear any real pending code so a subsequent real login isn't confused.
+      await this.redis.client.del(this.otpKey(tenant.id, phone));
+    } else {
+      const key = this.otpKey(tenant.id, phone);
+      const stored = await this.redis.client.get(key);
+      if (!stored || stored !== code) {
+        throw new UnauthorizedException("Invalid or expired code.");
+      }
+      await this.redis.client.del(key);
     }
-    await this.redis.client.del(key);
 
     const customer = await this.crm.getOrCreateByPhone(tenant.id, phone);
     const accessToken = await this.jwt.signAsync({
