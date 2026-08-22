@@ -1,7 +1,8 @@
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { Injectable, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { compare } from "bcryptjs";
 import { randomInt } from "node:crypto";
+import { exchangeCustomerAccessToken } from "@rentos/database";
 
 import { RedisService } from "../common/redis/redis.service.js";
 import { CrmService } from "../crm/crm.service.js";
@@ -10,6 +11,13 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 
 const OTP_TTL_SECONDS = 5 * 60;
+
+interface CustomerLike {
+  id: string;
+  phone: string | null;
+  email: string | null;
+  fullName: string | null;
+}
 
 @Injectable()
 export class AuthService {
@@ -94,6 +102,59 @@ export class AuthService {
     await this.redis.client.del(key);
 
     const customer = await this.crm.getOrCreateByPhone(tenant.id, phone);
+    return this.issueCustomerSession(tenant, customer);
+  }
+
+  /**
+   * Magic link (PRD v2 §9): the token from a `/m/{token}` link in a
+   * WhatsApp/email message. Looked up under the request's tenant RLS
+   * context, so a token minted for tenant A can never resolve against
+   * tenant B even if presented there.
+   */
+  async exchangeMagicLink(tenant: ResolvedTenant, token: string) {
+    const exchanged = await this.prisma.runInTenantContext(tenant.id, (tx) => exchangeCustomerAccessToken(tx, token));
+    if (!exchanged) throw new UnauthorizedException("This link is invalid or has expired. Request a new one from your latest message.");
+    const customer = await this.crm.getById(tenant.id, exchanged.customerId);
+    if (customer.isBlocklisted) throw new UnauthorizedException("This account cannot sign in.");
+    return { ...(await this.issueCustomerSession(tenant, customer)), purpose: exchanged.purpose };
+  }
+
+  /**
+   * Google sign-in via Clerk (PRD v2 D3/§9). Verifies the Clerk session JWT
+   * the storefront obtained client-side, then reads the user's primary
+   * email from Clerk (session tokens don't carry it by default) and
+   * finds/creates the customer by email. `@clerk/backend` is loaded lazily
+   * so a deployment without Clerk configured never touches it.
+   */
+  async exchangeClerkSession(tenant: ResolvedTenant, token: string, phone?: string) {
+    const secretKey = process.env.CLERK_SECRET_KEY;
+    if (!secretKey) {
+      throw new ServiceUnavailableException("Google sign-in is not configured for this storefront (CLERK_SECRET_KEY is unset).");
+    }
+    const clerk = await import("@clerk/backend");
+    let userId: string;
+    try {
+      const payload = await clerk.verifyToken(token, { secretKey });
+      userId = payload.sub;
+    } catch {
+      throw new UnauthorizedException("Google sign-in could not be verified.");
+    }
+    const client = clerk.createClerkClient({ secretKey });
+    const user = await client.users.getUser(userId);
+    const primary = user.emailAddresses.find((e) => e.id === user.primaryEmailAddressId) ?? user.emailAddresses[0];
+    if (!primary?.emailAddress) throw new UnauthorizedException("Your Google account has no email address we can use.");
+    const fullName = [user.firstName, user.lastName].filter(Boolean).join(" ") || undefined;
+
+    const customer = await this.crm.getOrCreateByClerkIdentity(tenant.id, {
+      clerkUserId: userId,
+      email: primary.emailAddress.toLowerCase(),
+      fullName,
+      phone,
+    });
+    return this.issueCustomerSession(tenant, customer);
+  }
+
+  private async issueCustomerSession(tenant: ResolvedTenant, customer: CustomerLike) {
     const accessToken = await this.jwt.signAsync({
       sub: customer.id,
       tenantId: tenant.id,
@@ -102,7 +163,7 @@ export class AuthService {
     });
     return {
       accessToken,
-      customer: { id: customer.id, tenantId: tenant.id, phone: customer.phone, fullName: customer.fullName },
+      customer: { id: customer.id, tenantId: tenant.id, phone: customer.phone, email: customer.email, fullName: customer.fullName },
     };
   }
 

@@ -4,8 +4,11 @@ import {
   CreateAssetRequestSchema,
   CreateAssetTypeRequestSchema,
   RateTierSchema,
+  StorageAvailabilityQuerySchema,
+  TermMonthsSchema,
   UpdateAssetStatusRequestSchema,
   UpdateAssetTypeRequestSchema,
+  UpsertLocationRequestSchema,
 } from "@rentos/contracts";
 
 import { CurrentTenant, CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
@@ -56,7 +59,7 @@ export class CatalogController {
     return { assetTypeId: id, availableCount };
   }
 
-  /** Live price preview for the storefront's Daily/Weekly/Monthly tier picker — see CatalogService.quote. */
+  /** Live price preview — term proforma + full schedule for storage (PRD v2 D1), legacy tiers for everything else. See CatalogService.quote. */
   @Get("asset-types/:id/quote")
   async quote(
     @CurrentTenant() tenant: ResolvedTenant,
@@ -64,14 +67,49 @@ export class CatalogController {
     @Query("startDate") startDate: string,
     @Query("endDate") endDate?: string,
     @Query("rateTier") rateTierRaw?: string,
+    @Query("termMonths") termMonthsRaw?: string,
   ) {
     const rateTier = rateTierRaw ? RateTierSchema.parse(rateTierRaw) : undefined;
-    return this.catalog.quote(tenant.id, tenant.isPkp, id, { startDate, endDate, rateTier });
+    const termMonths = termMonthsRaw ? TermMonthsSchema.parse(Number(termMonthsRaw)) : undefined;
+    return this.catalog.quote(tenant, id, { startDate, endDate, rateTier, termMonths });
+  }
+
+  /** PRD v2 §4.3 — storefront step 3 live availability check (public, same trust level as the catalog). */
+  @Get("availability")
+  storageAvailability(@CurrentTenant() tenant: ResolvedTenant, @Query(new ZodValidationPipe(StorageAvailabilityQuerySchema)) query: ReturnType<typeof StorageAvailabilityQuerySchema.parse>) {
+    return this.catalog.storageAvailability(tenant, query);
   }
 
   @Get("locations")
   listLocations(@CurrentTenantId() tenantId: string) {
     return this.catalog.listLocations(tenantId);
+  }
+
+  /** PRD v2 §4.1 storefront step 2 — sizes sold at a branch with live counts (public). */
+  @Get("locations/:id/asset-types")
+  locationAssetTypes(@CurrentTenant() tenant: ResolvedTenant, @Param("id") id: string) {
+    return this.catalog.locationAssetTypes(tenant, id);
+  }
+
+  @Post("locations")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  createLocation(
+    @CurrentTenantId() tenantId: string,
+    @Body(new ZodValidationPipe(UpsertLocationRequestSchema)) body: ReturnType<typeof UpsertLocationRequestSchema.parse>,
+  ) {
+    return this.catalog.createLocation(tenantId, body);
+  }
+
+  @Patch("locations/:id")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  updateLocation(
+    @CurrentTenantId() tenantId: string,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(UpsertLocationRequestSchema)) body: ReturnType<typeof UpsertLocationRequestSchema.parse>,
+  ) {
+    return this.catalog.updateLocation(tenantId, id, body);
   }
 
   @Get("assets")

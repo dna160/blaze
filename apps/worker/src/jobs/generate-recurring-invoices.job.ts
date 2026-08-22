@@ -6,7 +6,7 @@ import {
 } from "@rentos/database";
 import { nextAnchorDate, recurringLeaseBookingFsm, type BookingActivationContext } from "@rentos/domain";
 
-import { notify } from "../notify.js";
+import { notifyCustomer } from "../notify.js";
 
 const DEFAULT_LEAD_DAYS = 7;
 
@@ -24,8 +24,11 @@ export async function runGenerateRecurringInvoices(leadDays = DEFAULT_LEAD_DAYS)
 
   for (const tenant of tenants) {
     await withTenantContext(prisma, tenant.id, async (tx) => {
+      // Term leases (PRD v2, `termMonths` set) carry their whole schedule as
+      // SCHEDULED invoices issued by issue-scheduled-invoices.job.ts — this
+      // anchor-date generator only serves the legacy indefinite leases.
       const activeLeases = await tx.booking.findMany({
-        where: { status: "ACTIVE", bookingModel: "RECURRING_LEASE", anchorDay: { not: null } },
+        where: { status: "ACTIVE", bookingModel: "RECURRING_LEASE", anchorDay: { not: null }, termMonths: null },
       });
 
       for (const booking of activeLeases) {
@@ -75,12 +78,13 @@ export async function runGenerateRecurringInvoices(leadDays = DEFAULT_LEAD_DAYS)
         });
 
         const customer = await tx.customer.findUniqueOrThrow({ where: { id: booking.customerId } });
-        await notify({
+        await notifyCustomer({
           tenantId: tenant.id,
-          customerId: customer.id,
+          tenantSlug: tenant.slug,
+          customer,
           templateKey: "invoice_issued",
-          recipient: customer.phone,
-          variables: { invoiceNumber: invoice.invoiceNumber, totalAmount: invoice.totalAmount.toString() },
+          variables: { invoiceNumber: invoice.invoiceNumber, totalAmount: invoice.totalAmount.toString(), dueDate: invoice.dueDate.toISOString().slice(0, 10) },
+          link: { purpose: "INVOICE", next: `/portal/invoices/${invoice.id}` },
         });
       }
     });

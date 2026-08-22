@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
-import { money, roundMoney } from "@rentos/domain";
+import { bucketReceivables, money, roundMoney } from "@rentos/domain";
+import type { ArAgingResponse } from "@rentos/contracts";
 
 import { PrismaService } from "../prisma/prisma.service.js";
 
@@ -20,24 +21,31 @@ export class ReportingService {
     });
   }
 
-  async arAging(tenantId: string) {
+  /**
+   * PRD v2 §5.2 — AR aging as of any date with a forward horizon: what's
+   * overdue (by days past due) AND what's coming due in the next 30/60/90
+   * days. SCHEDULED invoices (term payment schedules) are what make the
+   * forward view real rather than a projection. The flat numeric buckets
+   * the v1 reports page read are still returned for compatibility —
+   * "current" there means due today or not yet due within the horizon,
+   * matching the old point-in-time semantics.
+   */
+  async arAging(tenantId: string, asOf = new Date(), horizonDays = 30): Promise<ArAgingResponse> {
+    if (Number.isNaN(asOf.getTime())) throw new BadRequestException("asOf must be a valid date.");
+    const asOfDay = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate());
     return this.prisma.runInTenantContext(tenantId, async (tx) => {
       const unpaid = await tx.invoice.findMany({
-        where: { status: { in: ["ISSUED", "OVERDUE"] } },
-        select: { totalAmount: true, dueDate: true },
+        where: { status: { in: ["ISSUED", "OVERDUE", "SCHEDULED"] } },
+        select: { totalAmount: true, dueDate: true, status: true },
       });
-
-      const now = Date.now();
-      const buckets = { current: 0, d1_30: 0, d31_60: 0, d60_plus: 0 };
-      for (const inv of unpaid) {
-        const daysOverdue = Math.floor((now - inv.dueDate.getTime()) / (1000 * 60 * 60 * 24));
-        const amount = Number(inv.totalAmount);
-        if (daysOverdue <= 0) buckets.current += amount;
-        else if (daysOverdue <= 30) buckets.d1_30 += amount;
-        else if (daysOverdue <= 60) buckets.d31_60 += amount;
-        else buckets.d60_plus += amount;
-      }
-      return buckets;
+      const buckets = bucketReceivables(unpaid, asOfDay, horizonDays);
+      return {
+        ...buckets,
+        current: Number(buckets.overdue.current) + Number(buckets.comingDue.total),
+        d1_30: Number(buckets.overdue.d1_30),
+        d31_60: Number(buckets.overdue.d31_60),
+        d60_plus: Number(buckets.overdue.d60_plus),
+      };
     });
   }
 

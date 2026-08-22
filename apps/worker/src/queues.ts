@@ -4,11 +4,17 @@ import IORedis from "ioredis";
 import { deliverTenantWebhook, markWebhookDeliveryFailed, type WebhookDeliveryJobPayload } from "./jobs/deliver-tenant-webhook.job.js";
 import { runDunningLadder } from "./jobs/dunning-ladder.job.js";
 import { runGenerateRecurringInvoices } from "./jobs/generate-recurring-invoices.job.js";
+import { runIssueScheduledInvoices } from "./jobs/issue-scheduled-invoices.job.js";
 import { runLedgerBalanceCheck } from "./jobs/ledger-balance-check.job.js";
+import { runTermLifecycle } from "./jobs/term-lifecycle.job.js";
 import { runPlatformBilling } from "./jobs/platform-billing.job.js";
 import { runSyncOtaCalendars } from "./jobs/sync-ota-calendars.job.js";
 
 export const INVOICE_GENERATION_QUEUE = "invoice-generation";
+/** PRD v2 §8 — issues the SCHEDULED cycles of term payment schedules on their issue date. */
+export const SCHEDULED_INVOICE_ISSUE_QUEUE = "scheduled-invoice-issue";
+/** PRD v2 P6 — expires stale requests, ends terms, applies notice dates. */
+export const TERM_LIFECYCLE_QUEUE = "term-lifecycle";
 export const DUNNING_LADDER_QUEUE = "dunning-ladder";
 export const LEDGER_BALANCE_CHECK_QUEUE = "ledger-balance-check";
 export const OTA_CALENDAR_SYNC_QUEUE = "ota-calendar-sync";
@@ -37,6 +43,21 @@ export async function scheduleRepeatableJobs(connection: IORedis): Promise<void>
   const ledgerQueue = new Queue(LEDGER_BALANCE_CHECK_QUEUE, { connection });
   const otaSyncQueue = new Queue(OTA_CALENDAR_SYNC_QUEUE, { connection });
   const platformBillingQueue = new Queue(PLATFORM_BILLING_QUEUE, { connection });
+  const scheduledIssueQueue = new Queue(SCHEDULED_INVOICE_ISSUE_QUEUE, { connection });
+  const termLifecycleQueue = new Queue(TERM_LIFECYCLE_QUEUE, { connection });
+
+  // PRD v2: run the term clock before the invoice issuer so a lease that
+  // ended today doesn't get a cycle issued in the same tick.
+  await termLifecycleQueue.add(
+    "tick",
+    {},
+    { repeat: { pattern: process.env.TERM_LIFECYCLE_CRON ?? "30 0 * * *" }, jobId: "term-lifecycle-daily" },
+  );
+  await scheduledIssueQueue.add(
+    "tick",
+    {},
+    { repeat: { pattern: process.env.SCHEDULED_INVOICE_ISSUE_CRON ?? "45 0 * * *" }, jobId: "scheduled-invoice-issue-daily" },
+  );
 
   await invoiceQueue.add(
     "tick",
@@ -72,6 +93,8 @@ export async function scheduleRepeatableJobs(connection: IORedis): Promise<void>
   );
 
   await invoiceQueue.close();
+  await scheduledIssueQueue.close();
+  await termLifecycleQueue.close();
   await dunningQueue.close();
   await ledgerQueue.close();
   await otaSyncQueue.close();
@@ -85,6 +108,26 @@ export function startWorkers(connection: IORedis): Worker[] {
       console.log(`[${INVOICE_GENERATION_QUEUE}] tick started (job ${job.id})`);
       await runGenerateRecurringInvoices();
       console.log(`[${INVOICE_GENERATION_QUEUE}] tick completed`);
+    },
+    { connection },
+  );
+
+  const scheduledIssueWorker = new Worker(
+    SCHEDULED_INVOICE_ISSUE_QUEUE,
+    async (job: Job) => {
+      console.log(`[${SCHEDULED_INVOICE_ISSUE_QUEUE}] tick started (job ${job.id})`);
+      await runIssueScheduledInvoices();
+      console.log(`[${SCHEDULED_INVOICE_ISSUE_QUEUE}] tick completed`);
+    },
+    { connection },
+  );
+
+  const termLifecycleWorker = new Worker(
+    TERM_LIFECYCLE_QUEUE,
+    async (job: Job) => {
+      console.log(`[${TERM_LIFECYCLE_QUEUE}] tick started (job ${job.id})`);
+      await runTermLifecycle();
+      console.log(`[${TERM_LIFECYCLE_QUEUE}] tick completed`);
     },
     { connection },
   );
@@ -145,9 +188,9 @@ export function startWorkers(connection: IORedis): Worker[] {
     }
   });
 
-  for (const worker of [invoiceWorker, dunningWorker, ledgerWorker, otaSyncWorker, platformBillingWorker]) {
+  for (const worker of [invoiceWorker, scheduledIssueWorker, termLifecycleWorker, dunningWorker, ledgerWorker, otaSyncWorker, platformBillingWorker]) {
     worker.on("failed", (job, err) => console.error(`Job ${job?.id} in ${job?.queueName} failed:`, err));
   }
 
-  return [invoiceWorker, dunningWorker, ledgerWorker, otaSyncWorker, platformBillingWorker, webhookDeliveryWorker];
+  return [invoiceWorker, scheduledIssueWorker, termLifecycleWorker, dunningWorker, ledgerWorker, otaSyncWorker, platformBillingWorker, webhookDeliveryWorker];
 }

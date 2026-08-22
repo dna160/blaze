@@ -8,7 +8,8 @@
 // independent of the ORM.
 
 generator client {
-  provider      = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
   output        = "../generated/client"
   // "native" covers local dev (whatever host you're running on); the
   // musl targets cover the Alpine-based Docker runtime images (infra/docker/*)
@@ -66,6 +67,10 @@ enum AssetStatus {
 /// to know the value is one of these.
 enum BookingStatus {
   DRAFT
+  /// RECURRING_LEASE only (PRD v2 §7): submitted while the chosen size/branch
+  /// had no capacity for the requested window. Holds no unit. Staff
+  /// "offer a unit" to move it to PENDING_APPROVAL once capacity frees up.
+  WAITLISTED
   PENDING_APPROVAL
   NEEDS_INFO
   APPROVED
@@ -141,6 +146,14 @@ enum KycStatus {
 enum KycVerificationSource {
   MANUAL
   AUTO
+}
+
+/// Which channel every customer-facing message goes out on (PRD v2 D3).
+/// WHATSAPP is the default for phone/OTP customers; a customer who signed
+/// in with Google (Clerk) is keyed by email and gets EMAIL instead.
+enum CustomerChannel {
+  WHATSAPP
+  EMAIL
 }
 
 enum SwapRequestStatus {
@@ -243,10 +256,14 @@ model Location {
   name      String
   address   String?
   timezone  String   @default("Asia/Jakarta")
+  /// WGS84 — drives the storefront's "closest branch to you" map (PRD v2 §4.1). Null = not shown on the map.
+  latitude  Float?
+  longitude Float?
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  assets Asset[]
+  assets   Asset[]
+  bookings Booking[]
 
   @@index([tenantId])
   @@map("locations")
@@ -288,10 +305,15 @@ model Customer {
   id              String    @id @default(uuid()) @db.Uuid
   tenantId        String    @db.Uuid @map("tenant_id")
   tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  phone           String
+  /// Nullable since PRD v2 D3: a Google-signed-in customer is keyed by email and may not have given a WhatsApp number yet.
+  phone           String?
   email           String?
   fullName        String?   @map("full_name")
   kycStatus       KycStatus @default(NOT_SUBMITTED) @map("kyc_status")
+  /// Routes every outbound message — see CustomerChannel.
+  preferredChannel CustomerChannel @default(WHATSAPP) @map("preferred_channel")
+  /// Clerk user id for customers who signed in with Google (PRD v2 §9). Null for phone/OTP customers.
+  clerkUserId     String?   @map("clerk_user_id")
   isBlocklisted   Boolean   @default(false) @map("is_blocklisted")
   blocklistReason String?   @map("blocklist_reason")
   notes           String?
@@ -301,10 +323,37 @@ model Customer {
   kycDocuments KycDocument[]
   bookings     Booking[]
   invoices     Invoice[]
+  accessTokens CustomerAccessToken[]
 
   @@unique([tenantId, phone])
+  @@unique([tenantId, email])
+  @@unique([tenantId, clerkUserId])
   @@index([tenantId])
   @@map("customers")
+}
+
+/// Magic-link credential (PRD v2 §9): a customer-facing message carries
+/// `{storefront}/m/{token}`; exchanging it issues a normal customer JWT
+/// without an OTP round-trip. Only the SHA-256 hash is stored. Multi-use
+/// until `expiresAt` (30 days) or `revokedAt`, one live token per
+/// (customer, purpose) — re-issuing revokes the previous one.
+model CustomerAccessToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  tenantId   String    @db.Uuid @map("tenant_id")
+  customerId String    @db.Uuid @map("customer_id")
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique @map("token_hash")
+  /// e.g. KYC | BOOKING | INVOICE | PORTAL — which message minted it, for audit only.
+  purpose    String
+  expiresAt  DateTime  @map("expires_at")
+  useCount   Int       @default(0) @map("use_count")
+  lastUsedAt DateTime? @map("last_used_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([customerId])
+  @@map("customer_access_tokens")
 }
 
 model KycDocument {
@@ -400,6 +449,9 @@ model Booking {
   assetType           AssetType     @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
   assetId             String?       @db.Uuid @map("asset_id")
   asset               Asset?        @relation(fields: [assetId], references: [id])
+  /// The branch the customer chose (PRD v2 §4.1). Set for every RECURRING_LEASE booking since v2 — a WAITLISTED booking has no asset yet, so this is the only way to know where it wants to be.
+  locationId          String?       @db.Uuid @map("location_id")
+  location            Location?     @relation(fields: [locationId], references: [id])
   bookingModel        BookingModel  @map("booking_model")
   /// RECURRING_LEASE only — see RateTier. Ignored for other booking models.
   rateTier            RateTier      @default(MONTHLY) @map("rate_tier")
@@ -408,6 +460,14 @@ model Booking {
   endDate             DateTime?     @map("end_date")
   /// Day-of-month billing anchor, RECURRING_LEASE only.
   anchorDay           Int?          @map("anchor_day")
+  /// RECURRING_LEASE term in months (1 / 3 / 6 / 12, PRD v2 D1). Null = a legacy indefinite month-to-month lease from before v2.
+  termMonths          Int?          @map("term_months")
+  /// Set when this booking extends a previous term on the same unit by the same customer — exempts it from the parent's blackout month (PRD v2 D2).
+  extendsBookingId    String?       @db.Uuid @map("extends_booking_id")
+  /// Pipeline timestamps (PRD v2 §5.1) — the stage is derived from these plus the customer's kycStatus and whether invoice #0 exists.
+  kycRequestedAt      DateTime?     @map("kyc_requested_at")
+  contractGeneratedAt DateTime?     @map("contract_generated_at")
+  waitlistedAt        DateTime?     @map("waitlisted_at")
   /// Pricing terms frozen at submission time — never re-derived from AssetType later.
   priceSnapshot       Json          @map("price_snapshot")
   /// Soft-reservation TTL while PENDING_APPROVAL, prevents indefinite inventory lock.
@@ -462,6 +522,8 @@ model Contract {
   /// it's the document that was sent out, replaced with the signed version
   /// once the provider's webhook confirms completion.
   documentUrl     String?   @map("document_url")
+  /// The generated (unsigned) rental agreement PDF — PRD v2 P9. `documentUrl` above stays the signed version.
+  unsignedDocumentUrl String? @map("unsigned_document_url")
   signedAt        DateTime? @map("signed_at")
   signedByName    String?   @map("signed_by_name")
   /// Set by whichever ESignProvider handled this contract (MOCK by default).
@@ -498,6 +560,10 @@ model Invoice {
   periodStart           DateTime?     @map("period_start")
   periodEnd             DateTime?     @map("period_end")
   supersededByInvoiceId String?       @db.Uuid @map("superseded_by_invoice_id")
+  /// Position in a term's payment schedule (PRD v2 §8): 0 = the proforma (month 1 + deposit + admin fee), 1..N-1 = the monthly cycles. Null for invoices outside a schedule (legacy leases, credit replacements, final settlements).
+  scheduleIndex         Int?          @map("schedule_index")
+  /// Generated PDF (proforma / invoice) storage key — see apps/api DocumentsService.
+  documentUrl           String?       @map("document_url")
   createdAt              DateTime     @default(now()) @map("created_at")
   updatedAt               DateTime    @updatedAt @map("updated_at")
 
