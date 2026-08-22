@@ -4,8 +4,9 @@ import { ApiTags } from "@nestjs/swagger";
 import { CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
-import { Roles } from "../common/decorators/roles.decorator.js";
-import { RolesGuard } from "../common/guards/roles.guard.js";
+import { RequireCapability } from "../common/decorators/require-capability.decorator.js";
+import { CapabilityGuard } from "../common/guards/capability.guard.js";
+import { StaffGuard } from "../common/guards/staff.guard.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
 
 import { CrmService } from "./crm.service.js";
@@ -23,22 +24,20 @@ export class CrmController {
   }
 
   @Get()
-  @UseGuards(RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN", "VIEWER")
+  @UseGuards(StaffGuard)
   list(@CurrentTenantId() tenantId: string) {
     return this.crm.listCustomers(tenantId);
   }
 
   @Get(":id")
-  @UseGuards(RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN", "VIEWER")
+  @UseGuards(StaffGuard)
   get(@CurrentTenantId() tenantId: string, @Param("id") id: string) {
     return this.crm.getById(tenantId, id);
   }
 
   @Patch(":id/blocklist")
-  @UseGuards(RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("approve_booking")
   setBlocklist(
     @CurrentTenantId() tenantId: string,
     @Param("id") id: string,

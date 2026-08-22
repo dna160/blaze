@@ -1,9 +1,14 @@
 import {
   computeCreditReplacementDraft,
+  computeDeposit,
+  computeTax,
   getBookingModelStrategy,
   invoiceFsm,
   money,
+  roundMoney,
+  sumMoney,
   type BookingWindow,
+  type DepositRule,
   type InvoiceDraft,
   type InvoiceSnapshot,
   type PricingConfig,
@@ -70,6 +75,8 @@ function dueDateFor(issueDate: Date): Date {
 interface InvoiceOwner {
   bookingId: string | null;
   customerId: string;
+  /** C4 — set when the invoice bills a RentalOrder rather than a legacy Booking. */
+  rentalOrderId?: string | null;
 }
 
 async function persistInvoiceCore(
@@ -87,6 +94,7 @@ async function persistInvoiceCore(
     data: {
       tenantId,
       bookingId: owner.bookingId,
+      rentalOrderId: owner.rentalOrderId ?? null,
       customerId: owner.customerId,
       invoiceNumber,
       status,
@@ -218,6 +226,81 @@ export async function generateFinalSettlement(
   const window: BookingWindow = { startDate: booking.startDate, anchorDay: booking.anchorDay ?? undefined };
   const draft = strategy.computeFinalSettlement(window, toPricingConfig(booking.priceSnapshot), { isTenantPkp }, effectiveEndDate);
   return persistInvoice(tx, tenantId, tenantSlug, booking, draft);
+}
+
+export interface RentalOrderForInvoicing {
+  id: string;
+  customerId: string;
+  periodStart: Date;
+  periodEnd: Date;
+  priceSnapshot: unknown;
+}
+
+interface RentalOrderPriceSnapshot {
+  basePrice: number;
+  currency?: string;
+  adminFee?: number;
+  depositRule?: DepositRule;
+  taxInclusive?: boolean;
+  /** #32 — hand-rounded monthly rate override; wins over basePrice when present. */
+  overrideMonthlyRate?: number;
+}
+
+/**
+ * BUILD-SPEC C4 — bill one whole month for a RentalOrder. No proration (C3):
+ * the period is exactly [periodStart, periodEnd) and the rent line is a full
+ * month. The deposit line is included only on the customer's FIRST order
+ * (includeDeposit); renewals carry the deposit forward. Reuses persistInvoiceCore
+ * so the ledger treatment is identical to every other invoice in the system.
+ */
+export async function generateRentalOrderInvoice(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  tenantSlug: string,
+  isTenantPkp: boolean,
+  order: RentalOrderForInvoicing,
+  opts: { includeDeposit: boolean },
+) {
+  const p = order.priceSnapshot as RentalOrderPriceSnapshot;
+  const rent = roundMoney(money(p.overrideMonthlyRate ?? p.basePrice));
+  const adminFee = p.adminFee !== undefined ? roundMoney(money(p.adminFee)) : money(0);
+  const deposit = opts.includeDeposit ? computeDeposit(p.depositRule, rent) : money(0);
+
+  // Deposit is a liability, never taxed/revenue (mirrors ledger.ts). Tax applies
+  // to rent + admin fee only.
+  const taxable = rent.plus(adminFee);
+  const tax = computeTax(taxable, { isTenantPkp, taxInclusive: p.taxInclusive ?? false });
+
+  const lines: InvoiceDraft["lines"] = [
+    { description: "Monthly rent", quantity: money(1), unitPrice: rent, amount: rent, lineType: "RENT" },
+  ];
+  if (adminFee.greaterThan(0)) {
+    lines.push({ description: "Admin fee", quantity: money(1), unitPrice: adminFee, amount: adminFee, lineType: "ADMIN_FEE" });
+  }
+  if (deposit.greaterThan(0)) {
+    lines.push({ description: "Security deposit", quantity: money(1), unitPrice: deposit, amount: deposit, lineType: "DEPOSIT" });
+  }
+  if (tax.taxAmount.greaterThan(0)) {
+    lines.push({ description: "PPN 11%", quantity: money(1), unitPrice: tax.taxAmount, amount: tax.taxAmount, lineType: "TAX" });
+  }
+
+  const subtotal = sumMoney(lines.filter((l) => l.lineType !== "TAX").map((l) => l.amount));
+  const draft: InvoiceDraft = {
+    subtotal: roundMoney(subtotal),
+    taxAmount: tax.taxAmount,
+    totalAmount: roundMoney(subtotal.plus(tax.taxAmount)),
+    lines,
+    periodStart: order.periodStart,
+    periodEnd: order.periodEnd,
+  };
+
+  return persistInvoiceCore(
+    tx,
+    tenantId,
+    tenantSlug,
+    { bookingId: null, customerId: order.customerId, rentalOrderId: order.id },
+    draft,
+  );
 }
 
 export async function markInvoicePaid(tx: Prisma.TransactionClient, invoiceId: string) {

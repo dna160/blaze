@@ -32,5 +32,5 @@ GROUP BY tenant_id, EXTRACT(YEAR FROM created_at), EXTRACT(MONTH FROM created_at
 ALTER TABLE "invoice_number_counters" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "invoice_number_counters" FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON "invoice_number_counters"
-  USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
-  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+  USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);

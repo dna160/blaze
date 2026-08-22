@@ -67,11 +67,11 @@ ALTER TABLE "ota_blocked_dates" ADD CONSTRAINT "ota_blocked_dates_subscription_i
 ALTER TABLE "ota_calendar_subscriptions" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "ota_calendar_subscriptions" FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON "ota_calendar_subscriptions"
-  USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
-  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+  USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
 
 ALTER TABLE "ota_blocked_dates" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "ota_blocked_dates" FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON "ota_blocked_dates"
-  USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
-  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+  USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);

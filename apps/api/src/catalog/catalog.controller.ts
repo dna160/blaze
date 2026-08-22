@@ -9,11 +9,12 @@ import {
 } from "@rentos/contracts";
 
 import { CurrentTenant, CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
-import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
-import { Roles } from "../common/decorators/roles.decorator.js";
+import { RequireCapability } from "../common/decorators/require-capability.decorator.js";
+import { CapabilityGuard } from "../common/guards/capability.guard.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
-import { RolesGuard } from "../common/guards/roles.guard.js";
+import { StaffGuard } from "../common/guards/staff.guard.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
+import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 
 import { CatalogService } from "./catalog.service.js";
 
@@ -33,8 +34,7 @@ export class CatalogController {
   // otherwise be swallowed by the :id param route below.
   /** Staff-only — includes unpublished/draft AssetTypes, unlike the public list above. See CatalogService.listAllAssetTypes. */
   @Get("asset-types/all")
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(JwtAuthGuard, StaffGuard)
   listAllAssetTypes(@CurrentTenantId() tenantId: string) {
     return this.catalog.listAllAssetTypes(tenantId);
   }
@@ -86,16 +86,15 @@ export class CatalogController {
 
   /** Staff-only — includes occupant PII, unlike the public asset list above. See CatalogService.unitMap. */
   @Get("assets/unit-map")
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN", "VIEWER")
+  @UseGuards(JwtAuthGuard, StaffGuard)
   unitMap(@CurrentTenantId() tenantId: string, @Query("locationId") locationId?: string) {
     return this.catalog.unitMap(tenantId, { locationId });
   }
 
   /** Catalog setup (Session 23) — staff create/edit their own AssetType/Asset rows instead of seed data or a direct DB edit. */
   @Post("asset-types")
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("manage_users")
   createAssetType(
     @CurrentTenantId() tenantId: string,
     @Body(new ZodValidationPipe(CreateAssetTypeRequestSchema)) body: ReturnType<typeof CreateAssetTypeRequestSchema.parse>,
@@ -104,8 +103,8 @@ export class CatalogController {
   }
 
   @Patch("asset-types/:id")
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("manage_users")
   updateAssetType(
     @CurrentTenantId() tenantId: string,
     @Param("id") id: string,
@@ -115,8 +114,8 @@ export class CatalogController {
   }
 
   @Post("assets")
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("manage_users")
   createAsset(
     @CurrentTenantId() tenantId: string,
     @Body(new ZodValidationPipe(CreateAssetRequestSchema)) body: ReturnType<typeof CreateAssetRequestSchema.parse>,
@@ -125,8 +124,8 @@ export class CatalogController {
   }
 
   @Patch("assets/:id/status")
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("manage_users")
   updateAssetStatus(
     @CurrentTenantId() tenantId: string,
     @Param("id") id: string,

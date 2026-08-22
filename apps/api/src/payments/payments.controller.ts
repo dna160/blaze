@@ -20,9 +20,10 @@ import type { Request, Response } from "express";
 
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
-import { Roles } from "../common/decorators/roles.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
-import { RolesGuard } from "../common/guards/roles.guard.js";
+import { RequireCapability } from "../common/decorators/require-capability.decorator.js";
+import { CapabilityGuard } from "../common/guards/capability.guard.js";
+import { StaffGuard } from "../common/guards/staff.guard.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
 import { TenancyService } from "../tenancy/tenancy.service.js";
@@ -51,8 +52,8 @@ export class PaymentsController {
 
   /** PRD §7.2.4: Super Admin / Ops Admin record manual payments with a proof-of-payment upload (RBAC Appendix C). Never finalizes by itself — see verify(). */
   @Post("manual")
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("record_payment")
   @UseInterceptors(FileInterceptor("file"))
   recordManual(
     @CurrentTenant() tenant: ResolvedTenant,
@@ -75,16 +76,15 @@ export class PaymentsController {
 
   /** PRD §7.2.4 maker-checker: Finance Admin (or Super Admin) verifies — never the recorder. */
   @Post(":id/verify")
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("SUPER_ADMIN", "FINANCE_ADMIN")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("verify_payment")
   verifyManual(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
     return this.payments.verifyManual(tenant, user.id, id);
   }
 
   /** Staff-only proof-of-payment preview (recorder, verifier, or any Finance/Ops role). */
   @Get(":id/file")
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN")
+  @UseGuards(JwtAuthGuard, StaffGuard)
   async getFile(@CurrentTenant() tenant: ResolvedTenant, @Param("id") id: string, @Res() res: Response) {
     const result = await this.payments.getProofFile(tenant, id);
     if (result.kind === "redirect") {

@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
-import { money, roundMoney } from "@rentos/domain";
+import { bucketReceivables, money, roundMoney } from "@rentos/domain";
+import type { ArAgingResponse } from "@rentos/contracts";
 
 import { PrismaService } from "../prisma/prisma.service.js";
 
@@ -20,24 +21,75 @@ export class ReportingService {
     });
   }
 
-  async arAging(tenantId: string) {
+  /**
+   * BUILD-SPEC #47 — the forward-occupancy calendar ("which units are empty next
+   * month"), the client's favourite screen in the old system. For a target month,
+   * per asset type: total units, how many are held by a rental order overlapping
+   * that month, and how many are free. #17: an order counts as occupying while it
+   * is ACTIVE or RENEWAL_OFFERED (a unit is NOT free until non-renewal is
+   * confirmed), as well as while it is being approved/paid.
+   */
+  async forwardOccupancy(tenantId: string, year: number, month: number) {
+    const monthStart = new Date(Date.UTC(year, month - 1, 1));
+    const monthEnd = new Date(Date.UTC(year, month, 1));
+    const OCCUPYING = ["APPROVED", "AWAITING_PAYMENT", "ACTIVE", "RENEWAL_OFFERED", "RENEWAL_CONFIRMED", "EXPIRING"] as const;
+
+    return this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const assetTypes = await tx.assetType.findMany({ orderBy: { name: "asc" } });
+      const rows = [];
+      for (const at of assetTypes) {
+        const totalUnits = await tx.asset.count({ where: { assetTypeId: at.id, status: { not: "RETIRED" } } });
+        // Distinct units held by an overlapping, occupying order.
+        const orders = await tx.rentalOrder.findMany({
+          where: {
+            assetTypeId: at.id,
+            assetId: { not: null },
+            status: { in: [...OCCUPYING] },
+            periodStart: { lt: monthEnd },
+            periodEnd: { gt: monthStart },
+          },
+          select: { assetId: true },
+          distinct: ["assetId"],
+        });
+        const occupied = orders.length;
+        rows.push({
+          assetTypeId: at.id,
+          assetType: at.name,
+          totalUnits,
+          occupiedNextPeriod: occupied,
+          freeNextPeriod: Math.max(0, totalUnits - occupied),
+        });
+      }
+      return { month: `${year}-${String(month).padStart(2, "0")}`, assetTypes: rows };
+    });
+  }
+
+  /**
+   * AR aging as of any date with a forward horizon (§5.2): what is overdue
+   * (bucketed by days past due) AND what comes due in the next 30/60/90 days.
+   * SCHEDULED invoices are what make the forward half real rather than a
+   * projection — a renewal's next-period invoice exists before it is issued.
+   *
+   * The flat numeric buckets the v1 reports page reads are still returned for
+   * compatibility: "current" there means due today or not yet due within the
+   * horizon, matching the old point-in-time semantics.
+   */
+  async arAging(tenantId: string, asOf = new Date(), horizonDays = 30): Promise<ArAgingResponse> {
+    if (Number.isNaN(asOf.getTime())) throw new BadRequestException("asOf must be a valid date.");
+    const asOfDay = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate());
     return this.prisma.runInTenantContext(tenantId, async (tx) => {
       const unpaid = await tx.invoice.findMany({
-        where: { status: { in: ["ISSUED", "OVERDUE"] } },
-        select: { totalAmount: true, dueDate: true },
+        where: { status: { in: ["ISSUED", "OVERDUE", "SCHEDULED"] } },
+        select: { totalAmount: true, dueDate: true, status: true },
       });
-
-      const now = Date.now();
-      const buckets = { current: 0, d1_30: 0, d31_60: 0, d60_plus: 0 };
-      for (const inv of unpaid) {
-        const daysOverdue = Math.floor((now - inv.dueDate.getTime()) / (1000 * 60 * 60 * 24));
-        const amount = Number(inv.totalAmount);
-        if (daysOverdue <= 0) buckets.current += amount;
-        else if (daysOverdue <= 30) buckets.d1_30 += amount;
-        else if (daysOverdue <= 60) buckets.d31_60 += amount;
-        else buckets.d60_plus += amount;
-      }
-      return buckets;
+      const buckets = bucketReceivables(unpaid, asOfDay, horizonDays);
+      return {
+        ...buckets,
+        current: Number(buckets.overdue.current) + Number(buckets.comingDue.total),
+        d1_30: Number(buckets.overdue.d1_30),
+        d31_60: Number(buckets.overdue.d31_60),
+        d60_plus: Number(buckets.overdue.d60_plus),
+      };
     });
   }
 
@@ -161,6 +213,40 @@ export class ReportingService {
         paidAt: p.paidAt ? p.paidAt.toISOString() : null,
         createdAt: p.createdAt.toISOString(),
       }));
+    });
+  }
+
+  /**
+   * BUILD-SPEC #37 — bulk export of contracts (with their order/booking + customer)
+   * by month, for the finance/legal bundle. This is the DATA layer; zipping the
+   * actual signed PDFs is deferred until real signed documents exist (today's
+   * contracts are MockESign-signed with no document bytes) — documented in HANDOFF.
+   */
+  async exportContracts(tenantId: string, from?: Date, to?: Date): Promise<CsvRow[]> {
+    return this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const contracts = await tx.contract.findMany({
+        where: this.dateRangeWhere("createdAt", from, to),
+        include: {
+          booking: { select: { id: true, customer: { select: { fullName: true, phone: true } } } },
+          rentalOrder: { select: { id: true, periodStart: true, periodEnd: true, customer: { select: { fullName: true, phone: true } } } },
+        },
+        orderBy: { createdAt: "asc" },
+      });
+      return contracts.map((c) => {
+        const cust = c.rentalOrder?.customer ?? c.booking?.customer;
+        return {
+          contractId: c.id,
+          rentalOrderId: c.rentalOrderId,
+          bookingId: c.bookingId,
+          customer: cust?.fullName ?? cust?.phone ?? null,
+          periodStart: c.rentalOrder?.periodStart ? c.rentalOrder.periodStart.toISOString() : null,
+          periodEnd: c.rentalOrder?.periodEnd ? c.rentalOrder.periodEnd.toISOString() : null,
+          esignProvider: c.esignProvider,
+          esignStatus: c.esignStatus,
+          signedAt: c.signedAt ? c.signedAt.toISOString() : null,
+          documentUrl: c.documentUrl,
+        };
+      });
     });
   }
 

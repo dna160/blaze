@@ -3,9 +3,9 @@ import { ApiTags } from "@nestjs/swagger";
 import { UpdateAutomationSettingRequestSchema } from "@rentos/contracts";
 
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
-import { Roles } from "../common/decorators/roles.decorator.js";
+import { RequireCapability } from "../common/decorators/require-capability.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
-import { RolesGuard } from "../common/guards/roles.guard.js";
+import { CapabilityGuard } from "../common/guards/capability.guard.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 
@@ -13,8 +13,8 @@ import { AutomationService } from "./automation.service.js";
 
 @ApiTags("automation")
 @Controller("automation")
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles("SUPER_ADMIN", "OPS_ADMIN")
+@UseGuards(JwtAuthGuard, CapabilityGuard)
+@RequireCapability("manage_users")
 export class AutomationController {
   constructor(private readonly automation: AutomationService) {}
 

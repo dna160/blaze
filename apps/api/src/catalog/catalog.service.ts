@@ -190,10 +190,12 @@ export class CatalogService {
       const location = await tx.location.findUnique({ where: { id: input.locationId } });
       if (!location) throw new NotFoundException("Location not found.");
 
-      const existing = await tx.asset.findUnique({
-        where: { tenantId_locationId_code: { tenantId, locationId: input.locationId, code: input.code } },
-      });
-      if (existing) throw new ConflictException(`A unit with code "${input.code}" already exists at this location.`);
+      // C1 made a Tenant one branch and Asset.locationId nullable, so unit codes
+      // are unique per TENANT now (@@unique([tenantId, code])) rather than per
+      // (tenant, location) — same "no duplicate code in this branch" rule, one
+      // level up. The old tenantId_locationId_code index is gone.
+      const existing = await tx.asset.findUnique({ where: { tenantId_code: { tenantId, code: input.code } } });
+      if (existing) throw new ConflictException(`A unit with code "${input.code}" already exists in this branch.`);
 
       return tx.asset.create({
         data: {

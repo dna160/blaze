@@ -4,9 +4,9 @@ import { CreateApiKeyRequestSchema } from "@rentos/contracts";
 
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
-import { Roles } from "../common/decorators/roles.decorator.js";
+import { RequireCapability } from "../common/decorators/require-capability.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
-import { RolesGuard } from "../common/guards/roles.guard.js";
+import { CapabilityGuard } from "../common/guards/capability.guard.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
@@ -15,8 +15,8 @@ import { ApiKeysService } from "./api-keys.service.js";
 
 @ApiTags("api-keys")
 @Controller("api-keys")
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles("SUPER_ADMIN")
+@UseGuards(JwtAuthGuard, CapabilityGuard)
+@RequireCapability("manage_users")
 export class ApiKeysController {
   constructor(private readonly apiKeys: ApiKeysService) {}
 

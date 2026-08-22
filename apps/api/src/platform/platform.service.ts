@@ -24,18 +24,29 @@ export class PlatformService {
 
   /**
    * Public, unauthenticated — this is the actual self-serve entry point.
-   * `tenants`/`tenant_domains` are the two tables excluded from RLS by
-   * design (see docs/HANDOFF.md "RLS enforcement"), so creating one
-   * needs no tenant context; the first admin USER for it is tenant-scoped
-   * from the moment it's created, so that write runs inside
+   * `organizations`/`tenants`/`tenant_domains` are excluded from RLS by
+   * design (see docs/HANDOFF.md "RLS enforcement"), so creating them
+   * needs no tenant context; the first admin USER is tenant-scoped from
+   * the moment it's created, so that write runs inside
    * `runInTenantContext(newTenant.id, ...)` like any other tenant write.
+   *
+   * BUILD-SPEC C1: a Tenant is one branch and always sits under an
+   * Organization, so signup provisions the pair — a new Organization plus
+   * its first branch. Signing up is how a company arrives, and it has
+   * exactly one location on day one; adding branch two is
+   * OrganizationService's job, not a second signup.
    */
   async signup(dto: PlatformSignupRequest) {
     const existing = await this.prisma.raw.tenant.findUnique({ where: { slug: dto.slug } });
     if (existing) throw new ConflictException(`Slug "${dto.slug}" is already taken.`);
 
+    const organization = await this.prisma.raw.organization.create({
+      data: { slug: dto.slug, name: dto.companyName, legalName: dto.companyName },
+    });
+
     const tenant = await this.prisma.raw.tenant.create({
       data: {
+        organizationId: organization.id,
         slug: dto.slug,
         name: dto.companyName,
         isPkp: dto.isPkp,
@@ -45,7 +56,14 @@ export class PlatformService {
         // with nothing auto-approved and no Phase 4 add-ons enabled,
         // matching how every seeded tenant's baseline flags read before
         // a specific capability is deliberately turned on for it.
-        featureFlags: { deposits_enabled: true, kyc_required: false, auto_approve: false, contract_required: false },
+        // allowSubMonthly stays off per C3 (monthly only unless asked for).
+        featureFlags: {
+          deposits_enabled: true,
+          kyc_required: false,
+          auto_approve: false,
+          contract_required: false,
+          allowSubMonthly: false,
+        },
       },
     });
 
@@ -54,7 +72,12 @@ export class PlatformService {
       const user = await tx.user.create({
         data: { tenantId: tenant.id, email: dto.adminEmail, displayName: dto.adminName, passwordHash, status: "ACTIVE" },
       });
-      await tx.userRole.create({ data: { userId: user.id, role: "SUPER_ADMIN" } });
+      // C2: the signup admin is their organization's head-office admin —
+      // ORGANIZATION scope, so the role keeps reaching every branch they add
+      // later. `tenantIds` stays empty: it only narrows a TENANT-scoped role.
+      await tx.userRole.create({
+        data: { userId: user.id, role: "ADMIN", scope: "ORGANIZATION", tenantIds: [] },
+      });
     });
 
     return {

@@ -1585,9 +1585,197 @@ feature in question is cheap insurance against repeating this.
 
 ## Resume here
 
-**Phases 0-4 are all complete.** Every named item on PRD §13's Phase 4
-list is done and live-verified. Six sub-features total, each gated to a
-minimal demo footprint rather than opened to every tenant:
+> ### ⛔ READ FIRST — `docs/BUILD-SPEC.md` now supersedes the PRD (Session 20)
+>
+> A new source of truth landed: **[`docs/BUILD-SPEC.md`](./BUILD-SPEC.md)** — the
+> *Infrastructure & Remediation Build Spec (v2.0)*. It is derived from two client
+> meeting transcripts that happened **after** `docs/PRD.md` was written, and it
+> establishes this precedence: **BUILD-SPEC > meeting transcripts > PRD > HANDOFF**.
+> Where the PRD and BUILD-SPEC disagree, BUILD-SPEC wins.
+>
+> **The headline:** five of the PRD's foundational assumptions are wrong, and the
+> codebase (Phases 0–4) was built faithfully against them, so the corrections are
+> **schema-breaking, not cosmetic**:
+> - **C1** — Tenant should equal one *location/branch*, under a new **Organization**;
+>   today it's `Tenant → Location[]` (the opposite shape). HO needs read-across-tenants
+>   via a *separate* `app.organization_id` session var, read paths only — never widen
+>   `app.tenant_id`.
+> - **C2** — Six client roles = **role × scope** (`BaseRole × RoleScope`, `tenantIds[]`),
+>   not six enum values. Authoritative matrix: **[`docs/RBAC.md`](./RBAC.md)**.
+> - **C3** — Monthly only. Gate `DAILY`/`WEEKLY` behind a per-tenant flag (off); a
+>   non-integer month count must throw, not round. Keep proration only in swap requests.
+> - **C4** — Renewal is a **new closed-ended contract gated on H-14 confirmation**
+>   (`RentalOrder`), not a silent recurring-invoice job against one long-lived Booking.
+> - **C5** — Waitlist is an **armed conditionally-approved booking** that auto-issues
+>   contract+invoice on release, with a single-fire row lock and a payment TTL.
+>
+> **Do NOT start remediation R1 until the §7 blocking decisions (B1–B10) are closed.**
+> Several are client-owned (Maverick, Ko Yudi, the client's lawyer) and cannot be
+> answered from code — see BUILD-SPEC §7. The phased plan is **R0 → R4** in §8, each
+> with a handoff gate that requires *recorded evidence against real Postgres/Redis*
+> (match the ledger-balance standard). Companion authoritative docs also landed:
+> **[`docs/RBAC.md`](./RBAC.md)**, **[`docs/LEGAL-ESIGN.md`](./LEGAL-ESIGN.md)** (§5
+> e-sign cost architecture + B3 lawyer sign-off record), and
+> **[`docs/RUNBOOK-BACKUP.md`](./RUNBOOK-BACKUP.md)** (#50 — the backup answer the
+> client asked for and never got).
+>
+> **Session 20/21 status (2026-08-09): §7 decisions CLOSED, R0 done + verified, R1
+> built + core-verified.** The client answered B1–B10 (see BUILD-SPEC §7) and
+> authorized R1–R4. This sandbox turned out to HAVE local Postgres 16 + Redis, so
+> the schema/RLS work was verified live (unlike the egress-blocked prior sessions).
+> See the **"Session 20/21 — Remediation R0 + R1"** log entry below for the full
+> evidence and the precise remaining-work list (R2 finance/e-sign, R3 comms/ops/
+> backup, R4 UI). Longest-lead external dependency remains **Meta business
+> verification** (NPWP/NIB + ~2 days) — start it now. Everything below the session
+> log describes the pre-spec state (PRD Phases 0–4) and remains accurate as prior
+> context.
+>
+> **Verification quick-reference (re-runnable):**
+> ```
+> # from repo root, with local PG (rentos db, postgres trust) + rentos_app role:
+> export DATABASE_URL=postgresql://postgres@localhost:5432/rentos?schema=public
+> export DATABASE_URL_APP=postgresql://rentos_app:changeme_in_production@localhost:5432/rentos?schema=public
+> pnpm --filter @rentos/database exec prisma migrate deploy   # 8 migrations, clean
+> pnpm --filter @rentos/domain test                           # 109 tests
+> psql -h localhost -U postgres -d rentos -f packages/database/scripts/rls-verify.sql  # C1 RLS
+> JWT_SECRET=x pnpm --filter @rentos/database exec tsx apps/api/scripts/waitlist-fire-verify.ts  # C5 single-fire
+> ```
+
+### Session 20/21 — Remediation R0 + R1 (2026-08-09)
+
+**What's proven (live against local Postgres 16 + Redis):**
+
+- **C1 (org → tenant + org-read RLS).** New `organizations` table, `Tenant.organizationId`,
+  `Location`/`Asset.locationId` made optional. Cross-tenant HO reads go through a
+  SEPARATE `app.organization_id` session var + a `FOR SELECT` `org_read` policy
+  (migration `20260809120100`), OR'd with `tenant_isolation` for reads only — the
+  write `WITH CHECK` is never widened. Hardened `tenant_isolation` to a NULL-tolerant
+  cast (`20260809120200`) so a reused pooled connection with no tenant context returns
+  zero rows, not a `uuid: ""` error. `withOrgReadContext()` added to `@rentos/database`
+  (mirror of `withTenantContext`, read-only). **Evidence:** `packages/database/scripts/rls-verify.sql`
+  as `rentos_app` — tenant A sees only A; no-context = 0 rows; org scope sees BOTH
+  branches' full financials (B2); org UPDATE of non-active tenant = 0 rows; INSERT into
+  non-active tenant = RLS violation.
+- **C2 (role × scope RBAC).** `UserRole` is now `{ role: BaseRole, scope: RoleScope, tenantIds[] }`.
+  Authoritative capability matrix is **pure code in `packages/domain/src/rbac/capability-matrix.ts`**
+  (single source; `docs/RBAC.md` mirrors it; `apps/api/src/auth/rbac/capability.matrix.ts`
+  re-exports). New `@RequireCapability` + `CapabilityGuard` (+ `StaffGuard`); all 10
+  controllers converted off `@Roles`/`RolesGuard` (both deleted). JWT carries
+  `organizationId` + `roleAssignments`. **Maker-checker preserved verbatim** — the guard
+  only grants the *right* to verify. **Evidence:** `packages/domain/test/rbac.test.ts`
+  (23 tests: every matrix cell + the four denials + scope).
+- **C2 user administration (the "set up the hierarchy" surface).** `UsersService` +
+  `UsersController` (`/users` — list/create/update-role/set-status), all `manage_users`
+  gated, plus the console **`/settings/users`** page (admin-only nav; org-scoped admins
+  see every branch and can grant ORGANIZATION scope, branch admins see only their branch).
+  Two guards enforced + verified (`apps/api/scripts/users-admin-verify.ts`): (1) WRITES
+  stay single-tenant — users are created in the console's active tenant (a Super Admin
+  switches branches to add elsewhere), org admins only LIST across the org (read-only);
+  (2) NO privilege escalation — a branch Admin is blocked from granting an ORGANIZATION
+  role. Console builds clean (`/settings/users` in the route manifest).
+  > **Known follow-up (regression from the R0 RBAC rename):** other console pages
+  > (e.g. `deposits`) still gate action buttons on the OLD flat role names
+  > ("SUPER_ADMIN"/"OPS_ADMIN"/"FINANCE_ADMIN"), which the API no longer returns
+  > (`user.roles` now holds base roles ADMIN/FINANCE/SUPERVISOR/STAFF). Those buttons
+  > will not render for anyone until each page is updated to the base roles /
+  > capabilities. The API still enforces correctly; this is UI-gating only. Fix as part
+  > of the R4 console pass. The new `/settings/users` page and `ConsoleShell` already use
+  > the base-role helpers (`isAdmin`/`isOrgScoped` in `lib/auth-client.ts`).
+- **C3 (monthly-only).** `monthly-guard.ts`: `wholeMonthsBetween`/`assertWholeMonths`
+  throw `NonIntegerMonthError`; `assertBillingUnitAllowed` gates DAILY/WEEKLY behind
+  `featureFlags.allowSubMonthly` (off). Rental-order invoices are whole-month, no proration.
+- **C4 (RentalOrder + renewal).** `RentalOrder`/`RentalOrderEvent`/`OrderAcceptance` +
+  FSM (`rental-order-fsm.ts`). `RentalOrderService`: create (customer picks TYPE+months,
+  not a unit — #11), approve (assign unit + issue mock-signed contract + first invoice
+  incl. deposit), markPaidAndActivate (two-gate), offerRenewal (H-14), confirmRenewal
+  (spawns successor in the renewal chain), declineRenewal (release + fire waitlist).
+  Worker: `renewal-offer.job` (H-14), `renewal-timeout.job` (B1: H-7 no-reply → decline
+  → release → fire).
+- **C5 (waitlist).** `WaitlistEntry` + `waitlist-rules.ts` (pure) + shared
+  `fireNextWaitlistEntry()` in `@rentos/database` (single source used by the API service
+  AND the worker jobs — no drift). Single-fire via `SELECT ... FOR UPDATE` on the asset.
+  Worker: `waitlist-expiry.job` (hourly TTL sweep → void + EXPIRED + fire next).
+  **Evidence:** `apps/api/scripts/waitlist-fire-verify.ts` — two concurrent fires on one
+  released unit → exactly 1 order/1 contract/1 FIRED/1 ARMED, asset RESERVED, **ledger
+  balanced** (DEBIT=CREDIT).
+- **#30/#31/#32 pricing** (`pricing/discounts.ts`): bundle + duration + manual override,
+  composed base→bundle→duration→override. Tested (`discounts.test.ts`).
+- Seed rewritten: City Storage org + 1 mockup branch (B8) + the six role×scope users +
+  catalog + signed master agreement + one active rental order.
+- **8 migrations apply clean via `prisma migrate deploy`, zero drift; 109 domain tests
+  pass; all 7 packages typecheck.**
+
+**What is NOT done yet (remaining R2–R4, precise):**
+
+- **R2 — finance controls + e-sign.** DONE + verified: **§5 master agreement +
+  order-acceptance (OTP) + Mekari adapter** (`esign-cost-verify.ts`: 1 certified sig,
+  3 OTP orders, 0 extra certs); invoice **void #33** (`invoice-void-verify.ts`,
+  ledger-balanced); manual **price override #32**; **backdate #34** (`backdate-verify.ts`:
+  original VOID + superseded link, replacement ISSUED for shifted period, ledger
+  balanced — no pile-up). All SPV-gated. Also DONE: **bulk export by month**
+  (#37) — `GET /reports/export/contracts.csv` (contracts + order/booking + customer +
+  sign status); the actual PDF-zip is deferred until real signed docs exist (today's
+  contracts are MockESign-signed, no bytes). **R2 backend is complete.** Mekari stays
+  behind `MockESignProvider` until `MEKARI_*` keys land (`ESIGN_PROVIDER=mekari`).
+- **R3 — comms/ops.** DONE + verified: **backup + restore-verify** (#50 —
+  `infra/backup/dump.sh` + `restore-verify.sh`; drill PASS, ledger balanced on the
+  restored copy; RUNBOOK §8 log) and the **forward-occupancy calendar** (#47 —
+  `ReportingService.forwardOccupancy` + `GET /reports/forward-occupancy`, renewal-aware
+  per #17; live-checked against seed). Also DONE: **dunning retune to
+  H-7/5/3/1 dual-recipient (#41/#42)** — `dunning-ladder.job` now reminds the customer
+  AND the branch admin (`tenant.featureFlags.adminNotifyRecipient`), each with its own
+  dedupe; `notify()` carries `recipientRole`. Also DONE: **branch onboarding
+  (#45, backend)** — `OrganizationService.provisionBranch` + `POST /organization/branches`
+  creates a new empty branch under the org (org-scoped admin only); clean-slate
+  migrate+seed re-verified. STILL TO DO: org-level single WA number (#40 — the current
+  single-env-credential design already means one number for all branches;
+  `Organization.messagingConfig` is the override seam, not yet resolved by the provider);
+  the onboarding wizard's *console UI*; Railway backup scheduling + object-storage upload;
+  Railway security brief (#51); Google OAuth (#2 — needs real OAuth creds/flow).
+  Also DONE: **business multi-number (#3) at the service layer** —
+  `CrmService.getOrCreateByPhone` resolves a customer by the canonical phone OR any
+  VERIFIED `CustomerPhone`, plus `addPhone`/`confirmPhone`/`listPhones`; the OTP-confirm
+  wiring into auth + the portal add-number UI remain. Individual/business fields
+  (#4 — `Customer.type`/`companyName`/`taxId` columns exist; the conditional form is
+  storefront UI). **Remaining is now essentially R4 UI + external integrations (Google
+  OAuth, real WA/Mekari keys) + Railway ops wiring.**
+- **R4 — UI + launch.** Mobile-first storefront (#49), remove unit selection UI (#11 —
+  backend already ignores customer unit choice), console screens for the new
+  rental-order/waitlist/renewal/org-switcher flows, staff training, cutover. No Next.js
+  UI was changed this session.
+- **Verification gaps to close next:** a scripted end-to-end renewal chain over two
+  consecutive periods; availability query renewal-awareness (#16/#17); full NestJS API
+  e2e boot (this session verified via RLS SQL + domain tests + the waitlist concurrency
+  script + typecheck, not a running API).
+
+**Local infra note:** this sandbox runs Postgres 16 (`/usr/lib/postgresql/16`, cluster
+under `/home/pg/pgdata`, unprivileged `pg` user, port 5432, trust auth) + Redis. The
+`rentos_app` role is created by the `enable_rls` migration. Docker/Railway still
+unverified (unchanged from prior sessions).
+
+---
+
+**Phase 2 is complete. Phase 3 is complete** — every named item on PRD
+§13's Phase 3 list is done: NIGHTLY (Session 14) and DURATION_ORDER
+(Session 15) real logic, pooled inventory (Session 17), seasonal
+pricing (Session 18), and a second tenant in a different vertical
+onboarded with **zero application code changes** (Session 16) — the
+PRD's core extensibility thesis is validated with real evidence, not
+just a clean interface. Session 16 also closed a real cross-tenant
+security gap that every single-tenant verification in Sessions 1-15
+structurally could not have caught — read that entry before touching
+any `@CurrentTenant()`/`@UseGuards` code, since the fix (folding the
+tenant-match check into `JwtAuthGuard`) is now load-bearing for every
+authenticated route, not an opt-in you need to remember.
+
+### Phase 4 (Sessions 20-26) — what survived the BUILD-SPEC merge
+
+The Phase-4 feature work below is orthogonal to the C1-C5 corrections and
+merged intact. What did NOT survive: the PRD-v2 storage term flow
+(fixed N-month terms on one Booking, a WAITLISTED booking queue, and
+storefront unit reservation at submission) was reverted, because C4, C5 and
+#11 replace it. `RentalOrder` / `WaitlistEntry` are the live model.
+
 
 - **Session 20** — tenant-facing API keys + outbound webhooks, gated to
   `gudang-aman`.

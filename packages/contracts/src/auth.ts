@@ -7,14 +7,29 @@ export const ConsoleLoginRequestSchema = z.object({
 });
 export type ConsoleLoginRequest = z.infer<typeof ConsoleLoginRequestSchema>;
 
+/** BUILD-SPEC C2 — role × scope. Mirrors Prisma BaseRole/RoleScope + UserRole. */
+export const BaseRoleSchema = z.enum(["ADMIN", "FINANCE", "SUPERVISOR", "STAFF"]);
+export type BaseRoleName = z.infer<typeof BaseRoleSchema>;
+
+export const RoleScopeSchema = z.enum(["ORGANIZATION", "TENANT"]);
+export type RoleScopeName = z.infer<typeof RoleScopeSchema>;
+
+export const RoleAssignmentSchema = z.object({
+  role: BaseRoleSchema,
+  scope: RoleScopeSchema,
+  tenantIds: z.array(z.string().uuid()),
+});
+export type RoleAssignmentDto = z.infer<typeof RoleAssignmentSchema>;
+
 export const SessionUserSchema = z.object({
   id: z.string().uuid(),
   tenantId: z.string().uuid().nullable(),
+  organizationId: z.string().uuid().nullable(),
   email: z.string().email(),
   displayName: z.string().nullable(),
-  roles: z.array(
-    z.enum(["PLATFORM_ADMIN", "SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN", "VIEWER"]),
-  ),
+  /** Base role names (or ["CUSTOMER"]). */
+  roles: z.array(z.string()),
+  roleAssignments: z.array(RoleAssignmentSchema),
 });
 export type SessionUser = z.infer<typeof SessionUserSchema>;
 
@@ -23,6 +38,23 @@ export const ConsoleLoginResponseSchema = z.object({
   user: SessionUserSchema,
 });
 export type ConsoleLoginResponse = z.infer<typeof ConsoleLoginResponseSchema>;
+
+/** BUILD-SPEC C2 — staff user creation / role assignment (manage_users, admin only). */
+export const CreateStaffUserRequestSchema = z.object({
+  email: z.string().email(),
+  displayName: z.string().min(1).max(120),
+  password: z.string().min(8),
+  role: BaseRoleSchema,
+  /** ORGANIZATION scope is only grantable by an org-scoped admin (privilege guard, API-enforced). */
+  scope: RoleScopeSchema,
+});
+export type CreateStaffUserRequest = z.infer<typeof CreateStaffUserRequestSchema>;
+
+export const UpdateStaffRoleRequestSchema = z.object({
+  role: BaseRoleSchema,
+  scope: RoleScopeSchema,
+});
+export type UpdateStaffRoleRequest = z.infer<typeof UpdateStaffRoleRequestSchema>;
 
 /**
  * Customer auth — "phone number + WhatsApp OTP (primary)... No passwords

@@ -39,6 +39,28 @@ export const InvoiceDtoSchema = z.object({
 });
 export type InvoiceDto = z.infer<typeof InvoiceDtoSchema>;
 
+/** AR aging as of a date, with a forward horizon (§5.2). */
+export const ArAgingQuerySchema = z.object({
+  asOf: z.string().optional(),
+  horizonDays: z.coerce.number().int().min(1).max(365).default(30),
+});
+export type ArAgingQuery = z.infer<typeof ArAgingQuerySchema>;
+
+export const ArAgingResponseSchema = z.object({
+  asOf: z.string().datetime(),
+  horizonDays: z.number().int(),
+  overdue: z.object({ current: z.string(), d1_30: z.string(), d31_60: z.string(), d60_plus: z.string(), total: z.string() }),
+  comingDue: z.object({ d0_30: z.string(), d31_60: z.string(), d61_90: z.string(), total: z.string(), beyondHorizon: z.string() }),
+  totalOutstanding: z.string(),
+  invoiceCount: z.number().int(),
+  /** Backwards-compatible flat buckets (numbers) the v1 reports page reads. */
+  current: z.number(),
+  d1_30: z.number(),
+  d31_60: z.number(),
+  d60_plus: z.number(),
+});
+export type ArAgingResponse = z.infer<typeof ArAgingResponseSchema>;
+
 export const PaymentStatusSchema = z.enum(["PENDING", "SUCCEEDED", "FAILED", "REFUNDED", "PARTIALLY_REFUNDED"]);
 
 export const PaymentMethodSchema = z.enum(["VIRTUAL_ACCOUNT", "QRIS", "EWALLET", "CARD", "MANUAL_TRANSFER", "CASH"]);

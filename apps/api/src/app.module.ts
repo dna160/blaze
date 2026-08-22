@@ -18,14 +18,18 @@ import { FinanceModule } from "./finance/finance.module.js";
 import { HealthController } from "./health/health.controller.js";
 import { KycModule } from "./kyc/kyc.module.js";
 import { NotificationsModule } from "./notifications/notifications.module.js";
+import { OrganizationModule } from "./organization/organization.module.js";
 import { OtaSyncModule } from "./ota-sync/ota-sync.module.js";
 import { PaymentsModule } from "./payments/payments.module.js";
 import { PlatformModule } from "./platform/platform.module.js";
 import { PrismaModule } from "./prisma/prisma.module.js";
+import { RentalOrderModule } from "./rental-order/rental-order.module.js";
 import { ReportingModule } from "./reporting/reporting.module.js";
 import { SwapRequestsModule } from "./swap-requests/swap-requests.module.js";
 import { TenancyModule } from "./tenancy/tenancy.module.js";
 import { TenantWebhooksModule } from "./tenant-webhooks/tenant-webhooks.module.js";
+import { UsersModule } from "./users/users.module.js";
+import { WaitlistModule } from "./waitlist/waitlist.module.js";
 import { WebhookDispatchModule } from "./webhook-dispatch/webhook-dispatch.module.js";
 
 @Module({
@@ -45,6 +49,10 @@ import { WebhookDispatchModule } from "./webhook-dispatch/webhook-dispatch.modul
     DepositsModule,
     KycModule,
     NotificationsModule,
+    OrganizationModule,
+    RentalOrderModule,
+    WaitlistModule,
+    UsersModule,
     ReportingModule,
     SwapRequestsModule,
     ApiKeysModule,

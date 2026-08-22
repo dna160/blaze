@@ -83,17 +83,17 @@ ALTER TABLE "tenant_webhook_deliveries" ADD CONSTRAINT "tenant_webhook_deliverie
 ALTER TABLE "tenant_api_keys" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "tenant_api_keys" FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON "tenant_api_keys"
-  USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
-  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+  USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
 
 ALTER TABLE "tenant_webhook_subscriptions" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "tenant_webhook_subscriptions" FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON "tenant_webhook_subscriptions"
-  USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
-  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+  USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
 
 ALTER TABLE "tenant_webhook_deliveries" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "tenant_webhook_deliveries" FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON "tenant_webhook_deliveries"
-  USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
-  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+  USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);

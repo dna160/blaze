@@ -4,16 +4,20 @@ import { recurringLeaseBookingFsm, type BookingActivationContext } from "@rentos
 import { notify } from "../notify.js";
 
 /**
- * "Automated reminder ladder (config per tenant): H-7/H-3/H-0 reminders ->
- * D+1/D+3/D+7 overdue -> D+X SUSPENDED" (PRD §7.2.4, automations A5/A6).
- * These three constants are now only the FALLBACK — the platform-admin-
- * gated "visual automation builder" (Session 26, apps/api/src/automation/,
- * gudang-aman only) lets one tenant save a real `AutomationSetting` row
- * (key DUNNING_LADDER) overriding them; every other tenant still gets
- * exactly this hardcoded ladder, so this change is zero-behavior for
- * anyone who never saved a row — see `resolveDunningLadderConfig` below.
+ * BUILD-SPEC #41/#42 — payment reminder ladder H-7/5/3/1 (before due), then
+ * D+1/D+3/D+7 overdue -> D+14 SUSPENDED. Every reminder fans out to BOTH the
+ * customer AND the branch admin (#42), when an admin recipient is configured
+ * (tenant.featureFlags.adminNotifyRecipient). This is the collections engine the
+ * WhatsApp-ladder module was sold on (§10 scope defence).
+ *
+ * The three constants below are the FALLBACK ladder. A tenant that has saved an
+ * enabled AutomationSetting row (key DUNNING_LADDER) through the platform-admin-
+ * gated visual automation builder in apps/api/src/automation/ overrides them;
+ * every other tenant gets exactly this hardcoded ladder, so the builder is
+ * zero-behaviour for anyone who never saved a row — see
+ * `resolveDunningLadderConfig` below.
  */
-const REMINDER_DAYS_BEFORE_DUE = [7, 3, 0];
+const REMINDER_DAYS_BEFORE_DUE = [7, 5, 3, 1];
 const OVERDUE_REMINDER_DAYS = [1, 3, 7];
 const SUSPEND_AFTER_DAYS_OVERDUE = 14;
 
@@ -52,11 +56,45 @@ function daysBetween(a: Date, b: Date): number {
   return Math.round((a.getTime() - b.getTime()) / (1000 * 60 * 60 * 24));
 }
 
+function adminRecipient(featureFlags: unknown): string | null {
+  const v = (featureFlags as Record<string, unknown> | null)?.["adminNotifyRecipient"];
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
 async function alreadyNotified(tx: Prisma.TransactionClient, invoiceId: string, templateKey: string): Promise<boolean> {
   const existing = await tx.notification.findFirst({
     where: { templateKey, payload: { path: ["invoiceId"], equals: invoiceId } },
   });
   return Boolean(existing);
+}
+
+/**
+ * #42 — send a reminder to the customer and (if configured) a copy to the branch
+ * admin. Each recipient has its own dedupe key so one landing doesn't suppress
+ * the other, and re-runs are idempotent.
+ */
+async function remindBoth(
+  tx: Prisma.TransactionClient,
+  tenant: { id: string; featureFlags: unknown },
+  invoiceId: string,
+  templateKey: string,
+  customer: { id: string; phone: string },
+  variables: Record<string, string>,
+): Promise<void> {
+  if (!(await alreadyNotified(tx, invoiceId, templateKey))) {
+    await notify({ tenantId: tenant.id, customerId: customer.id, templateKey, recipient: customer.phone, variables });
+  }
+  const admin = adminRecipient(tenant.featureFlags);
+  const adminKey = `${templateKey}_admin`;
+  if (admin && !(await alreadyNotified(tx, invoiceId, adminKey))) {
+    await notify({
+      tenantId: tenant.id,
+      templateKey: adminKey,
+      recipient: admin,
+      recipientRole: "ADMIN",
+      variables: { ...variables, customerId: customer.id },
+    });
+  }
 }
 
 export async function runDunningLadder(): Promise<void> {
@@ -77,16 +115,12 @@ export async function runDunningLadder(): Promise<void> {
 
         if (config.reminderDaysBeforeDue.includes(daysUntilDue)) {
           const templateKey = `invoice_reminder_h${daysUntilDue}`;
-          if (!(await alreadyNotified(tx, invoice.id, templateKey))) {
-            const customer = await tx.customer.findUniqueOrThrow({ where: { id: invoice.customerId } });
-            await notify({
-              tenantId: tenant.id,
-              customerId: customer.id,
-              templateKey,
-              recipient: customer.phone,
-              variables: { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, totalAmount: invoice.totalAmount.toString() },
-            });
-          }
+          const customer = await tx.customer.findUniqueOrThrow({ where: { id: invoice.customerId } });
+          await remindBoth(tx, tenant, invoice.id, templateKey, customer, {
+            invoiceId: invoice.id,
+            invoiceNumber: invoice.invoiceNumber,
+            totalAmount: invoice.totalAmount.toString(),
+          });
         }
 
         if (today > dueDate) {
@@ -102,16 +136,12 @@ export async function runDunningLadder(): Promise<void> {
 
         if (config.overdueReminderDays.includes(daysOverdue)) {
           const templateKey = `invoice_overdue_d${daysOverdue}`;
-          if (!(await alreadyNotified(tx, invoice.id, templateKey))) {
-            const customer = await tx.customer.findUniqueOrThrow({ where: { id: invoice.customerId } });
-            await notify({
-              tenantId: tenant.id,
-              customerId: customer.id,
-              templateKey,
-              recipient: customer.phone,
-              variables: { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, daysOverdue: String(daysOverdue) },
-            });
-          }
+          const customer = await tx.customer.findUniqueOrThrow({ where: { id: invoice.customerId } });
+          await remindBoth(tx, tenant, invoice.id, templateKey, customer, {
+            invoiceId: invoice.id,
+            invoiceNumber: invoice.invoiceNumber,
+            daysOverdue: String(daysOverdue),
+          });
         }
 
         if (daysOverdue >= config.suspendAfterDaysOverdue && invoice.bookingId) {

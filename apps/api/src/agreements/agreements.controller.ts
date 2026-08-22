@@ -27,7 +27,6 @@ import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 
 import { AgreementsService } from "./agreements.service.js";
 
-const STAFF_ROLES = new Set(["SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN"]);
 
 @ApiTags("contracts")
 @Controller("contracts")
@@ -101,13 +100,21 @@ export class AgreementsController {
     return this.contracts.handleWebhook(tenant, JSON.stringify(req.body), headers);
   }
 
-  private async assertAccess(tenant: ResolvedTenant, user: AuthenticatedUser, bookingId: string): Promise<void> {
+  private async assertAccess(
+    tenant: ResolvedTenant,
+    user: AuthenticatedUser,
+    bookingId: string | null,
+  ): Promise<void> {
     if (user.kind === "CUSTOMER") {
+      // A rental-order contract (bookingId === null) — ownership is checked via
+      // the rental order, not the legacy booking. Until the rental-order
+      // agreements path lands (R2 controller), a customer cannot reach it here.
+      if (!bookingId) throw new ForbiddenException("This contract does not belong to you.");
       const booking = await this.booking.getBooking(tenant.id, bookingId);
       if (booking.customerId !== user.id) throw new ForbiddenException("This booking does not belong to you.");
       return;
     }
-    if (!user.roles.some((r) => STAFF_ROLES.has(r))) {
+    if (user.kind !== "STAFF") {
       throw new ForbiddenException();
     }
   }

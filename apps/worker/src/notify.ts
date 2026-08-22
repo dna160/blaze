@@ -13,6 +13,8 @@ export async function notify(params: {
   templateKey: string;
   recipient: string;
   variables: Record<string, string>;
+  /** #42 — CUSTOMER (default) or ADMIN, so a reminder can fan out to both. */
+  recipientRole?: "CUSTOMER" | "ADMIN";
 }): Promise<void> {
   const prisma = getPrismaClient();
 
@@ -23,6 +25,7 @@ export async function notify(params: {
         customerId: params.customerId,
         channel: "WHATSAPP",
         templateKey: params.templateKey,
+        recipientRole: params.recipientRole ?? "CUSTOMER",
         recipient: params.recipient,
         payload: params.variables,
         status: "QUEUED",

@@ -45,8 +45,8 @@ ALTER TABLE "platform_invoices" ADD CONSTRAINT "platform_invoices_tenant_id_fkey
 ALTER TABLE "platform_invoices" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "platform_invoices" FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON "platform_invoices"
-  USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
-  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+  USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
 
 -- Session 26 — the dedicated platform-admin path the original enable_rls
 -- migration's own comment flagged as future work: "rows with a NULL
@@ -71,13 +71,27 @@ CREATE POLICY tenant_isolation ON "platform_invoices"
 -- nullable-tenant_id tables the original comment mentions) keep their
 -- unmodified per-tenant-only policy, since nothing about this session's
 -- work needs a platform-admin to read cross-tenant rows on those tables.
+--
+-- Ordering note: this migration is timestamped AFTER
+-- 20260809120200_harden_tenant_isolation_nullctx deliberately. That migration
+-- loops over every table carrying a `tenant_isolation` policy and rewrites it
+-- to the plain per-tenant form, so if this one ran first the platform-admin
+-- OR-branch below would be silently stripped and withPlatformContext() would
+-- return zero rows — breaking platform login, tenant onboarding and platform
+-- billing with no migration error to show for it.
+--
+-- The tenant_id comparison below therefore also carries that migration's
+-- nullif(..., '') guard: a placeholder GUC reverts to the EMPTY STRING rather
+-- than NULL on a pooled connection that has ever set it, and ''::uuid raises
+-- instead of matching nothing. nullif keeps unset and reverted both NULL, so
+-- forgetting tenant scope stays structurally a zero-rows result.
 DROP POLICY tenant_isolation ON "users";
 CREATE POLICY tenant_isolation ON "users"
   USING (
-    tenant_id = current_setting('app.tenant_id', true)::uuid
+    tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid
     OR (tenant_id IS NULL AND current_setting('app.platform_admin', true) = 'true')
   )
   WITH CHECK (
-    tenant_id = current_setting('app.tenant_id', true)::uuid
+    tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid
     OR (tenant_id IS NULL AND current_setting('app.platform_admin', true) = 'true')
   );

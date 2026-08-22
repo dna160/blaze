@@ -121,6 +121,35 @@ export async function recordCreditNoteEntries(
 }
 
 /**
+ * BUILD-SPEC #33 — void an unpaid invoice. Reverses EXACTLY the entries recorded
+ * at issue (reads them back by reference and writes their opposites), so the
+ * ledger stays balanced regardless of the invoice's line composition. Only the
+ * INVOICE-referenced (issue) entries are reversed — a void is only permitted on
+ * an unpaid invoice, so there are no PAYMENT entries to unwind.
+ */
+export async function recordInvoiceVoidedEntries(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  invoiceId: string,
+) {
+  const issued = await tx.ledgerEntry.findMany({
+    where: { tenantId, referenceType: "INVOICE", referenceId: invoiceId },
+  });
+  for (const e of issued) {
+    await recordEntry(
+      tx,
+      tenantId,
+      e.account,
+      e.entryType === "DEBIT" ? "CREDIT" : "DEBIT",
+      e.amount.toString(),
+      "INVOICE_VOID",
+      invoiceId,
+      `Void reversal of invoice ${invoiceId}`,
+    );
+  }
+}
+
+/**
  * PRD §10 Reliability: "double-entry ledger balances checked nightly."
  * Returns per-account debit/credit totals for a tenant — a genuine
  * double-entry ledger has sum(debits) == sum(credits) across ALL

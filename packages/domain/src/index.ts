@@ -63,3 +63,62 @@ export {
   type BillingPlanDefinition,
   type MonthlyChargeResult,
 } from "./billing/plans.js";
+// BUILD-SPEC C2 — role × scope RBAC (authoritative capability matrix).
+export {
+  CAPABILITY_MATRIX,
+  ALL_CAPABILITIES,
+  CLIENT_ROLE_ENCODING,
+  can,
+  capabilitiesFor,
+  roleAppliesToTenant,
+  hasOrganizationScope,
+  type BaseRole,
+  type RoleScope,
+  type Capability,
+  type RoleAssignment,
+} from "./rbac/capability-matrix.js";
+
+// BUILD-SPEC C4 — rental-order lifecycle state machine.
+export {
+  rentalOrderFsm,
+  RENTAL_ORDER_TRANSITIONS,
+  type RentalOrderStatus,
+  type RentalOrderEvent,
+} from "./rental-order/rental-order-fsm.js";
+
+// BUILD-SPEC C3 — monthly-only billing guard.
+export {
+  wholeMonthsBetween,
+  assertWholeMonths,
+  monthlyPeriodEnd,
+  NonIntegerMonthError,
+  SubMonthlyDisabledError,
+  type BillingUnit,
+} from "./rental-order/monthly-guard.js";
+
+// BUILD-SPEC C5 — waitlist queue + single-fire + payment-TTL rules.
+export {
+  nextArmedEntry,
+  resequencePositions,
+  computeFireExpiry,
+  isFireExpired,
+  type WaitlistStatus,
+  type WaitlistEntryLike,
+} from "./waitlist/waitlist-rules.js";
+
+// #30/#31/#32 — pricing: bundle discount, duration discount, manual override.
+export {
+  bundleDiscount,
+  durationDiscount,
+  applyPriceOverride,
+  composeMonthlyRate,
+  type BundleTier,
+  type DurationTier,
+  type PriceComposition,
+} from "./pricing/discounts.js";
+
+// Finance reporting — AR aging with a forward horizon (§5.2).
+export { bucketReceivables, type ReceivableLike, type ArAgingBuckets } from "./finance/ar-aging.js";
+
+// CRM — customer health classification for the client list.
+export { classifyCustomerHealth, type CustomerHealth, type CustomerHealthInput } from "./crm/customer-health.js";
