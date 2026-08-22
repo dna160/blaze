@@ -5,7 +5,6 @@ import { recordPaymentReceivedEntries } from "@rentos/database";
 
 import { BookingService } from "../booking/booking.service.js";
 import { FinanceService } from "../finance/finance.service.js";
-import { NotificationsService } from "../notifications/notifications.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { STORAGE_PROVIDER, type StorageProvider } from "../storage/storage-provider.interface.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
@@ -25,7 +24,6 @@ export class PaymentsService {
     private readonly booking: BookingService,
     private readonly finance: FinanceService,
     private readonly webhooks: WebhookDispatcherService,
-    private readonly notifications: NotificationsService,
   ) {}
 
   /** Storefront checkout (PRD §7.1.3). */
@@ -202,10 +200,10 @@ export class PaymentsService {
   }
 
   private async finalizePaidInvoice(tenant: ResolvedTenant, invoiceId: string, paymentId: string) {
-    const { bookingId, hasDeposit, depositAmount, invoiceNumber, totalAmount, paymentAmount, customer } =
+    const { bookingId, hasDeposit, depositAmount, invoiceNumber, totalAmount, paymentAmount } =
       await this.prisma.runInTenantContext(tenant.id, async (tx) => {
         await this.finance.markPaid(tx, invoiceId);
-        const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { lines: true, customer: true } });
+        const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { lines: true } });
         const depositLine = invoice.lines.find((l) => l.lineType === "DEPOSIT");
         const depositAmt = depositLine?.amount.toString();
 
@@ -222,19 +220,8 @@ export class PaymentsService {
           invoiceNumber: invoice.invoiceNumber,
           totalAmount: invoice.totalAmount.toString(),
           paymentAmount: payment.amount.toString(),
-          customer: invoice.customer,
         };
       });
-
-    // PRD §8.4 A4: "Match invoice -> transition states -> receipt via WA" — the receipt half.
-    await this.notifications.notifyCustomer({
-      tenantId: tenant.id,
-      tenantSlug: tenant.slug,
-      customer,
-      templateKey: "invoice_paid",
-      variables: { invoiceNumber, totalAmount },
-      link: { purpose: "INVOICE", next: `/portal/invoices/${invoiceId}` },
-    });
 
     await this.webhooks.dispatch(tenant, "invoice.paid", { invoiceId, invoiceNumber, totalAmount, bookingId });
     await this.webhooks.dispatch(tenant, "payment.received", {

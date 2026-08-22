@@ -29,38 +29,14 @@ function resolveDatabaseUrl(): string {
   return fallback;
 }
 
-const logLevels: Array<"warn" | "error"> = process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"];
-
-/**
- * Builds a PrismaClient for `url`. Production/default path: the native
- * library query engine exactly as before. Opt-in path
- * (`PRISMA_DRIVER_ADAPTER=pg`): Prisma's WASM query engine + the `pg`
- * driver adapter, which needs no native engine binary at all — for
- * sandboxes where binaries.prisma.sh is unreachable (see
- * scripts/prisma-wasm-loader.mjs for the Node loader hook that pairs
- * with it). Never set that env var in a real deployment; the default is
- * the tested, supported configuration.
- */
-export function createPrismaClient(url: string): PrismaClient {
-  if (process.env.PRISMA_DRIVER_ADAPTER === "pg") {
-    // Resolved lazily (this package compiles to CommonJS, so `require` is
-    // available) so the default path never even loads these modules.
-    const { PrismaPg } = require("@prisma/adapter-pg") as typeof import("@prisma/adapter-pg");
-    const { Pool } = require("pg") as typeof import("pg");
-    const { PrismaClient: WasmPrismaClient } = require("../generated/client/wasm.js") as {
-      PrismaClient: new (opts: unknown) => PrismaClient;
-    };
-    const adapter = new PrismaPg(new Pool({ connectionString: url }));
-    return new WasmPrismaClient({ adapter, log: logLevels });
-  }
-  return new PrismaClient({ datasources: { db: { url } }, log: logLevels });
-}
-
 let prismaSingleton: PrismaClient | undefined;
 
 export function getPrismaClient(): PrismaClient {
   if (!prismaSingleton) {
-    prismaSingleton = createPrismaClient(resolveDatabaseUrl());
+    prismaSingleton = new PrismaClient({
+      datasources: { db: { url: resolveDatabaseUrl() } },
+      log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
+    });
   }
   return prismaSingleton;
 }

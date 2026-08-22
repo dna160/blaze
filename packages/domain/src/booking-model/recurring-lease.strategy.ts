@@ -1,19 +1,11 @@
 import { Decimal, roundMoney } from "../money.js";
 import { computeDeposit } from "../pricing/deposit.js";
 import { nextAnchorDate, periodEndFor, prorateFirstPeriod } from "../pricing/proration.js";
-import { computeTermSchedule, isValidTermMonths, TERM_OPTIONS_MONTHS } from "../pricing/term-schedule.js";
 
 import { buildInvoiceDraft } from "./invoice-builder.js";
 import type { BookingModelStrategy, BookingWindow, InvoiceDraft, InvoiceLineDraft, PricingConfig, TenantTaxContext } from "./types.js";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-/** "16 Aug – 15 Sep 2026" — locale-neutral, zero-dependency, used in invoice line descriptions. */
-function formatPeriod(start: Date, end: Date): string {
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const fmt = (d: Date, withYear: boolean) => `${d.getDate()} ${months[d.getMonth()]}${withYear ? ` ${d.getFullYear()}` : ""}`;
-  return `${fmt(start, start.getFullYear() !== end.getFullYear())} – ${fmt(end, true)}`;
-}
 
 class RecurringLeaseStrategy implements BookingModelStrategy {
   readonly kind = "RECURRING_LEASE" as const;
@@ -24,67 +16,7 @@ class RecurringLeaseStrategy implements BookingModelStrategy {
     if (tier === "DAILY" || tier === "WEEKLY") {
       return this.computeFixedTermInvoice(window, pricing, tax, tier);
     }
-    if (window.termMonths !== undefined) {
-      return this.computeTermProformaInvoice(window, pricing, tax);
-    }
     return this.computeMonthlyInitialInvoice(window, pricing, tax);
-  }
-
-  /**
-   * PRD v2 D1 — term lease proforma (invoice #0 of the payment schedule):
-   * one FULL first month at the monthly rate (never prorated), plus admin
-   * fee and deposit, same shared tax assembly as everything else. The
-   * period is the first schedule period: [start, start + 1 month - 1 day].
-   */
-  private computeTermProformaInvoice(window: BookingWindow, pricing: PricingConfig, tax: TenantTaxContext): InvoiceDraft {
-    const termMonths = window.termMonths!;
-    if (!isValidTermMonths(termMonths)) {
-      throw new Error(`Unsupported term: ${termMonths} months. Choose ${TERM_OPTIONS_MONTHS.join(", ")}.`);
-    }
-    const [first] = computeTermSchedule(window.startDate, termMonths);
-    if (!first) throw new Error("Empty term schedule.");
-
-    const rentLine: InvoiceLineDraft = {
-      description: `Rent — month 1 of ${termMonths} (${formatPeriod(first.periodStart, first.periodEnd)})`,
-      quantity: new Decimal(1),
-      unitPrice: roundMoney(pricing.basePrice),
-      amount: roundMoney(pricing.basePrice),
-      lineType: "RENT",
-    };
-
-    const extraLines: InvoiceLineDraft[] = [];
-    if (pricing.adminFee && pricing.adminFee.greaterThan(0)) {
-      extraLines.push({
-        description: "Admin fee",
-        quantity: new Decimal(1),
-        unitPrice: pricing.adminFee,
-        amount: pricing.adminFee,
-        lineType: "ADMIN_FEE",
-      });
-    }
-    const deposit = computeDeposit(pricing.depositRule, pricing.basePrice);
-    if (deposit.greaterThan(0)) {
-      extraLines.push({
-        description: "Security deposit (refundable)",
-        quantity: new Decimal(1),
-        unitPrice: deposit,
-        amount: deposit,
-        lineType: "DEPOSIT",
-      });
-    }
-    return buildInvoiceDraft(rentLine, extraLines, tax, pricing, first.periodStart, first.periodEnd);
-  }
-
-  /** One scheduled cycle of a term (PRD v2 §8): a full month's rent for the given period, nothing else. */
-  computeCycleInvoice(periodStart: Date, periodEnd: Date, pricing: PricingConfig, tax: TenantTaxContext): InvoiceDraft {
-    const rentLine: InvoiceLineDraft = {
-      description: `Rent (${formatPeriod(periodStart, periodEnd)})`,
-      quantity: new Decimal(1),
-      unitPrice: roundMoney(pricing.basePrice),
-      amount: roundMoney(pricing.basePrice),
-      lineType: "RENT",
-    };
-    return buildInvoiceDraft(rentLine, [], tax, pricing, periodStart, periodEnd);
   }
 
   /**

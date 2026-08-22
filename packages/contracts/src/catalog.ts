@@ -17,15 +17,6 @@ export const AssetStatusSchema = z.enum(["AVAILABLE", "RESERVED", "OCCUPIED", "M
 export const RateTierSchema = z.enum(["DAILY", "WEEKLY", "MONTHLY"]);
 export type RateTierValue = z.infer<typeof RateTierSchema>;
 
-/** PRD v2 D1 — the only terms a storage tenant sells. Daily/weekly tiers are no longer offered on the storefront. */
-export const TERM_OPTIONS_MONTHS = [1, 3, 6, 12] as const;
-export const TermMonthsSchema = z.union([z.literal(1), z.literal(3), z.literal(6), z.literal(12)]);
-export type TermMonthsValue = z.infer<typeof TermMonthsSchema>;
-
-/** Storefront size grouping (PRD v2 §4.1) — stored in AssetType.attributesSchema.sizeClass. */
-export const SizeClassSchema = z.enum(["SMALL", "MEDIUM", "LARGE"]);
-export type SizeClassValue = z.infer<typeof SizeClassSchema>;
-
 export const PricingConfigSchema = z.object({
   basePrice: MoneyStringSchema,
   currency: z.string().length(3),
@@ -130,56 +121,8 @@ export const LocationDtoSchema = z.object({
   name: z.string(),
   address: z.string().nullable(),
   timezone: z.string(),
-  /** WGS84, null when the branch hasn't been placed on the map yet (PRD v2 D4). */
-  latitude: z.number().nullable(),
-  longitude: z.number().nullable(),
 });
 export type LocationDto = z.infer<typeof LocationDtoSchema>;
-
-/** Console catalog setup — first write path for Location rows (gap flagged since Session 1, needed for the map). */
-export const UpsertLocationRequestSchema = z.object({
-  name: z.string().min(1).max(200),
-  address: z.string().max(500).optional().nullable(),
-  timezone: z.string().min(1).max(64).optional(),
-  latitude: z.number().min(-90).max(90).optional().nullable(),
-  longitude: z.number().min(-180).max(180).optional().nullable(),
-});
-export type UpsertLocationRequest = z.infer<typeof UpsertLocationRequestSchema>;
-
-/**
- * Storefront step 2 (PRD v2 §4.1): the sizes sold at a branch, with how many
- * units are free RIGHT NOW for a 1-month window — a display estimate; the
- * number that gates a booking is recomputed for the customer's real
- * check-in date + term at submission (same caveat as pooled availability).
- */
-export const LocationAssetTypeSummarySchema = z.object({
-  assetType: AssetTypeDtoSchema,
-  sizeClass: SizeClassSchema.nullable(),
-  unitCount: z.number().int(),
-  availableNow: z.number().int(),
-});
-export type LocationAssetTypeSummary = z.infer<typeof LocationAssetTypeSummarySchema>;
-
-/** Storefront step 3 live check (PRD v2 §4.3). */
-export const StorageAvailabilityQuerySchema = z.object({
-  locationId: z.string().uuid(),
-  assetTypeId: z.string().uuid(),
-  startDate: z.string().datetime(),
-  /** Arrives as a query-string value, hence the coercion before the literal check. */
-  termMonths: z.coerce.number().pipe(TermMonthsSchema),
-});
-export type StorageAvailabilityQuery = z.infer<typeof StorageAvailabilityQuerySchema>;
-
-export const StorageAvailabilityResponseSchema = z.object({
-  available: z.boolean(),
-  availableCount: z.number().int(),
-  /** How many WAITLISTED requests for this branch + size are ahead of a new one. */
-  waitlistAhead: z.number().int(),
-  blackoutMonths: z.number().int(),
-  /** Exclusive end of the requested term. */
-  endDate: z.string().datetime(),
-});
-export type StorageAvailabilityResponse = z.infer<typeof StorageAvailabilityResponseSchema>;
 
 export const AvailabilityQuerySchema = z.object({
   assetTypeId: z.string().uuid(),
@@ -206,8 +149,6 @@ export const QuoteRequestSchema = z.object({
   startDate: z.string().datetime(),
   endDate: z.string().datetime().optional(),
   rateTier: RateTierSchema.optional(),
-  /** PRD v2 D1 — quote the proforma of a fixed term and preview the full monthly schedule. */
-  termMonths: TermMonthsSchema.optional(),
 });
 export type QuoteRequest = z.infer<typeof QuoteRequestSchema>;
 
@@ -225,18 +166,5 @@ export const QuoteResponseSchema = z.object({
   totalAmount: MoneyStringSchema,
   periodStart: z.string().datetime(),
   periodEnd: z.string().datetime(),
-  /** Present for term quotes: every payment in the schedule, index 0 = this proforma. */
-  schedule: z
-    .array(
-      z.object({
-        index: z.number().int(),
-        periodStart: z.string().datetime(),
-        periodEnd: z.string().datetime(),
-        dueDate: z.string().datetime(),
-        totalAmount: MoneyStringSchema,
-      }),
-    )
-    .optional(),
-  termMonths: TermMonthsSchema.optional(),
 });
 export type QuoteResponse = z.infer<typeof QuoteResponseSchema>;

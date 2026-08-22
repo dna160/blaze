@@ -1,43 +1,20 @@
 "use client";
 
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import type { AssetTypeDto, BookingDto, ContractDto, InvoiceDto, SwapRequestDto } from "@rentos/contracts";
+import type { AssetTypeDto, BookingDto, ContractDto, SwapRequestDto } from "@rentos/contracts";
 
-import { apiFetch, apiUpload, ApiError, openPdf } from "@/lib/api";
+import { apiFetch, apiUpload, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
-import { formatDateId, formatIDR, getClientTenantSlug } from "@/lib/tenant-client";
 
-const TENANT_SLUG = getClientTenantSlug();
+const TENANT_SLUG = process.env.NEXT_PUBLIC_DEV_TENANT_SLUG ?? "";
 
-type BookingDetail = BookingDto & {
-  assetType?: { name: string };
-  asset?: { code: string } | null;
-  location?: { name: string; address: string | null } | null;
-};
-
-const STATUS_COPY: Record<string, { title: string; body: string }> = {
-  WAITLISTED: { title: "You're on the waitlist", body: "This size is full for your dates. We'll message you the moment a unit frees up — nothing to do for now." },
-  PENDING_APPROVAL: { title: "Awaiting confirmation", body: "Our team is reviewing your request. You'll get a message with the next step shortly." },
-  APPROVED: { title: "Approved", body: "Next: verify your identity if you haven't, then we send your contract and proforma invoice." },
-  ACTIVE: { title: "Active", body: "Your unit is yours. Upcoming payments are listed below." },
-  RENEWING: { title: "Payment due", body: "A monthly invoice is waiting — pay it below to keep everything on track." },
-  SUSPENDED: { title: "Suspended", body: "A payment is overdue and access is paused. Paying the outstanding invoice restores it." },
-  NOTICE_GIVEN: { title: "Ending", body: "Your termination notice is recorded." },
-  MOVED_OUT: { title: "Ended", body: "Thanks for storing with us. Your deposit refund is being processed." },
-  EXPIRED: { title: "Request expired", body: "This request wasn't confirmed in time. You can submit a new one any time." },
-  REJECTED: { title: "Not approved", body: "We couldn't process this request." },
-};
-
-/** PRD §7.1.4 customer portal booking detail + PRD v2: term, payment schedule, contract/proforma PDFs, KYC nudge. */
+/** PRD §7.1.4: self-service "give termination notice" + contract signing (PRD §5.3, wet-sign PDF v1). */
 export default function BookingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const [booking, setBooking] = useState<BookingDetail | null>(null);
+  const [booking, setBooking] = useState<BookingDto | null>(null);
   const [contract, setContract] = useState<ContractDto | null | undefined>(undefined);
-  const [invoices, setInvoices] = useState<InvoiceDto[]>([]);
-  const [kycStatus, setKycStatus] = useState<string | null>(null);
   const [assetTypes, setAssetTypes] = useState<AssetTypeDto[] | null>(null);
   const [swapRequests, setSwapRequests] = useState<SwapRequestDto[]>([]);
   const [noticeDate, setNoticeDate] = useState("");
@@ -53,19 +30,13 @@ export default function BookingDetailPage() {
   async function load() {
     const token = authClient.getToken();
     if (!token) {
-      router.push(`/login?next=/portal/bookings/${id}`);
+      router.push("/login");
       return;
     }
     try {
-      const [b, me, mine] = await Promise.all([
-        apiFetch<BookingDetail>(`/bookings/${id}`, { tenantSlug: TENANT_SLUG, token }),
-        apiFetch<{ kycStatus: string }>("/customers/me", { tenantSlug: TENANT_SLUG, token }),
-        apiFetch<InvoiceDto[]>("/invoices/mine", { tenantSlug: TENANT_SLUG, token }),
-      ]);
+      const b = await apiFetch<BookingDto>(`/bookings/${id}`, { tenantSlug: TENANT_SLUG, token });
       setBooking(b);
-      setKycStatus(me.kycStatus);
-      setInvoices(mine.filter((i) => i.bookingId === b.id).sort((a, c) => (a.scheduleIndex ?? 99) - (c.scheduleIndex ?? 99)));
-      if (!["DRAFT", "WAITLISTED", "PENDING_APPROVAL", "NEEDS_INFO"].includes(b.status)) {
+      if (b.status !== "DRAFT" && b.status !== "PENDING_APPROVAL" && b.status !== "NEEDS_INFO") {
         const c = await apiFetch<ContractDto | null>(`/contracts/by-booking/${id}`, { tenantSlug: TENANT_SLUG, token });
         setContract(c);
       }
@@ -74,7 +45,7 @@ export default function BookingDetailPage() {
           apiFetch<AssetTypeDto[]>("/catalog/asset-types", { tenantSlug: TENANT_SLUG, token }),
           apiFetch<SwapRequestDto[]>(`/swap-requests/by-booking/${id}`, { tenantSlug: TENANT_SLUG, token }),
         ]);
-        setAssetTypes(types.filter((t) => t.id !== b.assetTypeId && t.bookingModel === b.bookingModel));
+        setAssetTypes(types.filter((t) => t.id !== b.assetTypeId));
         setSwapRequests(swaps);
       }
     } catch {
@@ -100,8 +71,7 @@ export default function BookingDetailPage() {
         method: "POST",
         body: { noticeEffectiveDate: new Date(noticeDate).toISOString() },
       });
-      setMessage(booking?.termMonths ? "Notice recorded. Payments after that date are cancelled." : "Termination notice submitted. Your final invoice is on its way.");
-      await load();
+      setMessage("Termination notice submitted. Your final invoice is on its way.");
     } catch (err) {
       setMessage(err instanceof ApiError ? err.message : "Something went wrong.");
     } finally {
@@ -150,90 +120,24 @@ export default function BookingDetailPage() {
     }
   }
 
-  function open(path: string) {
-    const token = authClient.getToken();
-    if (token) openPdf(path, { tenantSlug: TENANT_SLUG, token }).catch(() => setError("Could not open the PDF."));
-  }
-
   if (!booking) return <p>Loading...</p>;
 
-  const copy = STATUS_COPY[booking.status] ?? { title: booking.status, body: "" };
   const canGiveNotice = ["ACTIVE", "RENEWING", "SUSPENDED"].includes(booking.status);
   const esignPending = contract?.esignStatus === "PENDING";
   const canSignContract = booking.status === "APPROVED" && contract && !contract.signedAt && !esignPending;
   const hasPendingSwap = swapRequests.some((s) => s.status === "PENDING");
   const canRequestSwap = ["ACTIVE", "RENEWING"].includes(booking.status) && assetTypes && assetTypes.length > 0 && !hasPendingSwap;
-  const needsKyc = booking.status === "APPROVED" && kycStatus !== "VERIFIED";
-  const proforma = invoices.find((i) => i.scheduleIndex === 0) ?? invoices[0];
 
   return (
     <div className="max-w-lg space-y-6">
       <div>
-        <Link href="/portal" className="text-sm text-brand-700/60 hover:text-accent-500">
-          ← My rentals
-        </Link>
-        <h1 className="mt-1 text-2xl font-semibold">
-          {booking.assetType?.name ?? "Booking"}
-          {booking.asset?.code ? ` — unit ${booking.asset.code}` : ""}
-        </h1>
-        <p className="text-sm text-brand-700/60">
-          {booking.location?.name ? `${booking.location.name} · ` : ""}
-          {formatDateId(booking.startDate)}
-          {booking.endDate ? ` → ${formatDateId(booking.endDate)}` : ""}
-          {booking.termMonths ? ` · ${booking.termMonths}-month term` : ""}
-        </p>
+        <h1 className="text-2xl font-semibold">Booking {booking.id.slice(0, 8)}</h1>
+        <p className="mt-1 text-brand-700/70">Status: {booking.status}</p>
       </div>
-
-      <div className="rounded-xl border border-brand-600/10 bg-white p-6">
-        <p className="text-xs font-semibold uppercase tracking-wide text-accent-500">{copy.title}</p>
-        <p className="mt-1 text-sm text-brand-700/70">{copy.body}</p>
-        {needsKyc && (
-          <Link href="/portal/kyc" className="mt-3 inline-block rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white">
-            {kycStatus === "PENDING_REVIEW" ? "Identity documents under review" : "Verify your identity"}
-          </Link>
-        )}
-        {booking.status === "APPROVED" && kycStatus === "VERIFIED" && !proforma && (
-          <p className="mt-2 text-sm text-brand-700/70">Identity verified — we&apos;re preparing your contract and proforma invoice.</p>
-        )}
-      </div>
-
-      {invoices.length > 0 && (
-        <div className="rounded-xl border border-brand-600/10 bg-white p-6">
-          <h3 className="font-medium">{booking.termMonths ? "Payment schedule" : "Invoices"}</h3>
-          <ul className="mt-3 divide-y divide-brand-600/10 text-sm">
-            {invoices.map((inv) => {
-              const payable = inv.status === "ISSUED" || inv.status === "OVERDUE";
-              return (
-                <li key={inv.id} className="flex items-center justify-between py-2">
-                  <div>
-                    <p className="font-medium">
-                      {inv.scheduleIndex === 0 ? "First payment (proforma)" : inv.scheduleIndex !== null && inv.scheduleIndex !== undefined ? `Payment ${inv.scheduleIndex + 1}` : inv.invoiceNumber}
-                    </p>
-                    <p className="text-xs text-brand-700/60">
-                      Due {formatDateId(inv.dueDate)} · {inv.status === "SCHEDULED" ? "scheduled" : inv.status.toLowerCase()}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p>{formatIDR(inv.totalAmount)}</p>
-                    <Link href={`/portal/invoices/${inv.id}`} className={`text-xs ${payable ? "font-medium text-accent-500" : "text-brand-700/60"} underline`}>
-                      {payable ? "Pay now" : "View"}
-                    </Link>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
 
       {contract && (
         <div className="rounded-xl border border-brand-600/10 bg-white p-6">
           <h3 className="font-medium">Rental agreement</h3>
-          {contract.unsignedDocumentUrl && (
-            <button type="button" onClick={() => open(`/contracts/${contract.id}/document`)} className="mt-2 text-sm text-accent-500 underline">
-              Download the agreement (PDF)
-            </button>
-          )}
           {contract.signedAt ? (
             <p className="mt-2 text-sm text-green-700">
               Signed by {contract.signedByName} on {new Date(contract.signedAt).toLocaleDateString("id-ID")}.
@@ -252,7 +156,7 @@ export default function BookingDetailPage() {
         <div className="space-y-4 rounded-xl border border-brand-600/10 bg-white p-6">
           <h3 className="font-medium">Sign your rental agreement</h3>
           <p className="text-sm text-brand-700/60">
-            Print the agreement above, sign it, and upload a photo or scan (PDF/JPEG/PNG).
+            Print, sign, and upload a photo or scan (wet-sign PDF/JPEG/PNG accepted in v1).
           </p>
           <input
             required
@@ -278,12 +182,7 @@ export default function BookingDetailPage() {
 
       {canGiveNotice && (
         <form onSubmit={giveNotice} className="space-y-4 rounded-xl border border-brand-600/10 bg-white p-6">
-          <h3 className="font-medium">{booking.termMonths ? "End your rental early" : "Give termination notice"}</h3>
-          {booking.termMonths && (
-            <p className="text-sm text-brand-700/60">
-              Your term runs to {booking.endDate ? formatDateId(booking.endDate) : "its end date"}. Ending early cancels the payments after the date you choose; invoices already issued still apply.
-            </p>
-          )}
+          <h3 className="font-medium">Give termination notice</h3>
           <input
             type="date"
             required

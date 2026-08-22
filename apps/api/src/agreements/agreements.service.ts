@@ -50,13 +50,6 @@ export class AgreementsService {
     return this.storage.read(contract.documentUrl);
   }
 
-  /** PRD v2 P9 — the generated, unsigned agreement (see BookingService.generateContractAndProforma). */
-  async getGeneratedDocument(tenantId: string, contractId: string) {
-    const contract = await this.prisma.runInTenantContext(tenantId, (tx) => tx.contract.findUnique({ where: { id: contractId } }));
-    if (!contract?.unsignedDocumentUrl) throw new NotFoundException("No generated agreement for this contract yet.");
-    return this.storage.read(contract.unsignedDocumentUrl);
-  }
-
   /**
    * Either the customer themselves (self-serve e-sign-equivalent upload)
    * or ops/finance staff (recording a paper contract collected in

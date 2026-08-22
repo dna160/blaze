@@ -1,7 +1,7 @@
 import { getPrismaClient, markInvoiceOverdue, withTenantContext, type Prisma } from "@rentos/database";
 import { recurringLeaseBookingFsm, type BookingActivationContext } from "@rentos/domain";
 
-import { notifyCustomer } from "../notify.js";
+import { notify } from "../notify.js";
 
 /**
  * "Automated reminder ladder (config per tenant): H-7/H-3/H-0 reminders ->
@@ -79,13 +79,12 @@ export async function runDunningLadder(): Promise<void> {
           const templateKey = `invoice_reminder_h${daysUntilDue}`;
           if (!(await alreadyNotified(tx, invoice.id, templateKey))) {
             const customer = await tx.customer.findUniqueOrThrow({ where: { id: invoice.customerId } });
-            await notifyCustomer({
+            await notify({
               tenantId: tenant.id,
-              tenantSlug: tenant.slug,
-              customer,
+              customerId: customer.id,
               templateKey,
+              recipient: customer.phone,
               variables: { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, totalAmount: invoice.totalAmount.toString() },
-              link: { purpose: "INVOICE", next: `/portal/invoices/${invoice.id}` },
             });
           }
         }
@@ -105,13 +104,12 @@ export async function runDunningLadder(): Promise<void> {
           const templateKey = `invoice_overdue_d${daysOverdue}`;
           if (!(await alreadyNotified(tx, invoice.id, templateKey))) {
             const customer = await tx.customer.findUniqueOrThrow({ where: { id: invoice.customerId } });
-            await notifyCustomer({
+            await notify({
               tenantId: tenant.id,
-              tenantSlug: tenant.slug,
-              customer,
+              customerId: customer.id,
               templateKey,
+              recipient: customer.phone,
               variables: { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, daysOverdue: String(daysOverdue) },
-              link: { purpose: "INVOICE", next: `/portal/invoices/${invoice.id}` },
             });
           }
         }
@@ -136,13 +134,12 @@ export async function runDunningLadder(): Promise<void> {
               },
             });
             const customer = await tx.customer.findUniqueOrThrow({ where: { id: booking.customerId } });
-            await notifyCustomer({
+            await notify({
               tenantId: tenant.id,
-              tenantSlug: tenant.slug,
-              customer,
+              customerId: customer.id,
               templateKey: "lease_suspended",
+              recipient: customer.phone,
               variables: { invoiceNumber: invoice.invoiceNumber },
-              link: { purpose: "INVOICE", next: `/portal/invoices/${invoice.id}` },
             });
           }
         }

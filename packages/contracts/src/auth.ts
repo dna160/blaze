@@ -45,32 +45,9 @@ export type OtpVerify = z.infer<typeof OtpVerifySchema>;
 export const CustomerSessionSchema = z.object({
   id: z.string().uuid(),
   tenantId: z.string().uuid(),
-  phone: z.string().nullable(),
-  email: z.string().nullable().optional(),
+  phone: z.string(),
   fullName: z.string().nullable(),
 });
-
-/**
- * Magic link (PRD v2 §9): the token from a `/m/{token}` link in a WhatsApp
- * or email message, exchanged for a normal customer session — no OTP.
- */
-export const MagicLinkExchangeSchema = z.object({
-  token: z.string().min(16).max(200),
-});
-export type MagicLinkExchange = z.infer<typeof MagicLinkExchangeSchema>;
-
-/**
- * Google sign-in via Clerk (PRD v2 D3/§9): the storefront sends Clerk's
- * session JWT; the API verifies it with Clerk's secret key, finds or
- * creates the customer by email, and issues our own JWT. Such customers
- * get EMAIL as their preferred channel.
- */
-export const ClerkExchangeSchema = z.object({
-  token: z.string().min(16),
-  /** Optional WhatsApp number captured alongside, stored for the record (not used for messaging — D3). */
-  phone: z.string().min(8).max(20).optional(),
-});
-export type ClerkExchange = z.infer<typeof ClerkExchangeSchema>;
 export type CustomerSession = z.infer<typeof CustomerSessionSchema>;
 
 export const CustomerAuthResponseSchema = z.object({

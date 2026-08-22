@@ -37,13 +37,6 @@ export interface BookingWindow {
   anchorDay?: number;
   /** RECURRING_LEASE only — defaults to MONTHLY (the original indefinite lease) when unset. */
   rateTier?: RateTier;
-  /**
-   * RECURRING_LEASE only (PRD v2 D1) — a fixed term of 1/3/6/12 months billed
-   * as a monthly payment schedule. When set, the first invoice is a FULL
-   * first month (no proration) + admin fee + deposit; later cycles come from
-   * `computeCycleInvoice`. Unset = the legacy indefinite, anchor-prorated lease.
-   */
-  termMonths?: number;
 }
 
 export type InvoiceLineType = "RENT" | "DEPOSIT" | "ADMIN_FEE" | "TAX" | "DISCOUNT" | "DAMAGE";
@@ -99,15 +92,6 @@ export interface BookingModelStrategy {
 
   /** RECURRING_LEASE only: next anchor date on/after `from`. */
   nextCycleDate?(anchorDay: number, from: Date): Date;
-
-  /**
-   * RECURRING_LEASE term schedules only (PRD v2 §8): the invoice for one
-   * explicit period of the schedule — a full month's rent for
-   * [periodStart, periodEnd], no admin fee, no deposit. Unlike
-   * `computeNextCycleInvoice` the period bounds are given, not derived from
-   * an anchor day, so the schedule can be materialized up front.
-   */
-  computeCycleInvoice?(periodStart: Date, periodEnd: Date, pricing: PricingConfig, tax: TenantTaxContext): InvoiceDraft;
 
   /** Final invoice at termination/return — prorated exit for leases, damage/deposit reconciliation for orders. */
   computeFinalSettlement(

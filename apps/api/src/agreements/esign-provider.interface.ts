@@ -4,8 +4,7 @@ export interface SendForSignatureParams {
   documentBuffer: Buffer;
   documentContentType: string;
   signerName: string;
-  /** Nullable since PRD v2 D3 — a Google-signed-in customer may only have an email. */
-  signerPhone: string | null;
+  signerPhone: string;
   signerEmail?: string;
 }
 

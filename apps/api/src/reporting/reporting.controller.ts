@@ -28,12 +28,9 @@ export class ReportingController {
     return this.reporting.occupancy(tenantId);
   }
 
-  /** PRD v2 §5.2 — `?asOf=YYYY-MM-DD&horizonDays=30|60|90`; both optional (today, 30). */
   @Get("ar-aging")
-  arAging(@CurrentTenantId() tenantId: string, @Query("asOf") asOf?: string, @Query("horizonDays") horizonDays?: string) {
-    const horizon = horizonDays ? Number(horizonDays) : 30;
-    if (!Number.isInteger(horizon) || horizon < 1 || horizon > 365) throw new BadRequestException("horizonDays must be an integer between 1 and 365.");
-    return this.reporting.arAging(tenantId, asOf ? this.parseDate(asOf) : new Date(), horizon);
+  arAging(@CurrentTenantId() tenantId: string) {
+    return this.reporting.arAging(tenantId);
   }
 
   @Get("booking-funnel")

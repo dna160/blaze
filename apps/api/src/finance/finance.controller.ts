@@ -1,7 +1,6 @@
-import { Body, Controller, ForbiddenException, Get, Param, Post, Query, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, ForbiddenException, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { CreateCreditNoteRequestSchema } from "@rentos/contracts";
-import type { Response } from "express";
 
 import { CurrentTenant, CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
@@ -28,25 +27,8 @@ export class FinanceController {
   }
 
   @Get(":id")
-  async get(@CurrentTenantId() tenantId: string, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
-    const invoice = await this.finance.getInvoice(tenantId, id);
-    if (user.kind === "CUSTOMER" && invoice.customerId !== user.id) throw new ForbiddenException("This invoice does not belong to you.");
-    return invoice;
-  }
-
-  /** PRD v2 P9 — proforma / invoice PDF (customer: own invoices only; staff: any). */
-  @Get(":id/pdf")
-  async pdf(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string, @Res() res: Response) {
-    const invoice = await this.finance.getInvoice(tenant.id, id);
-    if (user.kind === "CUSTOMER" && invoice.customerId !== user.id) throw new ForbiddenException("This invoice does not belong to you.");
-    const result = await this.finance.getInvoicePdf(tenant, id);
-    if (result.kind === "redirect") {
-      res.redirect(result.url);
-      return;
-    }
-    res.setHeader("Content-Type", result.contentType);
-    res.setHeader("Content-Disposition", `inline; filename="${invoice.invoiceNumber.replace(/[^A-Za-z0-9._-]/g, "_")}.pdf"`);
-    res.send(result.buffer);
+  get(@CurrentTenantId() tenantId: string, @Param("id") id: string) {
+    return this.finance.getInvoice(tenantId, id);
   }
 
   /** Console: AR list / finance module (PRD §7.2.4). */

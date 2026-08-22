@@ -1,33 +1,9 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import {
-  computePooledAvailableCount,
-  countAvailableStorageAssets,
-  resolveBlackoutMonths,
-  resolveInvoiceLeadDays,
-  toPricingConfig,
-  type Prisma,
-} from "@rentos/database";
-import { computeTermSchedule, getBookingModelStrategy, termEndDate, type BookingWindow } from "@rentos/domain";
-import type {
-  CreateAssetRequest,
-  CreateAssetTypeRequest,
-  LocationAssetTypeSummary,
-  QuoteRequest,
-  QuoteResponse,
-  StorageAvailabilityQuery,
-  StorageAvailabilityResponse,
-  UpdateAssetTypeRequest,
-  UpsertLocationRequest,
-} from "@rentos/contracts";
+import { computePooledAvailableCount, toPricingConfig, type Prisma } from "@rentos/database";
+import { getBookingModelStrategy, type BookingWindow } from "@rentos/domain";
+import type { CreateAssetRequest, CreateAssetTypeRequest, QuoteRequest, QuoteResponse, UpdateAssetTypeRequest } from "@rentos/contracts";
 
 import { PrismaService } from "../prisma/prisma.service.js";
-
-const SIZE_CLASSES = new Set(["SMALL", "MEDIUM", "LARGE"]);
-
-function sizeClassOf(attributesSchema: unknown): "SMALL" | "MEDIUM" | "LARGE" | null {
-  const raw = (attributesSchema as { sizeClass?: unknown } | null)?.sizeClass;
-  return typeof raw === "string" && SIZE_CLASSES.has(raw) ? (raw as "SMALL" | "MEDIUM" | "LARGE") : null;
-}
 
 @Injectable()
 export class CatalogService {
@@ -60,46 +36,20 @@ export class CatalogService {
    * tier picker can never drift from what the customer is actually
    * charged the way a hand-duplicated client-side calculation could.
    */
-  async quote(
-    tenant: { id: string; isPkp: boolean; featureFlags: Record<string, unknown> },
-    assetTypeId: string,
-    request: QuoteRequest,
-  ): Promise<QuoteResponse> {
-    const assetType = await this.getAssetType(tenant.id, assetTypeId);
+  async quote(tenantId: string, isTenantPkp: boolean, assetTypeId: string, request: QuoteRequest): Promise<QuoteResponse> {
+    const assetType = await this.getAssetType(tenantId, assetTypeId);
     const strategy = getBookingModelStrategy(assetType.bookingModel);
-    const pricing = toPricingConfig(assetType.pricing);
-    const tax = { isTenantPkp: tenant.isPkp };
-    const startDate = new Date(request.startDate);
     const window: BookingWindow = {
-      startDate,
+      startDate: new Date(request.startDate),
       endDate: request.endDate ? new Date(request.endDate) : undefined,
       rateTier: request.rateTier,
-      termMonths: assetType.bookingModel === "RECURRING_LEASE" ? request.termMonths : undefined,
     };
     let draft;
     try {
-      draft = strategy.computeInitialInvoice(window, pricing, tax);
+      draft = strategy.computeInitialInvoice(window, toPricingConfig(assetType.pricing), { isTenantPkp });
     } catch (err) {
       throw new BadRequestException(err instanceof Error ? err.message : "Could not compute a quote for these dates.");
     }
-
-    // PRD v2 D1 — preview the whole payment schedule for a term, using the
-    // same cycle math the real SCHEDULED invoices will be created with.
-    let schedule: QuoteResponse["schedule"];
-    if (window.termMonths && strategy.computeCycleInvoice) {
-      const periods = computeTermSchedule(startDate, window.termMonths, { leadDays: resolveInvoiceLeadDays(tenant.featureFlags) });
-      schedule = periods.map((p) => {
-        const total = p.index === 0 ? draft.totalAmount : strategy.computeCycleInvoice!(p.periodStart, p.periodEnd, pricing, tax).totalAmount;
-        return {
-          index: p.index,
-          periodStart: p.periodStart.toISOString(),
-          periodEnd: p.periodEnd.toISOString(),
-          dueDate: p.dueDate.toISOString(),
-          totalAmount: total.toString(),
-        };
-      });
-    }
-
     return {
       currency: assetType.pricing && typeof assetType.pricing === "object" && "currency" in assetType.pricing
         ? String((assetType.pricing as { currency: unknown }).currency)
@@ -110,82 +60,7 @@ export class CatalogService {
       totalAmount: draft.totalAmount.toString(),
       periodStart: draft.periodStart.toISOString(),
       periodEnd: draft.periodEnd.toISOString(),
-      schedule,
-      termMonths: window.termMonths as QuoteResponse["termMonths"],
     };
-  }
-
-  /**
-   * PRD v2 §4.3 — the live check behind storefront step 3: is a unit of
-   * this size at this branch free for [check-in, check-in + term), with
-   * the blackout month applied to every committed booking? Also reports
-   * how many WAITLISTED requests for the same branch + size are ahead, so
-   * a full branch can say "you'd be #3 on the waitlist" before submission.
-   */
-  async storageAvailability(
-    tenant: { id: string; featureFlags: Record<string, unknown> },
-    query: StorageAvailabilityQuery,
-    customerId?: string,
-  ): Promise<StorageAvailabilityResponse> {
-    const startDate = new Date(query.startDate);
-    const blackoutMonths = resolveBlackoutMonths(tenant.featureFlags);
-    return this.prisma.runInTenantContext(tenant.id, async (tx) => {
-      const assetType = await tx.assetType.findUnique({ where: { id: query.assetTypeId } });
-      if (!assetType || !assetType.isPublished) throw new NotFoundException("AssetType not found.");
-      if (assetType.bookingModel !== "RECURRING_LEASE") {
-        throw new BadRequestException("Term availability only applies to RECURRING_LEASE listings.");
-      }
-      const availableCount = await countAvailableStorageAssets(
-        tx,
-        query.assetTypeId,
-        query.locationId,
-        { startDate, termMonths: query.termMonths },
-        { blackoutMonths, customerId },
-      );
-      const waitlistAhead = await tx.booking.count({
-        where: { status: "WAITLISTED", assetTypeId: query.assetTypeId, locationId: query.locationId },
-      });
-      return {
-        available: availableCount > 0,
-        availableCount,
-        waitlistAhead,
-        blackoutMonths,
-        endDate: termEndDate(startDate, query.termMonths).toISOString(),
-      };
-    });
-  }
-
-  /**
-   * PRD v2 §4.1 storefront step 2: the sizes a branch sells, each with
-   * how many units are free right now for a 1-month window (display
-   * estimate — the real gate is `storageAvailability` with the customer's
-   * actual dates). Only published RECURRING_LEASE types with at least one
-   * in-service unit at the branch appear.
-   */
-  async locationAssetTypes(tenant: { id: string; featureFlags: Record<string, unknown> }, locationId: string): Promise<LocationAssetTypeSummary[]> {
-    const blackoutMonths = resolveBlackoutMonths(tenant.featureFlags);
-    return this.prisma.runInTenantContext(tenant.id, async (tx) => {
-      const location = await tx.location.findUnique({ where: { id: locationId } });
-      if (!location) throw new NotFoundException("Location not found.");
-      const assetTypes = await tx.assetType.findMany({
-        where: { isPublished: true, bookingModel: "RECURRING_LEASE", assets: { some: { locationId, status: { not: "RETIRED" } } } },
-        include: { _count: { select: { assets: { where: { locationId, status: { not: "RETIRED" } } } } } },
-        orderBy: { createdAt: "asc" },
-      });
-      const now = new Date();
-      const summaries: LocationAssetTypeSummary[] = [];
-      for (const at of assetTypes) {
-        const availableNow = await countAvailableStorageAssets(tx, at.id, locationId, { startDate: now, termMonths: 1 }, { blackoutMonths });
-        summaries.push({
-          assetType: at as unknown as LocationAssetTypeSummary["assetType"],
-          sizeClass: sizeClassOf(at.attributesSchema),
-          unitCount: at._count.assets,
-          availableNow,
-        });
-      }
-      const order = { SMALL: 0, MEDIUM: 1, LARGE: 2 } as const;
-      return summaries.sort((a, b) => (a.sizeClass ? order[a.sizeClass] : 3) - (b.sizeClass ? order[b.sizeClass] : 3));
-    });
   }
 
   /**
@@ -228,39 +103,6 @@ export class CatalogService {
 
   listLocations(tenantId: string) {
     return this.prisma.runInTenantContext(tenantId, (tx) => tx.location.findMany({ orderBy: { name: "asc" } }));
-  }
-
-  /** First write path for Location rows (PRD v2 §5.3) — name/address plus the coordinates the storefront map needs. */
-  createLocation(tenantId: string, input: UpsertLocationRequest) {
-    return this.prisma.runInTenantContext(tenantId, (tx) =>
-      tx.location.create({
-        data: {
-          tenantId,
-          name: input.name,
-          address: input.address ?? null,
-          timezone: input.timezone ?? "Asia/Jakarta",
-          latitude: input.latitude ?? null,
-          longitude: input.longitude ?? null,
-        },
-      }),
-    );
-  }
-
-  async updateLocation(tenantId: string, locationId: string, patch: UpsertLocationRequest) {
-    return this.prisma.runInTenantContext(tenantId, async (tx) => {
-      const existing = await tx.location.findUnique({ where: { id: locationId } });
-      if (!existing) throw new NotFoundException("Location not found.");
-      return tx.location.update({
-        where: { id: locationId },
-        data: {
-          name: patch.name,
-          address: patch.address === undefined ? undefined : patch.address,
-          timezone: patch.timezone,
-          latitude: patch.latitude === undefined ? undefined : patch.latitude,
-          longitude: patch.longitude === undefined ? undefined : patch.longitude,
-        },
-      });
-    });
   }
 
   /**

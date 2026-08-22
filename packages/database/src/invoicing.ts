@@ -1,6 +1,5 @@
 import {
   computeCreditReplacementDraft,
-  computeTermSchedule,
   getBookingModelStrategy,
   invoiceFsm,
   money,
@@ -34,8 +33,6 @@ export interface BookingForInvoicing {
   anchorDay: number | null;
   /** RECURRING_LEASE only — see @rentos/domain RateTier. Ignored for other booking models. */
   rateTier?: "DAILY" | "WEEKLY" | "MONTHLY";
-  /** RECURRING_LEASE term leases only (PRD v2 D1) — 1/3/6/12. Null/undefined = legacy indefinite lease. */
-  termMonths?: number | null;
   priceSnapshot: unknown;
 }
 
@@ -75,45 +72,16 @@ interface InvoiceOwner {
   customerId: string;
 }
 
-/**
- * PRD v2 §8 — a term's payment schedule is materialized up front, so an
- * invoice can now be persisted in one of two shapes:
- *
- *  - issued now (the default, every pre-v2 call site): real tax-sequential
- *    number, status ISSUED, AR/Revenue/Tax ledger entries posted — exactly
- *    the pre-v2 behavior, byte for byte.
- *  - SCHEDULED for a future cycle: a provisional number (the real one is
- *    assigned by `issueScheduledInvoice` when the worker issues it — the
- *    sequence embeds year/month, so a November invoice must not burn an
- *    August number), explicit issue/due dates, and NO ledger entries yet.
- *    Accrual recognition happens at issue, not at scheduling.
- */
-export interface PersistInvoiceOptions {
-  scheduled?: { issueDate: Date; dueDate: Date; provisionalNumber: string };
-  /** Explicit due date for an ISSUED invoice (the proforma is due before move-in, not issue + 7). */
-  dueDate?: Date;
-  /** Position in a term's payment schedule (0 = proforma). */
-  scheduleIndex?: number;
-}
-
-/** The provisional number a SCHEDULED invoice carries until it's issued — never looks like a real sequence. */
-export function provisionalInvoiceNumber(bookingId: string, scheduleIndex: number): string {
-  return `SCHEDULED/${bookingId.slice(0, 8).toUpperCase()}/${String(scheduleIndex).padStart(2, "0")}`;
-}
-
 async function persistInvoiceCore(
   tx: Prisma.TransactionClient,
   tenantId: string,
   tenantSlug: string,
   owner: InvoiceOwner,
   draft: InvoiceDraft,
-  options: PersistInvoiceOptions = {},
 ) {
-  const isScheduled = Boolean(options.scheduled);
-  const invoiceNumber = isScheduled ? options.scheduled!.provisionalNumber : await nextInvoiceNumber(tx, tenantId, tenantSlug);
-  const issueDate = isScheduled ? options.scheduled!.issueDate : new Date();
-  const dueDate = isScheduled ? options.scheduled!.dueDate : (options.dueDate ?? dueDateFor(issueDate));
-  const status = isScheduled ? "SCHEDULED" : (await invoiceFsm.fire("SCHEDULED", "ISSUE", undefined)).to;
+  const invoiceNumber = await nextInvoiceNumber(tx, tenantId, tenantSlug);
+  const issueDate = new Date();
+  const { to: status } = await invoiceFsm.fire("SCHEDULED", "ISSUE", undefined);
 
   const invoice = await tx.invoice.create({
     data: {
@@ -127,10 +95,9 @@ async function persistInvoiceCore(
       taxAmount: draft.taxAmount.toString(),
       totalAmount: draft.totalAmount.toString(),
       issueDate,
-      dueDate,
+      dueDate: dueDateFor(issueDate),
       periodStart: draft.periodStart,
       periodEnd: draft.periodEnd,
-      scheduleIndex: options.scheduleIndex,
       lines: {
         create: draft.lines.map((l) => ({
           tenantId,
@@ -145,66 +112,15 @@ async function persistInvoiceCore(
     include: { lines: true },
   });
 
-  if (!isScheduled) {
-    await recordIssueLedgerEntries(tx, tenantId, invoice.id, invoiceNumber, invoice.lines, draft.taxAmount.toString());
-  }
-
-  return invoice;
-}
-
-/**
- * Revenue is recognized at issue (accrual), deposit lines excluded — they're
- * a liability, never revenue/AR (see ledger.ts header comment). Shared by
- * the issue-now path and `issueScheduledInvoice` so both post identical
- * entries.
- */
-async function recordIssueLedgerEntries(
-  tx: Prisma.TransactionClient,
-  tenantId: string,
-  invoiceId: string,
-  invoiceNumber: string,
-  lines: ReadonlyArray<{ lineType: string; amount: { toString(): string } }>,
-  taxAmount: string,
-) {
-  const revenueAmount = lines
+  // Revenue is recognized at issue (accrual), deposit lines excluded — they're
+  // a liability, never revenue/AR (see ledger.ts header comment).
+  const revenueAmount = draft.lines
     .filter((l) => l.lineType !== "DEPOSIT" && l.lineType !== "TAX")
     .reduce((sum, l) => sum + Number(l.amount.toString()), 0)
     .toFixed(2);
-  await recordInvoiceIssuedEntries(tx, tenantId, invoiceId, invoiceNumber, revenueAmount, taxAmount);
-}
+  await recordInvoiceIssuedEntries(tx, tenantId, invoice.id, invoiceNumber, revenueAmount, draft.taxAmount.toString());
 
-/**
- * SCHEDULED -> ISSUED (PRD v2 §8): assigns the real tax-sequential number
- * for the month it's issued in, posts the accrual ledger entries, and
- * stamps the actual issue date. Idempotent — an already-issued invoice is
- * returned untouched, so a worker re-run can't double-number or
- * double-post.
- */
-export async function issueScheduledInvoice(tx: Prisma.TransactionClient, tenantId: string, tenantSlug: string, invoiceId: string) {
-  const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { lines: true } });
-  if (invoice.status !== "SCHEDULED") return invoice;
-
-  const invoiceNumber = await nextInvoiceNumber(tx, tenantId, tenantSlug);
-  const { to: status } = await invoiceFsm.fire("SCHEDULED", "ISSUE", undefined);
-  const issued = await tx.invoice.update({
-    where: { id: invoiceId },
-    data: { status, invoiceNumber, issueDate: new Date() },
-    include: { lines: true },
-  });
-  await recordIssueLedgerEntries(tx, tenantId, issued.id, invoiceNumber, issued.lines, issued.taxAmount.toString());
-  return issued;
-}
-
-/** Early termination (PRD v2 P7): cycles that haven't been issued yet are cancelled, never billed. Issued ones stand. */
-export async function voidScheduledInvoices(tx: Prisma.TransactionClient, bookingId: string, periodStartingOnOrAfter?: Date) {
-  const scheduled = await tx.invoice.findMany({
-    where: { bookingId, status: "SCHEDULED", ...(periodStartingOnOrAfter ? { periodStart: { gte: periodStartingOnOrAfter } } : {}) },
-  });
-  for (const inv of scheduled) {
-    const { to } = await invoiceFsm.fire("SCHEDULED", "CANCEL", undefined);
-    await tx.invoice.update({ where: { id: inv.id }, data: { status: to, voidedAt: new Date() } });
-  }
-  return scheduled.length;
+  return invoice;
 }
 
 function persistInvoice(
@@ -213,53 +129,8 @@ function persistInvoice(
   tenantSlug: string,
   booking: BookingForInvoicing,
   draft: InvoiceDraft,
-  options?: PersistInvoiceOptions,
 ) {
-  return persistInvoiceCore(tx, tenantId, tenantSlug, { bookingId: booking.id, customerId: booking.customerId }, draft, options);
-}
-
-/**
- * PRD v2 §8 — materialize a term lease's whole payment schedule at
- * contract time: invoice #0 (the proforma: full month 1 + admin fee +
- * deposit) issued now and due before move-in, invoices #1..N-1 SCHEDULED
- * with their real period/due dates and no ledger impact until the worker
- * issues each one `leadDays` before it's due.
- */
-export async function generateTermPaymentSchedule(
-  tx: Prisma.TransactionClient,
-  tenantId: string,
-  tenantSlug: string,
-  isTenantPkp: boolean,
-  booking: BookingForInvoicing & { termMonths: number },
-  options: { leadDays?: number; issuedOn?: Date } = {},
-) {
-  const strategy = getBookingModelStrategy(booking.bookingModel);
-  if (!strategy.computeCycleInvoice) {
-    throw new Error(`${booking.bookingModel} does not support term payment schedules.`);
-  }
-  const pricing = toPricingConfig(booking.priceSnapshot);
-  const tax = { isTenantPkp };
-  const issuedOn = options.issuedOn ?? new Date();
-  const schedule = computeTermSchedule(booking.startDate, booking.termMonths, { leadDays: options.leadDays, issuedOn });
-
-  const window: BookingWindow = { startDate: booking.startDate, termMonths: booking.termMonths, rateTier: booking.rateTier };
-  const proformaDraft = strategy.computeInitialInvoice(window, pricing, tax);
-  const proforma = await persistInvoice(tx, tenantId, tenantSlug, booking, proformaDraft, {
-    dueDate: schedule[0]!.dueDate,
-    scheduleIndex: 0,
-  });
-
-  const cycles = [];
-  for (const period of schedule.slice(1)) {
-    const draft = strategy.computeCycleInvoice(period.periodStart, period.periodEnd, pricing, tax);
-    cycles.push(
-      await persistInvoice(tx, tenantId, tenantSlug, booking, draft, {
-        scheduled: { issueDate: period.issueDate, dueDate: period.dueDate, provisionalNumber: provisionalInvoiceNumber(booking.id, period.index) },
-        scheduleIndex: period.index,
-      }),
-    );
-  }
-  return { proforma, cycles };
+  return persistInvoiceCore(tx, tenantId, tenantSlug, { bookingId: booking.id, customerId: booking.customerId }, draft);
 }
 
 export interface InvoiceLineForCredit {
@@ -314,7 +185,6 @@ export async function generateInitialInvoice(
     startDate: booking.startDate,
     endDate: booking.endDate ?? undefined,
     rateTier: booking.rateTier,
-    termMonths: booking.termMonths ?? undefined,
   };
   const draft = strategy.computeInitialInvoice(window, toPricingConfig(booking.priceSnapshot), { isTenantPkp });
   return persistInvoice(tx, tenantId, tenantSlug, booking, draft);

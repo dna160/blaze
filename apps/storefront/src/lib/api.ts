@@ -56,21 +56,3 @@ export async function apiUpload<T>(
   }
   return res.json() as Promise<T>;
 }
-
-/** Binary responses (contract / invoice PDFs) — fetched with the Bearer token, then opened from an object URL. */
-export async function apiFetchBlob(path: string, options: { tenantSlug: string; token: string }): Promise<Blob> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "X-Tenant-Slug": options.tenantSlug, Authorization: `Bearer ${options.token}` },
-    cache: "no-store",
-  });
-  if (!res.ok) throw new ApiError(res.statusText, res.status);
-  return res.blob();
-}
-
-/** Open a protected PDF in a new tab (the Bearer token can't ride a plain <a href>). */
-export async function openPdf(path: string, options: { tenantSlug: string; token: string }): Promise<void> {
-  const blob = await apiFetchBlob(path, options);
-  const url = URL.createObjectURL(blob);
-  window.open(url, "_blank", "noopener");
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
-}

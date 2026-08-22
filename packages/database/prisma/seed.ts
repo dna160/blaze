@@ -14,15 +14,9 @@
  * "RentOS!Demo2026". The hash below is that password at bcrypt cost 10.
  */
 import { createHash } from "node:crypto";
-import { BookingModel, AssetStatus, BookingStatus, type GlobalRole } from "../generated/client/index.js";
-import { createPrismaClient } from "../src/client.js";
+import { PrismaClient, BookingModel, AssetStatus, BookingStatus, type GlobalRole } from "../generated/client/index.js";
 
-// Seeds run as the OWNER/migrator role (DATABASE_URL), never rentos_app —
-// see the header comment. createPrismaClient (not getPrismaClient) so the
-// DATABASE_URL_APP preference never applies here.
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) throw new Error("DATABASE_URL is required to seed.");
-const prisma = createPrismaClient(databaseUrl);
+const prisma = new PrismaClient();
 const DEMO_PASSWORD_HASH = "$2a$10$EvHMo0YpEy8LGcSzJL3DaOr26EZsqN/PuPBclcDWdyDU/b2eD1I.K";
 
 // Fixed (not randomly generated) demo credentials — same convention as
@@ -167,35 +161,15 @@ async function seedStorageTenant() {
     create: { tenantId: tenant.id, domain: "gudang-aman.rentos.local", isPrimary: true },
   });
 
-  // Coordinates (PRD v2 D4) are applied on reseed too — `update` here is
-  // deliberately not `{}`: a pre-v2 database has these rows without
-  // lat/lng and the storefront map needs them (see the seed-upsert gotcha in
-  // docs/HANDOFF.md — this is the one field set we DO want backfilled).
   const location = await prisma.location.upsert({
     where: { id: "00000000-0000-0000-0000-000000000101" },
-    update: { latitude: -6.1589, longitude: 106.9056 },
+    update: {},
     create: {
       id: "00000000-0000-0000-0000-000000000101",
       tenantId: tenant.id,
       name: "Gudang Aman — Kelapa Gading",
       address: "Jl. Boulevard Raya, Kelapa Gading, Jakarta Utara",
       timezone: "Asia/Jakarta",
-      latitude: -6.1589,
-      longitude: 106.9056,
-    },
-  });
-  // Second branch (PRD v2 §4.1 — "choose location" only means something with two).
-  const locationSouth = await prisma.location.upsert({
-    where: { id: "00000000-0000-0000-0000-000000000102" },
-    update: { latitude: -6.3019, longitude: 106.6528 },
-    create: {
-      id: "00000000-0000-0000-0000-000000000102",
-      tenantId: tenant.id,
-      name: "Gudang Aman — BSD City",
-      address: "Jl. BSD Grand Boulevard, Tangerang Selatan",
-      timezone: "Asia/Jakarta",
-      latitude: -6.3019,
-      longitude: 106.6528,
     },
   });
 
@@ -215,7 +189,7 @@ async function seedStorageTenant() {
       name: "Storage Unit 1.5×2m",
       slug: "unit-1-5x2",
       bookingModel: BookingModel.RECURRING_LEASE,
-      attributesSchema: { sizeM2: 3, climateControlled: false, floor: "ground", sizeClass: "SMALL" },
+      attributesSchema: { sizeM2: 3, climateControlled: false, floor: "ground" },
       pricing: {
         basePrice: 450000,
         currency: "IDR",
@@ -238,7 +212,7 @@ async function seedStorageTenant() {
       name: "Storage Unit 3×3m",
       slug: "unit-3x3",
       bookingModel: BookingModel.RECURRING_LEASE,
-      attributesSchema: { sizeM2: 9, climateControlled: true, floor: "ground", sizeClass: "MEDIUM" },
+      attributesSchema: { sizeM2: 9, climateControlled: true, floor: "ground" },
       pricing: {
         basePrice: 1200000,
         currency: "IDR",
@@ -253,52 +227,22 @@ async function seedStorageTenant() {
     },
   });
 
-  // PRD v2 §4.1 — the storefront groups by SMALL / MEDIUM / LARGE, so the demo needs all three.
-  const assetTypeLarge = await prisma.assetType.upsert({
-    where: { tenantId_slug: { tenantId: tenant.id, slug: "unit-4x6" } },
-    update: {},
-    create: {
-      tenantId: tenant.id,
-      name: "Storage Unit 4×6m",
-      slug: "unit-4x6",
-      bookingModel: BookingModel.RECURRING_LEASE,
-      attributesSchema: { sizeM2: 24, climateControlled: true, floor: "ground", sizeClass: "LARGE" },
-      pricing: {
-        basePrice: 2800000,
-        currency: "IDR",
-        billingPeriod: "MONTHLY",
-        depositRule: { type: "MULTIPLE_OF_RENT", multiple: 1 },
-        adminFee: 100000,
-        prorationRule: "ANCHOR_DATE",
-        taxInclusive: false,
-      },
-      photos: [],
-      isPublished: true,
-    },
-  });
-  // Backfill sizeClass on the two pre-v2 types for already-seeded databases.
-  await prisma.assetType.update({ where: { id: assetTypeSmall.id }, data: { attributesSchema: { ...(assetTypeSmall.attributesSchema as object), sizeClass: "SMALL" } } });
-  await prisma.assetType.update({ where: { id: assetTypeMedium.id }, data: { attributesSchema: { ...(assetTypeMedium.attributesSchema as object), sizeClass: "MEDIUM" } } });
-
-  const assetCodes: Array<{ code: string; assetTypeId: string; status: AssetStatus; locationId: string }> = [
-    { code: "A-01", assetTypeId: assetTypeSmall.id, status: AssetStatus.AVAILABLE, locationId: location.id },
-    { code: "A-02", assetTypeId: assetTypeSmall.id, status: AssetStatus.AVAILABLE, locationId: location.id },
-    { code: "A-03", assetTypeId: assetTypeSmall.id, status: AssetStatus.MAINTENANCE, locationId: location.id },
-    { code: "B-14", assetTypeId: assetTypeMedium.id, status: AssetStatus.OCCUPIED, locationId: location.id },
-    { code: "B-15", assetTypeId: assetTypeMedium.id, status: AssetStatus.AVAILABLE, locationId: location.id },
-    { code: "C-01", assetTypeId: assetTypeLarge.id, status: AssetStatus.AVAILABLE, locationId: location.id },
-    { code: "S-01", assetTypeId: assetTypeSmall.id, status: AssetStatus.AVAILABLE, locationId: locationSouth.id },
-    { code: "S-02", assetTypeId: assetTypeMedium.id, status: AssetStatus.AVAILABLE, locationId: locationSouth.id },
+  const assetCodes: Array<{ code: string; assetTypeId: string; status: AssetStatus }> = [
+    { code: "A-01", assetTypeId: assetTypeSmall.id, status: AssetStatus.AVAILABLE },
+    { code: "A-02", assetTypeId: assetTypeSmall.id, status: AssetStatus.AVAILABLE },
+    { code: "A-03", assetTypeId: assetTypeSmall.id, status: AssetStatus.MAINTENANCE },
+    { code: "B-14", assetTypeId: assetTypeMedium.id, status: AssetStatus.OCCUPIED },
+    { code: "B-15", assetTypeId: assetTypeMedium.id, status: AssetStatus.AVAILABLE },
   ];
 
   const assets = [];
   for (const a of assetCodes) {
     const asset = await prisma.asset.upsert({
-      where: { tenantId_locationId_code: { tenantId: tenant.id, locationId: a.locationId, code: a.code } },
+      where: { tenantId_locationId_code: { tenantId: tenant.id, locationId: location.id, code: a.code } },
       update: {},
       create: {
         tenantId: tenant.id,
-        locationId: a.locationId,
+        locationId: location.id,
         assetTypeId: a.assetTypeId,
         code: a.code,
         status: a.status,
@@ -334,7 +278,6 @@ async function seedStorageTenant() {
         customerId: customer.id,
         assetTypeId: assetTypeMedium.id,
         assetId: occupiedAsset.id,
-        locationId: location.id,
         bookingModel: BookingModel.RECURRING_LEASE,
         status: BookingStatus.ACTIVE,
         startDate,

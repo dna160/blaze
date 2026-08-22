@@ -11,7 +11,6 @@ import {
 } from "@rentos/database";
 import { invoiceFsm, money } from "@rentos/domain";
 
-import { DocumentsService } from "../documents/documents.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 /**
@@ -22,10 +21,7 @@ import { PrismaService } from "../prisma/prisma.service.js";
  */
 @Injectable()
 export class FinanceService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly documents: DocumentsService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   generateInitialInvoice(
     tx: Prisma.TransactionClient,
@@ -69,44 +65,6 @@ export class FinanceService {
     );
     if (!invoice) throw new NotFoundException("Invoice not found.");
     return invoice;
-  }
-
-  /**
-   * PRD v2 P9 — the invoice/proforma PDF. Rendered on first request and
-   * cached via `documentUrl`; re-rendered after payment so the document
-   * says PAID (the cached proforma key is replaced). Returns the same
-   * buffer-or-redirect shape every file endpoint uses.
-   */
-  async getInvoicePdf(tenant: { id: string; name: string; isPkp: boolean }, invoiceId: string) {
-    const invoice = await this.prisma.runInTenantContext(tenant.id, (tx) =>
-      tx.invoice.findUnique({
-        where: { id: invoiceId },
-        include: { lines: true, customer: true, booking: { include: { asset: true, assetType: true, location: true } } },
-      }),
-    );
-    if (!invoice) throw new NotFoundException("Invoice not found.");
-    const wantsPaidVersion = invoice.status === "PAID";
-    const cachedIsFresh = invoice.documentUrl && (!wantsPaidVersion || invoice.documentUrl.endsWith("/paid.pdf"));
-    if (invoice.documentUrl && cachedIsFresh) return this.documents.read(invoice.documentUrl);
-
-    const tenantRow = await this.prisma.raw.tenant.findUniqueOrThrow({ where: { id: tenant.id }, select: { legalName: true } });
-    const pdf = await this.documents.renderInvoice({
-      tenant: { name: tenant.name, legalName: tenantRow.legalName, isPkp: tenant.isPkp },
-      invoice: {
-        ...invoice,
-        subtotal: invoice.subtotal.toString(),
-        taxAmount: invoice.taxAmount.toString(),
-        totalAmount: invoice.totalAmount.toString(),
-        lines: invoice.lines.map((l) => ({ description: l.description, quantity: l.quantity.toString(), unitPrice: l.unitPrice.toString(), amount: l.amount.toString(), lineType: l.lineType })),
-      },
-      customer: invoice.customer,
-      unit: invoice.booking
-        ? { code: invoice.booking.asset?.code ?? null, assetTypeName: invoice.booking.assetType.name, locationName: invoice.booking.location?.name ?? null }
-        : null,
-    });
-    const key = await this.documents.store(`invoices/${tenant.id}/${invoice.id}/${wantsPaidVersion ? "paid" : "proforma"}.pdf`, pdf);
-    await this.prisma.runInTenantContext(tenant.id, (tx) => tx.invoice.update({ where: { id: invoiceId }, data: { documentUrl: key } }));
-    return { kind: "buffer" as const, buffer: pdf, contentType: "application/pdf" };
   }
 
   listInvoicesForCustomer(tenantId: string, customerId: string) {

@@ -25,28 +25,6 @@ export {
   type SeasonalRate,
   type NightlyRateGroup,
 } from "./pricing/seasonal.js";
-export {
-  TERM_OPTIONS_MONTHS,
-  isValidTermMonths,
-  addMonthsClamped,
-  addDays,
-  termEndDate,
-  proformaDueDate,
-  computeTermSchedule,
-  type TermMonths,
-  type SchedulePeriod,
-  type TermScheduleOptions,
-} from "./pricing/term-schedule.js";
-export {
-  holdWindowEnd,
-  holdWindowsOverlap,
-  isUnitFreeFor,
-  type HoldWindowInput,
-  type CommittedBookingLike,
-  type AvailabilityCheckOptions,
-} from "./availability/blackout.js";
-export { classifyCustomerHealth, type CustomerHealth, type CustomerHealthInput } from "./crm/customer-health.js";
-export { bucketReceivables, type ArAgingBuckets, type ReceivableLike } from "./finance/ar-aging.js";
 
 export type {
   BookingModelStrategy,
@@ -85,4 +63,3 @@ export {
   type BillingPlanDefinition,
   type MonthlyChargeResult,
 } from "./billing/plans.js";
-export { renderMessage, buildMagicLinkUrl, type RenderedMessage } from "./comms/templates.js";

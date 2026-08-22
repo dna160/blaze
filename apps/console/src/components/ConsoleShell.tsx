@@ -12,7 +12,6 @@ const NAV = [
   { href: "/swap-requests", label: "Swap Requests" },
   { href: "/kyc", label: "KYC Review" },
   { href: "/assets", label: "Inventory" },
-  { href: "/clients", label: "Clients" },
   { href: "/invoices", label: "Finance" },
   { href: "/deposits", label: "Deposits" },
   { href: "/reports", label: "Reports" },

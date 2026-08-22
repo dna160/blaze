@@ -2,7 +2,6 @@ import { Module } from "@nestjs/common";
 
 import { BookingModule } from "../booking/booking.module.js";
 import { FinanceModule } from "../finance/finance.module.js";
-import { NotificationsModule } from "../notifications/notifications.module.js";
 import { StorageModule } from "../storage/storage.module.js";
 
 import { PAYMENT_PROVIDER } from "./payment-provider.interface.js";
@@ -13,7 +12,7 @@ import { XenditPaymentProvider } from "./providers/xendit-payment.provider.js";
 
 /** PAYMENT_PROVIDER env var selects the adapter — defaults to mock so local dev/CI needs zero gateway credentials. */
 @Module({
-  imports: [BookingModule, FinanceModule, StorageModule, NotificationsModule],
+  imports: [BookingModule, FinanceModule, StorageModule],
   controllers: [PaymentsController],
   providers: [
     MockPaymentProvider,

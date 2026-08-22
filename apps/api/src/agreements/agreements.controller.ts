@@ -63,22 +63,6 @@ export class AgreementsController {
     res.send(result.buffer);
   }
 
-  /** PRD v2 P9 — the generated (unsigned) rental agreement PDF, for the customer to read/print/sign. */
-  @Get(":id/document")
-  @UseGuards(JwtAuthGuard)
-  async getDocument(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string, @Res() res: Response) {
-    const contract = await this.contracts.getById(tenant.id, id);
-    await this.assertAccess(tenant, user, contract.bookingId);
-    const result = await this.contracts.getGeneratedDocument(tenant.id, id);
-    if (result.kind === "redirect") {
-      res.redirect(result.url);
-      return;
-    }
-    res.setHeader("Content-Type", result.contentType);
-    res.setHeader("Content-Disposition", `inline; filename="rental-agreement-${id.slice(0, 8)}.pdf"`);
-    res.send(result.buffer);
-  }
-
   /** Either the customer (self-serve) or ops/finance staff (recording a paper contract) can upload the signed document. */
   @Post("by-booking/:bookingId/sign")
   @UseGuards(JwtAuthGuard)

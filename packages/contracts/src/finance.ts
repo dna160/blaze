@@ -35,38 +35,9 @@ export const InvoiceDtoSchema = z.object({
   paidAt: z.string().datetime().nullable(),
   /** Set when a credit note replaced this invoice with a corrected one for the remaining balance (PRD §8.2). */
   supersededByInvoiceId: z.string().uuid().nullable(),
-  /** PRD v2 §8 — position in a term's payment schedule (0 = proforma). Null outside a schedule. */
-  scheduleIndex: z.number().int().nullable().optional(),
-  /** Set once a PDF has been generated for this invoice (GET /invoices/:id/pdf). */
-  documentUrl: z.string().nullable().optional(),
-  periodStart: z.string().datetime().nullable().optional(),
-  periodEnd: z.string().datetime().nullable().optional(),
-  bookingId: z.string().uuid().nullable().optional(),
   lines: z.array(InvoiceLineDtoSchema),
 });
 export type InvoiceDto = z.infer<typeof InvoiceDtoSchema>;
-
-/** PRD v2 §5.2 — AR aging as of a date, with a forward horizon. */
-export const ArAgingQuerySchema = z.object({
-  asOf: z.string().optional(),
-  horizonDays: z.coerce.number().int().min(1).max(365).default(30),
-});
-export type ArAgingQuery = z.infer<typeof ArAgingQuerySchema>;
-
-export const ArAgingResponseSchema = z.object({
-  asOf: z.string().datetime(),
-  horizonDays: z.number().int(),
-  overdue: z.object({ current: z.string(), d1_30: z.string(), d31_60: z.string(), d60_plus: z.string(), total: z.string() }),
-  comingDue: z.object({ d0_30: z.string(), d31_60: z.string(), d61_90: z.string(), total: z.string(), beyondHorizon: z.string() }),
-  totalOutstanding: z.string(),
-  invoiceCount: z.number().int(),
-  /** Backwards-compatible flat buckets (numbers) the v1 reports page read. */
-  current: z.number(),
-  d1_30: z.number(),
-  d31_60: z.number(),
-  d60_plus: z.number(),
-});
-export type ArAgingResponse = z.infer<typeof ArAgingResponseSchema>;
 
 export const PaymentStatusSchema = z.enum(["PENDING", "SUCCEEDED", "FAILED", "REFUNDED", "PARTIALLY_REFUNDED"]);
 
