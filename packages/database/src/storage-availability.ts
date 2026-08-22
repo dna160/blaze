@@ -15,8 +15,14 @@ import type { Prisma } from "../generated/client/index.js";
  * window against every committed booking on the unit — the overlap rule
  * itself is `@rentos/domain`'s `isUnitFreeFor`, unit-tested there.
  *
- * Committed = holds the unit. WAITLISTED never holds anything; terminal
- * states (REJECTED/EXPIRED/LAPSED/MOVED_OUT/CLOSED) free it immediately.
+ * Committed = holds the unit for its window. WAITLISTED never holds
+ * anything; requests that died before activation (REJECTED/EXPIRED/
+ * LAPSED) free it immediately. Leases that ENDED (MOVED_OUT/CLOSED) still
+ * hold their window — the blackout month runs from the end date, so a
+ * unit vacated on 1 Sep stays unbookable to others until 1 Oct even
+ * though the booking itself is over (PRD v2 D2). A legacy indefinite
+ * lease that ended has no endDate; its notice date / last update stands
+ * in so it can't hold the unit forever.
  */
 export const UNIT_HOLDING_STATUSES = [
   "PENDING_APPROVAL",
@@ -27,7 +33,11 @@ export const UNIT_HOLDING_STATUSES = [
   "SUSPENDED",
   "NOTICE_GIVEN",
   "DEFAULT",
+  "MOVED_OUT",
+  "CLOSED",
 ] as const;
+
+const ENDED_STATUSES = new Set(["MOVED_OUT", "CLOSED"]);
 
 export interface StorageWindow {
   startDate: Date;
@@ -62,7 +72,7 @@ async function loadCandidates(
       code: true,
       bookings: {
         where: { status: { in: [...UNIT_HOLDING_STATUSES] } },
-        select: { id: true, customerId: true, startDate: true, endDate: true },
+        select: { id: true, customerId: true, status: true, startDate: true, endDate: true, noticeEffectiveDate: true, updatedAt: true },
       },
     },
     orderBy: { code: "asc" },
@@ -70,7 +80,13 @@ async function loadCandidates(
   return assets.map((a) => ({
     id: a.id,
     code: a.code,
-    bookings: a.bookings.map((b) => ({ id: b.id, customerId: b.customerId, startDate: b.startDate, endDate: b.endDate })),
+    bookings: a.bookings.map((b) => ({
+      id: b.id,
+      customerId: b.customerId,
+      startDate: b.startDate,
+      // An early-terminated term ends on its notice date, not its original end date.
+      endDate: b.noticeEffectiveDate && (!b.endDate || b.noticeEffectiveDate < b.endDate) ? b.noticeEffectiveDate : (b.endDate ?? (ENDED_STATUSES.has(b.status) ? b.updatedAt : null)),
+    })),
   }));
 }
 

@@ -7,13 +7,28 @@ import type { BookingDto, InvoiceDto } from "@rentos/contracts";
 
 import { apiFetch } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { formatDateId, getClientTenantSlug } from "@/lib/tenant-client";
 
-const TENANT_SLUG = process.env.NEXT_PUBLIC_DEV_TENANT_SLUG ?? "";
+const TENANT_SLUG = getClientTenantSlug();
+
+type PortalBooking = BookingDto & { assetType?: { name: string }; asset?: { code: string } | null; location?: { name: string } | null };
+
+const STATUS_COPY: Record<string, string> = {
+  WAITLISTED: "On the waitlist",
+  PENDING_APPROVAL: "Awaiting confirmation",
+  APPROVED: "Approved — next steps in progress",
+  ACTIVE: "Active",
+  RENEWING: "Active — payment due",
+  SUSPENDED: "Suspended — payment overdue",
+  NOTICE_GIVEN: "Ending soon",
+  MOVED_OUT: "Ended",
+  CLOSED: "Closed",
+};
 
 /** PRD §7.1.4 customer portal: my rentals + invoices. */
 export default function PortalPage() {
   const router = useRouter();
-  const [bookings, setBookings] = useState<BookingDto[] | null>(null);
+  const [bookings, setBookings] = useState<PortalBooking[] | null>(null);
   const [invoices, setInvoices] = useState<InvoiceDto[] | null>(null);
 
   useEffect(() => {
@@ -23,7 +38,7 @@ export default function PortalPage() {
       return;
     }
     Promise.all([
-      apiFetch<BookingDto[]>("/bookings/mine", { tenantSlug: TENANT_SLUG, token }),
+      apiFetch<PortalBooking[]>("/bookings/mine", { tenantSlug: TENANT_SLUG, token }),
       apiFetch<InvoiceDto[]>("/invoices/mine", { tenantSlug: TENANT_SLUG, token }),
     ])
       .then(([b, i]) => {
@@ -60,9 +75,19 @@ export default function PortalPage() {
               href={`/portal/bookings/${b.id}`}
               className="block rounded-lg border border-brand-600/10 bg-white p-4 hover:shadow-sm"
             >
-              <div className="flex items-center justify-between">
-                <span className="font-medium">{b.id.slice(0, 8)}</span>
-                <span className="rounded-full bg-brand-700/10 px-3 py-1 text-xs font-medium">{b.status}</span>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <span className="font-medium">
+                    {b.assetType?.name ?? `Booking ${b.id.slice(0, 8)}`}
+                    {b.asset?.code ? ` — unit ${b.asset.code}` : ""}
+                  </span>
+                  <p className="text-xs text-brand-700/60">
+                    {b.location?.name ? `${b.location.name} · ` : ""}
+                    from {formatDateId(b.startDate)}
+                    {b.termMonths ? ` · ${b.termMonths} month${b.termMonths === 1 ? "" : "s"}` : ""}
+                  </p>
+                </div>
+                <span className="shrink-0 rounded-full bg-brand-700/10 px-3 py-1 text-xs font-medium">{STATUS_COPY[b.status] ?? b.status}</span>
               </div>
             </Link>
           ))}
@@ -87,7 +112,7 @@ export default function PortalPage() {
                 const payable = inv.status === "ISSUED" || inv.status === "OVERDUE";
                 return (
                   <tr key={inv.id} className="border-t border-brand-600/10">
-                    <td className="p-3">{inv.invoiceNumber}</td>
+                    <td className="p-3">{inv.status === "SCHEDULED" ? `Payment ${(inv.scheduleIndex ?? 0) + 1} (scheduled)` : inv.invoiceNumber}</td>
                     <td className="p-3">{inv.status}</td>
                     <td className="p-3">{new Date(inv.dueDate).toLocaleDateString("id-ID")}</td>
                     <td className="p-3 text-right">

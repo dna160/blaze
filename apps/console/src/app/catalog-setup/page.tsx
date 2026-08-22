@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { AssetTypeDto, BookingModelValue, LocationDto, PricingConfig } from "@rentos/contracts";
+import type { AssetTypeDto, BookingModelValue, LocationDto, PricingConfig, SizeClassValue } from "@rentos/contracts";
 
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { apiFetch, ApiError } from "@/lib/api";
@@ -28,9 +28,9 @@ interface AssetTypeFormState {
   taxInclusive: boolean;
   isPooled: boolean;
   isPublished: boolean;
-  /** RECURRING_LEASE only — Daily/Weekly rateTier options (Travelio-style short stays) on top of the monthly rate above. Blank = tier not offered. */
-  dailyRate: string;
-  weeklyRate: string;
+  /** RECURRING_LEASE only — PRD v2 §4.1 storefront grouping (SMALL / MEDIUM / LARGE). Stored in attributesSchema.sizeClass. */
+  sizeClass: SizeClassValue | "";
+  sizeM2: string;
 }
 
 const EMPTY_FORM: AssetTypeFormState = {
@@ -46,8 +46,8 @@ const EMPTY_FORM: AssetTypeFormState = {
   taxInclusive: false,
   isPooled: false,
   isPublished: true,
-  dailyRate: "",
-  weeklyRate: "",
+  sizeClass: "",
+  sizeM2: "",
 };
 
 function toPricing(form: AssetTypeFormState): PricingConfig {
@@ -64,9 +64,16 @@ function toPricing(form: AssetTypeFormState): PricingConfig {
         : form.depositType === "MULTIPLE_OF_RENT"
           ? { type: "MULTIPLE_OF_RENT", multiple: Number(form.depositMultiple || 1) }
           : undefined,
-    dailyRate: form.bookingModel === "RECURRING_LEASE" && form.dailyRate.trim() ? form.dailyRate.trim() : undefined,
-    weeklyRate: form.bookingModel === "RECURRING_LEASE" && form.weeklyRate.trim() ? form.weeklyRate.trim() : undefined,
   };
+}
+
+/** PRD v2 — size class + m² live in attributesSchema; other keys already there are preserved. */
+function toAttributes(form: AssetTypeFormState, existing: Record<string, unknown> = {}): Record<string, unknown> {
+  const next = { ...existing };
+  if (form.sizeClass) next.sizeClass = form.sizeClass;
+  else delete next.sizeClass;
+  if (form.sizeM2.trim()) next.sizeM2 = Number(form.sizeM2);
+  return next;
 }
 
 function fromAssetType(assetType: AssetTypeDto): AssetTypeFormState {
@@ -84,8 +91,8 @@ function fromAssetType(assetType: AssetTypeDto): AssetTypeFormState {
     taxInclusive: pricing.taxInclusive,
     isPooled: assetType.isPooled,
     isPublished: assetType.isPublished,
-    dailyRate: pricing.dailyRate ?? "",
-    weeklyRate: pricing.weeklyRate ?? "",
+    sizeClass: (assetType.attributesSchema.sizeClass as SizeClassValue | undefined) ?? "",
+    sizeM2: assetType.attributesSchema.sizeM2 !== undefined ? String(assetType.attributesSchema.sizeM2) : "",
   };
 }
 
@@ -112,6 +119,37 @@ export default function CatalogSetupPage() {
   const [unitAssetTypeId, setUnitAssetTypeId] = useState<string | null>(null);
   const [unitLocationId, setUnitLocationId] = useState("");
   const [unitCode, setUnitCode] = useState("");
+
+  // PRD v2 §5.3 — first console UI for Location rows; coordinates drive the storefront map.
+  const EMPTY_LOCATION = { name: "", address: "", latitude: "", longitude: "" };
+  const [locationForm, setLocationForm] = useState(EMPTY_LOCATION);
+  const [editingLocationId, setEditingLocationId] = useState<string | null>(null);
+
+  async function saveLocation() {
+    if (!locationForm.name.trim()) return;
+    setBusy(true);
+    setError(null);
+    const body = {
+      name: locationForm.name.trim(),
+      address: locationForm.address.trim() || null,
+      latitude: locationForm.latitude.trim() ? Number(locationForm.latitude) : null,
+      longitude: locationForm.longitude.trim() ? Number(locationForm.longitude) : null,
+    };
+    try {
+      await apiFetch(editingLocationId ? `/catalog/locations/${editingLocationId}` : "/catalog/locations", {
+        token: authClient.getToken(),
+        method: editingLocationId ? "PATCH" : "POST",
+        body,
+      });
+      setLocationForm(EMPTY_LOCATION);
+      setEditingLocationId(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to save location.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function load() {
     const token = authClient.getToken();
@@ -150,6 +188,7 @@ export default function CatalogSetupPage() {
           name: createForm.name.trim(),
           slug: createForm.slug.trim(),
           bookingModel: createForm.bookingModel,
+          attributesSchema: toAttributes(createForm),
           pricing: toPricing(createForm),
           isPooled: createForm.isPooled,
           isPublished: createForm.isPublished,
@@ -179,6 +218,7 @@ export default function CatalogSetupPage() {
         method: "PATCH",
         body: {
           name: editForm.name.trim(),
+          attributesSchema: toAttributes(editForm, assetTypes?.find((a) => a.id === id)?.attributesSchema ?? {}),
           pricing: toPricing(editForm),
           isPooled: editForm.isPooled,
           isPublished: editForm.isPublished,
@@ -244,24 +284,27 @@ export default function CatalogSetupPage() {
         {form.bookingModel === "RECURRING_LEASE" && (
           <>
             <div>
-              <label className="text-xs font-medium text-brand-700/60">Daily rate (IDR, optional)</label>
-              <input
-                value={form.dailyRate}
-                onChange={(e) => setForm({ ...form, dailyRate: e.target.value })}
-                placeholder="60000"
+              <label className="text-xs font-medium text-brand-700/60">Storefront size group</label>
+              <select
+                value={form.sizeClass}
+                onChange={(e) => setForm({ ...form, sizeClass: e.target.value as SizeClassValue | "" })}
                 className="mt-1 w-full rounded border border-brand-600/20 px-2 py-1.5 text-sm"
-              />
-              <p className="mt-0.5 text-[11px] text-brand-700/40">Leave blank to hide the Daily option on the storefront.</p>
+              >
+                <option value="">Not grouped</option>
+                <option value="SMALL">Small</option>
+                <option value="MEDIUM">Medium</option>
+                <option value="LARGE">Large</option>
+              </select>
+              <p className="mt-0.5 text-[11px] text-brand-700/40">Terms are always 1 / 3 / 6 / 12 months, billed monthly — no daily or weekly rates.</p>
             </div>
             <div>
-              <label className="text-xs font-medium text-brand-700/60">Weekly rate (IDR, optional)</label>
+              <label className="text-xs font-medium text-brand-700/60">Size (m²)</label>
               <input
-                value={form.weeklyRate}
-                onChange={(e) => setForm({ ...form, weeklyRate: e.target.value })}
-                placeholder="350000"
+                value={form.sizeM2}
+                onChange={(e) => setForm({ ...form, sizeM2: e.target.value })}
+                placeholder="9"
                 className="mt-1 w-full rounded border border-brand-600/20 px-2 py-1.5 text-sm"
               />
-              <p className="mt-0.5 text-[11px] text-brand-700/40">Leave blank to hide the Weekly option on the storefront.</p>
             </div>
           </>
         )}
@@ -432,6 +475,51 @@ export default function CatalogSetupPage() {
                 </div>
               ))}
               {assetTypes.length === 0 && <p className="text-sm text-brand-700/50">No asset types yet — create one above.</p>}
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-medium">Branches (locations)</h2>
+            <p className="mt-1 text-sm text-brand-700/60">
+              Each branch needs coordinates to appear on the storefront map and be recommended as &quot;closest to you&quot;.
+            </p>
+            <div className="mt-3 space-y-2">
+              {locations.map((loc) => (
+                <div key={loc.id} className="flex items-start justify-between rounded-lg border border-brand-600/10 bg-white p-3 text-sm">
+                  <div>
+                    <p className="font-medium">{loc.name}</p>
+                    <p className="text-brand-700/60">{loc.address ?? "No address"}</p>
+                    <p className="text-xs text-brand-700/40">
+                      {loc.latitude !== null && loc.longitude !== null ? `${loc.latitude}, ${loc.longitude}` : "Not on the map yet — add coordinates"}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setEditingLocationId(loc.id);
+                      setLocationForm({ name: loc.name, address: loc.address ?? "", latitude: loc.latitude?.toString() ?? "", longitude: loc.longitude?.toString() ?? "" });
+                    }}
+                    className="rounded border border-brand-600/20 px-3 py-1.5 text-sm font-medium hover:bg-brand-700/5"
+                  >
+                    Edit
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 grid gap-2 rounded-lg border border-brand-600/10 bg-white p-4 sm:grid-cols-5">
+              <input value={locationForm.name} onChange={(e) => setLocationForm({ ...locationForm, name: e.target.value })} placeholder="Branch name" className="rounded border border-brand-600/20 px-2 py-1.5 text-sm sm:col-span-2" />
+              <input value={locationForm.address} onChange={(e) => setLocationForm({ ...locationForm, address: e.target.value })} placeholder="Address" className="rounded border border-brand-600/20 px-2 py-1.5 text-sm sm:col-span-3" />
+              <input value={locationForm.latitude} onChange={(e) => setLocationForm({ ...locationForm, latitude: e.target.value })} placeholder="Latitude (-6.1589)" className="rounded border border-brand-600/20 px-2 py-1.5 text-sm" />
+              <input value={locationForm.longitude} onChange={(e) => setLocationForm({ ...locationForm, longitude: e.target.value })} placeholder="Longitude (106.9056)" className="rounded border border-brand-600/20 px-2 py-1.5 text-sm" />
+              <div className="flex gap-2 sm:col-span-3">
+                <button onClick={saveLocation} disabled={busy || !locationForm.name.trim()} className="rounded bg-brand-700 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50">
+                  {editingLocationId ? "Save branch" : "Add branch"}
+                </button>
+                {editingLocationId && (
+                  <button onClick={() => { setEditingLocationId(null); setLocationForm(EMPTY_LOCATION); }} className="rounded border border-brand-600/20 px-3 py-1.5 text-sm font-medium">
+                    Cancel
+                  </button>
+                )}
+              </div>
             </div>
           </section>
 

@@ -2,6 +2,14 @@
   "$schema": "https://turbo.build/schema.json",
   "ui": "stream",
   "globalEnv": ["NODE_ENV"],
+  "globalPassThroughEnv": [
+    "PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING",
+    "PRISMA_SCHEMA_ENGINE_BINARY",
+    "PRISMA_QUERY_ENGINE_BINARY",
+    "PRISMA_QUERY_ENGINE_LIBRARY",
+    "PRISMA_DRIVER_ADAPTER",
+    "NODE_OPTIONS"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

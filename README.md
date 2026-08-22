@@ -7,6 +7,20 @@ Current build status, architectural decisions, and what's not done yet:
 [`docs/HANDOFF.md`](./docs/HANDOFF.md) — **read that before extending this
 codebase.**
 
+## What the storage tenant's flow looks like (PRD v2)
+
+Spec: [`docs/PRD-v2-storage-flow.md`](./docs/PRD-v2-storage-flow.md).
+
+```
+Storefront   choose branch (map, closest first) → choose size (S/M/L) → check-in date + 1/3/6/12-month term + name + WhatsApp
+             → "confirmation soon" (approval pipeline)  |  full → WAITLISTED (position shown, staff offer a unit later)
+Console      Approval → Request KYC (magic link, no OTP) → Generate contract + proforma (PDFs, monthly payment schedule) → Finance (pay → ACTIVE)
+Worker       issues each scheduled month H-7, ends terms on their end date, expires stale requests; dunning unchanged
+Finance      AR aging as of any date with a 30/60/90-day horizon; client list with healthy / risky / overdue / inactive
+```
+
+Availability is a date-range query with a **blackout month** after every lease (the deposit-covered month) — `Asset.status` is only the floor view. Homestay/equipment tenants (NIGHTLY / DURATION_ORDER) are untouched by all of this.
+
 ## Architecture
 
 Modular monolith (PRD §11): one API, hard module boundaries, no
@@ -97,8 +111,19 @@ trusting it. See `docs/HANDOFF.md` for details.
 ### Tests
 
 ```bash
-pnpm test   # currently: 33 unit tests in packages/domain (state machines, proration, tax, deposit math)
+pnpm test   # 122 unit tests in packages/domain (state machines, term schedule, blackout overlap, proration, tax, AR aging, client health)
+scripts/smoke-v2.sh   # end-to-end HTTP smoke test of the PRD v2 flow against a running local API + seeded gudang-aman (needs DATABASE_URL for the psql checks)
 ```
+
+### Sandboxes that can't download Prisma engines
+
+If `prisma generate` fails fetching from `binaries.prisma.sh`, the repo can still run end to end:
+`scripts/migrate-deploy-psql.sh` applies migrations with plain `psql` (recording them exactly like
+`prisma migrate deploy` would), and `PRISMA_DRIVER_ADAPTER=pg` + `NODE_OPTIONS="--import
+$PWD/scripts/prisma-wasm-loader.mjs"` switch the runtime to Prisma's bundled WASM engine via the
+`pg` driver adapter. Set `PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1` and point
+`PRISMA_SCHEMA_ENGINE_BINARY` / `PRISMA_QUERY_ENGINE_LIBRARY` at any placeholder file so
+`prisma generate` skips the download. None of this applies to a normal deployment.
 
 ## Deploying to Railway
 

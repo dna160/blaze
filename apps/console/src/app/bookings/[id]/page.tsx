@@ -2,16 +2,26 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import type { BookingDto, ContractDto } from "@rentos/contracts";
+import Link from "next/link";
+import type { BookingDto, ContractDto, InvoiceDto, PipelineBookingDto } from "@rentos/contracts";
 
 import { ConsoleShell } from "@/components/ConsoleShell";
-import { apiFetch, apiUpload, ApiError } from "@/lib/api";
+import { apiFetch, apiFetchBlob, apiUpload, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 
 interface BookingWithRelations extends BookingDto {
-  customer: { fullName: string | null; phone: string };
+  customer: { id: string; fullName: string | null; phone: string | null; email: string | null; kycStatus: string; preferredChannel: string };
   assetType: { name: string };
   asset: { code: string } | null;
+  location: { name: string } | null;
+  events: Array<{ id: string; fromStatus: string | null; toStatus: string; actorType: string; reason: string | null; createdAt: string }>;
+}
+
+function formatIDR(amount: string | number): string {
+  return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(amount));
+}
+function fmtDate(value: string | null | undefined): string {
+  return value ? new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : "—";
 }
 
 /** Staff-side booking detail — contract status + upload-on-customer's-behalf for a paper contract collected in person (PRD §5.3). */
@@ -20,6 +30,9 @@ export default function BookingDetailPage() {
   const router = useRouter();
   const [booking, setBooking] = useState<BookingWithRelations | null>(null);
   const [contract, setContract] = useState<ContractDto | null>(null);
+  const [pipeline, setPipeline] = useState<PipelineBookingDto | null>(null);
+  const [invoices, setInvoices] = useState<InvoiceDto[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
   const [signedByName, setSignedByName] = useState("");
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,12 +47,47 @@ export default function BookingDetailPage() {
     try {
       const b = await apiFetch<BookingWithRelations>(`/bookings/${id}`, { token });
       setBooking(b);
-      if (b.status !== "DRAFT" && b.status !== "PENDING_APPROVAL" && b.status !== "NEEDS_INFO") {
+      if (!["DRAFT", "WAITLISTED", "PENDING_APPROVAL", "NEEDS_INFO"].includes(b.status)) {
         const c = await apiFetch<ContractDto | null>(`/contracts/by-booking/${id}`, { token });
         setContract(c);
       }
+      // Pipeline stage + the booking's invoices (schedule) — both tolerate failure so the page still renders.
+      apiFetch<PipelineBookingDto[]>("/bookings/pipeline", { token })
+        .then((rows) => setPipeline(rows.find((r) => r.id === id) ?? null))
+        .catch(() => setPipeline(null));
+      apiFetch<InvoiceDto[]>("/invoices", { token })
+        .then((all) => setInvoices(all.filter((i) => i.bookingId === id).sort((a, c) => (a.scheduleIndex ?? 99) - (c.scheduleIndex ?? 99))))
+        .catch(() => setInvoices([]));
     } catch {
       router.push("/bookings");
+    }
+  }
+
+  async function pipelineAction(path: string, success: string) {
+    const token = authClient.getToken();
+    if (!token) return;
+    setStayActionBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await apiFetch(`/bookings/${id}/${path}`, { token, method: "POST", body: {} });
+      setNotice(success);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Action failed.");
+    } finally {
+      setStayActionBusy(false);
+    }
+  }
+
+  async function openContractPdf() {
+    const token = authClient.getToken();
+    if (!token || !contract) return;
+    try {
+      const blob = await apiFetchBlob(`/contracts/${contract.id}/document`, token);
+      window.open(URL.createObjectURL(blob), "_blank", "noopener");
+    } catch {
+      setError("Could not open the agreement PDF.");
     }
   }
 
@@ -92,13 +140,100 @@ export default function BookingDetailPage() {
   const esignPending = contract?.esignStatus === "PENDING";
   const canUploadContract = booking.status === "APPROVED" && contract && !contract.signedAt && !esignPending;
 
+  const isTermLease = booking.bookingModel === "RECURRING_LEASE" && Boolean(booking.termMonths);
+  const stage = pipeline?.pipelineStage;
+
   return (
     <ConsoleShell>
-      <h1 className="text-2xl font-semibold">{booking.customer.fullName ?? booking.customer.phone}</h1>
+      <Link href="/bookings" className="text-sm text-brand-700/60 hover:underline">
+        ← Workbench
+      </Link>
+      <h1 className="mt-1 text-2xl font-semibold">
+        <Link href={`/clients/${booking.customer.id}`} className="hover:underline">
+          {booking.customer.fullName ?? booking.customer.phone ?? booking.customer.email}
+        </Link>
+      </h1>
       <p className="mt-1 text-sm text-brand-700/60">
-        {booking.assetType.name} {booking.asset ? `— unit ${booking.asset.code}` : ""} · Status: {booking.status}
+        {booking.assetType.name} {booking.asset ? `— unit ${booking.asset.code}` : "— no unit assigned"}
+        {booking.location ? ` · ${booking.location.name}` : ""} · {fmtDate(booking.startDate)}
+        {booking.endDate ? ` → ${fmtDate(booking.endDate)}` : ""}
+        {booking.termMonths ? ` · ${booking.termMonths}-month term` : ""} · Status: {booking.status}
+      </p>
+      <p className="text-xs text-brand-700/50">
+        {booking.customer.phone ?? "no phone"} · {booking.customer.email ?? "no email"} · messages via {booking.customer.preferredChannel === "EMAIL" ? "email" : "WhatsApp"} · KYC {booking.customer.kycStatus}
       </p>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      {notice && <p className="mt-2 text-sm text-green-700">{notice}</p>}
+
+      {isTermLease && pipeline && stage && stage !== "ACTIVE" && stage !== "CLOSED" && (
+        <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">
+          <h2 className="font-medium">Pipeline — {stage.replace("_", " ")}</h2>
+          <p className="mt-1 text-sm text-brand-700/60">{pipeline.stageDetail}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {stage === "WAITLIST" && (
+              <button onClick={() => pipelineAction("offer-unit", "Unit offered — the customer has been told.")} disabled={stayActionBusy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+                Offer unit
+              </button>
+            )}
+            {stage === "APPROVAL" && (
+              <button onClick={() => pipelineAction("approve", "Approved — the customer has been asked to verify their identity.")} disabled={stayActionBusy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+                Approve
+              </button>
+            )}
+            {stage === "KYC" && (
+              <button onClick={() => pipelineAction("request-kyc", "KYC request sent.")} disabled={stayActionBusy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+                {booking.kycRequestedAt ? "Re-send KYC request" : "Request KYC"}
+              </button>
+            )}
+            {stage === "CONTRACT" && (
+              <button onClick={() => pipelineAction("generate-contract", "Contract + proforma generated and sent.")} disabled={stayActionBusy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+                Generate contract + proforma
+              </button>
+            )}
+            {stage === "FINANCE" && pipeline.firstInvoice && (
+              <Link href={`/invoices/${pipeline.firstInvoice.id}`} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white">
+                Open proforma {pipeline.firstInvoice.invoiceNumber}
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
+
+      {invoices.length > 0 && (
+        <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">
+          <h2 className="font-medium">{isTermLease ? "Payment schedule" : "Invoices"}</h2>
+          <table className="mt-2 w-full text-sm">
+            <thead className="text-left text-xs text-brand-700/60">
+              <tr>
+                <th className="py-1">#</th>
+                <th className="py-1">Invoice</th>
+                <th className="py-1">Period</th>
+                <th className="py-1">Due</th>
+                <th className="py-1">Status</th>
+                <th className="py-1 text-right">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invoices.map((inv) => (
+                <tr key={inv.id} className="border-t border-brand-600/10">
+                  <td className="py-1">{inv.scheduleIndex !== null && inv.scheduleIndex !== undefined ? inv.scheduleIndex + 1 : "—"}</td>
+                  <td className="py-1">
+                    <Link href={`/invoices/${inv.id}`} className="hover:underline">
+                      {inv.invoiceNumber}
+                    </Link>
+                  </td>
+                  <td className="py-1 text-xs text-brand-700/60">
+                    {inv.periodStart && inv.periodEnd ? `${fmtDate(inv.periodStart)} – ${fmtDate(inv.periodEnd)}` : "—"}
+                  </td>
+                  <td className="py-1">{fmtDate(inv.dueDate)}</td>
+                  <td className="py-1">{inv.status}</td>
+                  <td className="py-1 text-right">{formatIDR(inv.totalAmount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {booking.bookingModel === "NIGHTLY" && (booking.status === "PAID" || booking.status === "CHECKED_IN") && (
         <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">
@@ -181,6 +316,11 @@ export default function BookingDetailPage() {
       {contract && (
         <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">
           <h2 className="font-medium">Rental agreement</h2>
+          {contract.unsignedDocumentUrl && (
+            <button onClick={openContractPdf} className="mt-1 text-sm text-accent-500 underline">
+              Open generated agreement (PDF)
+            </button>
+          )}
           {contract.signedAt ? (
             <p className="mt-2 text-sm text-green-700">
               Signed by {contract.signedByName} on {new Date(contract.signedAt).toLocaleDateString("id-ID")}.
@@ -217,6 +357,26 @@ export default function BookingDetailPage() {
               {uploading && <p className="text-xs text-brand-700/60">Uploading...</p>}
             </div>
           )}
+        </div>
+      )}
+
+      {booking.events.length > 0 && (
+        <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">
+          <h2 className="font-medium">Timeline</h2>
+          <ul className="mt-2 space-y-1 text-xs">
+            {booking.events.map((e) => (
+              <li key={e.id} className="flex justify-between gap-3 border-t border-brand-600/10 py-1">
+                <span>
+                  {e.fromStatus ? `${e.fromStatus} → ` : ""}
+                  <span className="font-medium">{e.toStatus}</span>
+                  {e.reason ? ` — ${e.reason}` : ""}
+                </span>
+                <span className="shrink-0 text-brand-700/50">
+                  {e.actorType.toLowerCase()} · {new Date(e.createdAt).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </ConsoleShell>

@@ -1,16 +1,28 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import dynamic from "next/dynamic";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 
+import { clerkEnabled } from "@/components/Providers";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { getClientTenantSlug } from "@/lib/tenant-client";
 
-const TENANT_SLUG = process.env.NEXT_PUBLIC_DEV_TENANT_SLUG ?? "";
+// Loaded only when Clerk is configured — keeps the Clerk SDK out of the bundle otherwise.
+const GoogleSignIn = dynamic(() => import("@/components/GoogleSignIn").then((m) => m.GoogleSignIn), { ssr: false });
 
-/** PRD §7.1.2: "Account creation via phone number + WhatsApp OTP... No passwords in v1 for customers." */
-export default function LoginPage() {
+function safeNext(raw: string | null): string {
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return "/portal";
+  return raw;
+}
+
+/** PRD §7.1.2: "Account creation via phone number + WhatsApp OTP... No passwords in v1 for customers." + PRD v2 D3: Google via Clerk. */
+function LoginForm() {
   const router = useRouter();
+  const search = useSearchParams();
+  const next = safeNext(search.get("next"));
+  const tenantSlug = getClientTenantSlug();
   const [step, setStep] = useState<"phone" | "code">("phone");
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
@@ -22,7 +34,7 @@ export default function LoginPage() {
     setBusy(true);
     setError(null);
     try {
-      await apiFetch("/auth/otp/request", { tenantSlug: TENANT_SLUG, method: "POST", body: { phone } });
+      await apiFetch("/auth/otp/request", { tenantSlug, method: "POST", body: { phone } });
       setStep("code");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not send code.");
@@ -37,12 +49,12 @@ export default function LoginPage() {
     setError(null);
     try {
       const result = await apiFetch<{ accessToken: string }>("/auth/otp/verify", {
-        tenantSlug: TENANT_SLUG,
+        tenantSlug,
         method: "POST",
         body: { phone, code },
       });
       authClient.setToken(result.accessToken);
-      router.push("/portal");
+      router.push(next);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Invalid code.");
     } finally {
@@ -53,6 +65,9 @@ export default function LoginPage() {
   return (
     <div className="mx-auto max-w-sm rounded-xl border border-brand-600/10 bg-white p-6">
       <h1 className="text-xl font-semibold">Log in</h1>
+      <p className="mt-1 text-sm text-brand-700/60">
+        Tip: the links in our WhatsApp or email messages sign you in directly — no code needed.
+      </p>
       {step === "phone" ? (
         <form onSubmit={requestOtp} className="mt-4 space-y-4">
           <div>
@@ -87,6 +102,19 @@ export default function LoginPage() {
           </button>
         </form>
       )}
+      {clerkEnabled && (
+        <div className="mt-6 border-t border-brand-600/10 pt-4">
+          <GoogleSignIn next={next} />
+        </div>
+      )}
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   );
 }

@@ -6,8 +6,9 @@ import type { CustomerDto, KycDocumentDto } from "@rentos/contracts";
 
 import { apiFetch, apiUpload, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { getClientTenantSlug } from "@/lib/tenant-client";
 
-const TENANT_SLUG = process.env.NEXT_PUBLIC_DEV_TENANT_SLUG ?? "";
+const TENANT_SLUG = getClientTenantSlug();
 
 const STATUS_LABEL: Record<string, string> = {
   NOT_SUBMITTED: "Not submitted",

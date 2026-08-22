@@ -1,4 +1,5 @@
-import type { AssetTypeDto, AvailabilityResponse, RateTierValue } from "@rentos/contracts";
+import { redirect } from "next/navigation";
+import type { AssetTypeDto, AvailabilityResponse } from "@rentos/contracts";
 
 import { BookingForm } from "@/components/BookingForm";
 import { apiFetch } from "@/lib/api";
@@ -18,10 +19,8 @@ export default async function AssetTypeDetailPage({ params }: { params: Promise<
     apiFetch<AvailabilityResponse>(`/catalog/asset-types/${id}/availability`, { tenantSlug }),
   ]);
 
-  const availableRateTiers: RateTierValue[] = [
-    ...(assetType.pricing.dailyRate ? (["DAILY"] as const) : []),
-    ...(assetType.pricing.weeklyRate ? (["WEEKLY"] as const) : []),
-  ];
+  // PRD v2 §4.1 — storage is sold branch-first; this page only serves the dated verticals.
+  if (assetType.bookingModel === "RECURRING_LEASE") redirect("/");
 
   return (
     <div className="grid gap-10 md:grid-cols-2">
@@ -37,17 +36,6 @@ export default async function AssetTypeDetailPage({ params }: { params: Promise<
             {assetType.bookingModel === "NIGHTLY" ? "/night" : assetType.bookingModel === "DURATION_ORDER" ? "/day" : "/month"}
           </span>
         </p>
-        {availableRateTiers.length > 0 && (
-          <p className="mt-1 text-sm text-brand-700/60">
-            {[
-              assetType.pricing.weeklyRate ? `${formatIDR(assetType.pricing.weeklyRate)}/week` : null,
-              assetType.pricing.dailyRate ? `${formatIDR(assetType.pricing.dailyRate)}/day` : null,
-            ]
-              .filter(Boolean)
-              .join(" · ")}{" "}
-            also available
-          </p>
-        )}
         <p className="mt-2 text-sm text-brand-700/70">
           {availability.availableCount > 0
             ? `${availability.availableCount} unit${availability.availableCount === 1 ? "" : "s"} available now`
@@ -77,12 +65,7 @@ export default async function AssetTypeDetailPage({ params }: { params: Promise<
 
       <div>
         {availability.availableCount > 0 && (
-          <BookingForm
-            tenantSlug={tenantSlug}
-            assetTypeId={assetType.id}
-            bookingModel={assetType.bookingModel}
-            availableRateTiers={availableRateTiers}
-          />
+          <BookingForm tenantSlug={tenantSlug} assetTypeId={assetType.id} bookingModel={assetType.bookingModel} />
         )}
       </div>
     </div>

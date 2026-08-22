@@ -1,12 +1,22 @@
 import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { UNIT_HOLDING_STATUSES, type Prisma } from "@rentos/database";
+import type { Prisma } from "@rentos/database";
 import { classifyCustomerHealth, money, roundMoney, type CustomerHealth } from "@rentos/domain";
 import type { ClientListItem, ClientListQuery, ClientListResponse } from "@rentos/contracts";
 
 import { PrismaService } from "../prisma/prisma.service.js";
 
-/** Bookings that count as "still with us" for the client list (PRD v2 §5.2 — INACTIVE means none of these). */
-const LIVE_BOOKING_STATUSES = [...UNIT_HOLDING_STATUSES, "WAITLISTED"] as const;
+/** Bookings that count as "still with us" for the client list (PRD v2 §5.2 — INACTIVE means none of these). Ended leases (MOVED_OUT/CLOSED) are not live even though they still hold their blackout window. */
+const LIVE_BOOKING_STATUSES = [
+  "WAITLISTED",
+  "PENDING_APPROVAL",
+  "NEEDS_INFO",
+  "APPROVED",
+  "ACTIVE",
+  "RENEWING",
+  "SUSPENDED",
+  "NOTICE_GIVEN",
+  "DEFAULT",
+] as const;
 
 @Injectable()
 export class CrmService {
