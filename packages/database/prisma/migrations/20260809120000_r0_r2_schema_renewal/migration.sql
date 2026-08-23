@@ -94,9 +94,25 @@ $$;
 ALTER TABLE "tenants" ALTER COLUMN "organization_id" SET NOT NULL;
 
 -- AlterTable: user_roles gains scope + tenant_ids; role becomes BaseRole.
--- The old GlobalRole `role` column is dropped and re-added as BaseRole. Any
--- pre-existing rows lose their role value (there is no lossless GlobalRole ->
--- BaseRole mapping); seed re-provisions roles. On a fresh DB this is a no-op.
+-- The old GlobalRole `role` column is dropped and re-added as BaseRole. There
+-- is no lossless GlobalRole -> BaseRole mapping (six flat roles collapse into
+-- four roles x two scopes), so pre-existing assignments cannot be carried
+-- over; an admin re-provisions them, and `prisma db seed` re-creates the demo
+-- users' roles. On a fresh DB the DELETE below is a no-op.
+--
+-- The DELETE is REQUIRED, not tidiness. Without it this migration fails on any
+-- database that has ever had a staff user:
+--   ERROR: column "role" of relation "user_roles" contains null values
+-- because you cannot add a NOT NULL column with no default to a populated
+-- table. Defaulting the new column instead would be worse: every old row would
+-- silently become the same BaseRole, and rows that used to differ only by the
+-- old GlobalRole would then collide on the new
+-- user_roles_user_id_role_scope_key unique index further down. Dropping the
+-- rows is the only option that neither invents a privilege nor breaks the
+-- index — and it is fail-safe: a user with no role rows has no capabilities
+-- until someone grants them.
+DELETE FROM "user_roles";
+
 ALTER TABLE "user_roles" ADD COLUMN     "scope" "RoleScope" NOT NULL DEFAULT 'TENANT',
 ADD COLUMN     "tenant_ids" UUID[] DEFAULT ARRAY[]::UUID[],
 DROP COLUMN "role",

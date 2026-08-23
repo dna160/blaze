@@ -15,6 +15,14 @@ restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
 
 # Required runtime variables (set in the Railway dashboard, not committed):
+#   DATABASE_URL       — the OWNING role's connection string (Railway:
+#                        ${{Postgres.DATABASE_URL}}). Used ONLY by the release
+#                        step in infra/docker/api-entrypoint.sh, which runs
+#                        `prisma migrate deploy` before the API starts. Without
+#                        it the container refuses to boot — that is deliberate:
+#                        a deploy that silently skips migrations is how the
+#                        schema drifted 11 migrations behind the code in
+#                        August 2026.
 #   DATABASE_URL_APP   — rentos_app connection string (RLS-enforced role; see docs/HANDOFF.md)
 #   REDIS_URL          — Railway Redis plugin reference variable
 #   JWT_SECRET         — random 32+ byte secret
@@ -22,3 +30,8 @@ restartPolicyMaxRetries = 5
 #   PAYMENT_PROVIDER   — mock | xendit
 #   CORS_ORIGINS       — comma-separated storefront + console origins
 # See .env.example for the full list, including optional Xendit/WhatsApp keys.
+#
+# Optional, one-shot:
+#   SEED_ON_DEPLOY=true — runs `prisma db seed` after migrations, once. The seed
+#                        is idempotent (upserts), but it re-asserts demo tenants
+#                        and users, so set it for a single deploy and remove it.

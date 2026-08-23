@@ -43,9 +43,16 @@ RUN addgroup -S rentos && adduser -S rentos -G rentos
 
 COPY --from=builder /app .
 
+# The release step. Runs `prisma migrate deploy` (owner role, DATABASE_URL)
+# before starting the API (rentos_app, DATABASE_URL_APP) — see the script for
+# why the two roles must stay separate. The runtime image already carries the
+# Prisma CLI and prisma/migrations because this stage copies the full installed
+# workspace from `builder`, devDependencies included.
+COPY --chmod=0755 infra/docker/api-entrypoint.sh /usr/local/bin/api-entrypoint.sh
+
 USER rentos
 EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD wget -qO- http://127.0.0.1:4000/api/health || exit 1
 
-CMD ["node", "apps/api/dist/main.js"]
+CMD ["/usr/local/bin/api-entrypoint.sh"]
