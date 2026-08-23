@@ -35,21 +35,24 @@ if [ -z "$DATABASE_URL" ]; then
   exit 1
 fi
 
-# Recovery from a migration left in the FAILED state.
+# Migrations, with a bounded recovery for one specific, verified-safe failure.
 #
-# When a migration errors part-way, Prisma records it as failed and every later
-# `migrate deploy` aborts with P3009 rather than retrying. That default is right:
-# blindly re-running a half-applied migration is how data gets corrupted.
+# Normal path: `migrate deploy` succeeds and nothing below runs.
 #
-# But there is one class where retrying is provably safe — the 20260809130*
-# migrations, which are written to be idempotent (see the header on each). They
-# were re-timestamped from 202607xx, so Prisma re-runs them against databases
-# that already applied them under the old names; guarding every statement is
-# what makes that a no-op instead of a duplicate_object error.
+# Recovery path: when a migration errors part-way Prisma marks it failed, and
+# every later deploy aborts with P3009 instead of retrying. That default is
+# right — blindly re-running a half-applied migration corrupts data. But the
+# 20260809130* migrations are written to be idempotent (see the header on each):
+# they were re-timestamped from 202607xx, so Prisma re-runs them against
+# databases that already applied them under the old names, and every statement
+# is guarded so that re-running is a no-op.
 #
-# So: auto-recover ONLY those, and only when they are actually in a failed
-# state. Anything else still stops the deploy and asks for a human, because
-# nothing else here carries that guarantee.
+# So if the first attempt fails, clear ONLY those and try exactly once more.
+# No parsing of Prisma's output: an earlier version scraped the failed
+# migration's name out of `migrate status`, which broke silently in the
+# container and left no trace of why. Acting on the allowlist directly has no
+# such failure mode. `|| true` because resolving a migration that is not in a
+# failed state is an expected no-op here, not an error.
 IDEMPOTENT_MIGRATIONS="
 20260809130000_add_tenant_api_webhooks
 20260809130100_add_kyc_auto_verification
@@ -59,48 +62,46 @@ IDEMPOTENT_MIGRATIONS="
 20260809130500_add_rate_tier
 "
 
-resolve_rolled_back() {
-  echo "[entrypoint] Marking '$1' as rolled back so it can be retried…"
-  pnpm --filter @rentos/database exec prisma migrate resolve --rolled-back "$1"
+migrate() {
+  pnpm --filter @rentos/database exec prisma migrate deploy
 }
 
-# Manual override, for a migration outside the safe set. One-shot: remove it once
+# Manual override for a migration outside the safe set. One-shot: remove it once
 # the deploy is green.
 if [ -n "$RESOLVE_ROLLED_BACK" ]; then
-  resolve_rolled_back "$RESOLVE_ROLLED_BACK"
+  echo "[entrypoint] Marking '$RESOLVE_ROLLED_BACK' as rolled back so it can be retried…"
+  pnpm --filter @rentos/database exec prisma migrate resolve --rolled-back "$RESOLVE_ROLLED_BACK" || true
   echo "[entrypoint] Resolved. Remove RESOLVE_ROLLED_BACK now."
 fi
 
-# `migrate status` names the failed migration in a line it suggests you copy;
-# that is the only machine-readable handle Prisma offers here. Note 2>&1: Prisma
-# prints that guidance on STDERR, so discarding stderr silently loses it and the
-# recovery below never fires.
-FAILED_MIGRATION=$(pnpm --filter @rentos/database exec prisma migrate status 2>&1 \
-  | sed -n 's/.*migrate resolve --rolled-back "\([^"]*\)".*/\1/p' | head -1)
+echo "[entrypoint] Applying database migrations…"
+if migrate; then
+  echo "[entrypoint] Migrations applied."
+else
+  echo "[entrypoint] migrate deploy failed. Current migration state:"
+  # Diagnostic, always printed, stdout AND stderr — Prisma reports failed
+  # migrations on stderr, which is easy to discard by accident.
+  pnpm --filter @rentos/database exec prisma migrate status 2>&1 || true
 
-if [ -n "$FAILED_MIGRATION" ]; then
-  SAFE=no
+  echo "[entrypoint] Clearing any failed marker on the known-idempotent migrations…"
   for m in $IDEMPOTENT_MIGRATIONS; do
-    [ "$m" = "$FAILED_MIGRATION" ] && SAFE=yes
+    pnpm --filter @rentos/database exec prisma migrate resolve --rolled-back "$m" 2>/dev/null \
+      && echo "[entrypoint]   cleared $m" \
+      || true
   done
-  if [ "$SAFE" = "yes" ]; then
-    echo "[entrypoint] '$FAILED_MIGRATION' is in the idempotent set — recovering automatically."
-    resolve_rolled_back "$FAILED_MIGRATION"
+
+  echo "[entrypoint] Retrying migrations once…"
+  if migrate; then
+    echo "[entrypoint] Migrations applied on retry."
   else
-    echo "[entrypoint] Migration '$FAILED_MIGRATION' is in a FAILED state and is NOT one of the"
-    echo "[entrypoint] migrations known to be safe to re-run. Refusing to resolve it automatically."
-    echo "[entrypoint] Inspect it, fix the database, then set RESOLVE_ROLLED_BACK (to retry it)"
-    echo "[entrypoint] or mark it applied with: prisma migrate resolve --applied \"$FAILED_MIGRATION\""
+    echo "[entrypoint] Migrations still failing after recovery. Not starting the API —"
+    echo "[entrypoint] a server on a half-migrated schema is worse than a failed deploy."
+    echo "[entrypoint] Inspect the status output above; set RESOLVE_ROLLED_BACK to retry a"
+    echo "[entrypoint] specific migration, or mark one applied with:"
+    echo "[entrypoint]   prisma migrate resolve --applied \"<migration_name>\""
     exit 1
   fi
 fi
-
-echo "[entrypoint] Applying database migrations…"
-# Not backgrounded and not tolerated on failure: a half-migrated schema serving
-# traffic is worse than a failed deploy. Railway keeps the previous deployment
-# live when the new one never becomes healthy.
-pnpm --filter @rentos/database exec prisma migrate deploy
-echo "[entrypoint] Migrations applied."
 
 # One-shot demo seeding. Off unless explicitly set, because the seed upserts
 # demo tenants/users and would otherwise re-assert them on every boot. It IS
