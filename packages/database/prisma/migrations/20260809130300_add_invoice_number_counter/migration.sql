@@ -33,10 +33,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS "invoice_number_counters_tenant_id_year_month_
 -- scheme, so the new sequence continues where the old one left off
 -- instead of colliding with already-issued invoice numbers the moment
 -- this migration lands.
+-- Backfill. ON CONFLICT DO NOTHING is what makes this statement idempotent, and
+-- it is load-bearing for the same reason the DDL above is guarded: this
+-- migration re-runs against databases that already applied it under its old
+-- 202607xx name, where these counter rows already exist. Without it the
+-- re-run dies with 23505 on invoice_number_counters_tenant_id_year_month_key.
+--
+-- DO NOTHING rather than DO UPDATE deliberately: an existing row has been in
+-- use issuing invoice numbers and its counter is ahead of this COUNT(*).
+-- Overwriting it would re-issue numbers that are already on real invoices.
 INSERT INTO "invoice_number_counters" (id, tenant_id, year, month, counter)
 SELECT gen_random_uuid(), tenant_id, EXTRACT(YEAR FROM created_at)::int, EXTRACT(MONTH FROM created_at)::int, COUNT(*)::int
 FROM "invoices"
-GROUP BY tenant_id, EXTRACT(YEAR FROM created_at), EXTRACT(MONTH FROM created_at);
+GROUP BY tenant_id, EXTRACT(YEAR FROM created_at), EXTRACT(MONTH FROM created_at)
+ON CONFLICT (tenant_id, year, month) DO NOTHING;
 
 -- Row-Level Security — same shape as every migration since enable_rls:
 -- new tables aren't retroactively covered by that migration, so each
