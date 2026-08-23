@@ -108,8 +108,18 @@ fi
 # idempotent, so an accidental extra run is not destructive — but leave it set
 # and you will keep resurrecting demo rows in a real environment. Set it for a
 # single deploy, then remove it.
-if [ "$SEED_ON_DEPLOY" = "true" ]; then
-  echo "[entrypoint] SEED_ON_DEPLOY=true — seeding demo data…"
+# Accept the obvious truthy spellings. An earlier version tested for exactly
+# "true", so SEED_ON_DEPLOY=1 (or TRUE, or yes) silently did nothing and the
+# deploy came up with no seeded users at all — a env-var typo should not be
+# indistinguishable from "seeding is off".
+case "$(printf '%s' "${SEED_ON_DEPLOY:-}" | tr '[:upper:]' '[:lower:]')" in
+  true|1|yes|y|on) SHOULD_SEED=yes ;;
+  ""|false|0|no|n|off) SHOULD_SEED=no ;;
+  *) echo "[entrypoint] SEED_ON_DEPLOY='$SEED_ON_DEPLOY' not understood — treating as off."; SHOULD_SEED=no ;;
+esac
+
+if [ "$SHOULD_SEED" = "yes" ]; then
+  echo "[entrypoint] SEED_ON_DEPLOY=$SEED_ON_DEPLOY — seeding demo data…"
   pnpm --filter @rentos/database seed
   echo "[entrypoint] Seed complete. Remove SEED_ON_DEPLOY now."
 fi
