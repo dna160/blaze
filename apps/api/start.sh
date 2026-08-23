@@ -124,5 +124,22 @@ if [ "$SHOULD_SEED" = "yes" ]; then
   echo "[entrypoint] Seed complete. Remove SEED_ON_DEPLOY now."
 fi
 
+# One-shot admin bootstrap. The C1 migration deletes every user_roles row, so a
+# pre-existing tenant is left with staff who can authenticate but hold no
+# capabilities — and no way back in through the UI, since granting a role is
+# itself a manage_users action. This is the bootstrap path.
+#
+# PROMOTE_ADMIN_EMAIL=you@example.com
+# PROMOTE_ADMIN_TENANT=<slug>       (required when more than one tenant exists)
+# PROMOTE_ADMIN_PASSWORD=<password> (optional; sets/resets it, required to create)
+#
+# Remove these once you are in. Left set, it re-asserts the grant every boot —
+# harmless but it means the account cannot be demoted from the console.
+if [ -n "$PROMOTE_ADMIN_EMAIL" ]; then
+  echo "[entrypoint] Promoting $PROMOTE_ADMIN_EMAIL to ADMIN x ORGANIZATION…"
+  pnpm --filter @rentos/database promote-admin
+  echo "[entrypoint] Done. Remove PROMOTE_ADMIN_* now."
+fi
+
 echo "[entrypoint] Starting API…"
 exec node apps/api/dist/main.js
