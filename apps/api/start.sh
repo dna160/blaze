@@ -137,8 +137,15 @@ fi
 # harmless but it means the account cannot be demoted from the console.
 if [ -n "$PROMOTE_ADMIN_EMAIL" ]; then
   echo "[entrypoint] Promoting $PROMOTE_ADMIN_EMAIL to ADMIN x ORGANIZATION…"
-  pnpm --filter @rentos/database promote-admin
-  echo "[entrypoint] Done. Remove PROMOTE_ADMIN_* now."
+  # Never fatal. This is an operator convenience; a bad tenant slug or a missing
+  # password should print why and leave the API running, not take the service
+  # down. The script itself refuses to guess between tenants and lists the real
+  # slugs, so the log tells you what to set next.
+  if pnpm --filter @rentos/database promote-admin; then
+    echo "[entrypoint] Done. Remove PROMOTE_ADMIN_* now."
+  else
+    echo "[entrypoint] Promotion did NOT happen (see the error above). Starting the API anyway."
+  fi
 fi
 
 echo "[entrypoint] Starting API…"
