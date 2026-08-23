@@ -8,6 +8,7 @@ import type { PipelineBookingDto, PipelineStageValue } from "@rentos/contracts";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { notifyPendingApprovalsChanged } from "@/lib/pending-approvals";
 
 const COLUMNS: Array<{ stage: PipelineStageValue; title: string; hint: string }> = [
   { stage: "WAITLIST", title: "Waitlist", hint: "No unit free for their dates yet" },
@@ -52,6 +53,8 @@ export default function BookingsPage() {
     try {
       const data = await apiFetch<PipelineBookingDto[]>("/bookings/pipeline", { token });
       setBookings(data);
+      // The board just moved; re-count the sidebar badge rather than waiting out its poll.
+      notifyPendingApprovalsChanged();
     } catch (err) {
       if (err instanceof ApiError && err.status !== 401) setError(err.message);
       else {

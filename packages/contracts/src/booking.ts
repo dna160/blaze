@@ -121,6 +121,18 @@ export const PipelineBookingDtoSchema = BookingDtoSchema.extend({
 });
 export type PipelineBookingDto = z.infer<typeof PipelineBookingDtoSchema>;
 
+/**
+ * Sidebar badge (GET /bookings/pending-count) — how many bookings are
+ * sitting in the approval workbench waiting on staff. Only
+ * PENDING_APPROVAL counts: NEEDS_INFO shares the same column but is
+ * blocked on the customer's reply, so counting it would leave a badge
+ * nobody in the console can clear.
+ */
+export const PendingApprovalCountSchema = z.object({
+  pendingApproval: z.number().int().nonnegative(),
+});
+export type PendingApprovalCount = z.infer<typeof PendingApprovalCountSchema>;
+
 /** Approval workbench (PRD §7.2.1) — approve assigns a unit if not already auto-assigned. */
 export const ApproveBookingRequestSchema = z.object({
   assetId: z.string().uuid().optional(),

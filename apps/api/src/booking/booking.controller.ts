@@ -71,6 +71,13 @@ export class BookingController {
     return this.booking.listPipeline(tenant);
   }
 
+  /** Sidebar badge — cheap count of bookings awaiting staff approval. Any staff member sees it. */
+  @Get("pending-count")
+  @UseGuards(JwtAuthGuard, StaffGuard)
+  countPending(@CurrentTenant() tenant: ResolvedTenant) {
+    return this.booking.countPendingApproval(tenant.id);
+  }
+
   @Get(":id")
   @UseGuards(JwtAuthGuard)
   async get(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {

@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { authClient, isAdmin } from "@/lib/auth-client";
+import { usePendingApprovalCount } from "@/lib/pending-approvals";
 
 const NAV = [
   { href: "/catalog-setup", label: "Catalog Setup" },
@@ -32,6 +33,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const user = authClient.getUser();
+  const pendingApprovals = usePendingApprovalCount();
 
   function logout() {
     authClient.clear();
@@ -43,17 +45,28 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
       <aside className="w-56 border-r border-brand-600/10 bg-white p-4">
         <div className="mb-6 px-2 text-lg font-semibold">RentOS Console</div>
         <nav className="space-y-1">
-          {[...NAV, ...(isAdmin(user) ? ADMIN_NAV : [])].map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`block rounded px-3 py-2 text-sm ${
-                pathname?.startsWith(item.href) ? "bg-brand-700 text-white" : "hover:bg-brand-700/5"
-              }`}
-            >
-              {item.label}
-            </Link>
-          ))}
+          {[...NAV, ...(isAdmin(user) ? ADMIN_NAV : [])].map((item) => {
+            const badge = item.href === "/bookings" ? pendingApprovals : 0;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`flex items-center justify-between gap-2 rounded px-3 py-2 text-sm ${
+                  pathname?.startsWith(item.href) ? "bg-brand-700 text-white" : "hover:bg-brand-700/5"
+                }`}
+              >
+                <span>{item.label}</span>
+                {badge > 0 && (
+                  <span
+                    aria-label={`${badge} booking${badge === 1 ? "" : "s"} awaiting approval`}
+                    className="min-w-[1.25rem] rounded-full bg-red-600 px-1.5 py-0.5 text-center text-xs font-semibold leading-none text-white"
+                  >
+                    {badge > 99 ? "99+" : badge}
+                  </span>
+                )}
+              </Link>
+            );
+          })}
         </nav>
       </aside>
       <div className="flex-1">

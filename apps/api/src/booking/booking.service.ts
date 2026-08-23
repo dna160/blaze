@@ -345,6 +345,16 @@ export class BookingService {
     return { assetTypeName: b.assetType.name, assetCode: b.asset?.code ?? null, locationName: b.location?.name ?? null, locationAddress: b.location?.address ?? null };
   }
 
+  /**
+   * Sidebar badge count. PENDING_APPROVAL only — NEEDS_INFO sits in the
+   * same board column but is waiting on the customer, so badging it would
+   * show a number staff cannot act on.
+   */
+  async countPendingApproval(tenantId: string): Promise<{ pendingApproval: number }> {
+    const pendingApproval = await this.prisma.runInTenantContext(tenantId, (tx) => tx.booking.count({ where: { status: "PENDING_APPROVAL" } }));
+    return { pendingApproval };
+  }
+
   async listPendingApproval(tenantId: string) {
     return this.prisma.runInTenantContext(tenantId, (tx) =>
       tx.booking.findMany({
