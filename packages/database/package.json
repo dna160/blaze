@@ -16,12 +16,15 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@prisma/adapter-pg": "5.22.0",
     "@prisma/client": "^5.22.0",
-    "@rentos/domain": "workspace:*"
+    "@rentos/domain": "workspace:*",
+    "pg": "^8.13.1"
   },
   "devDependencies": {
     "@rentos/config": "workspace:*",
     "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
     "prisma": "^5.22.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"

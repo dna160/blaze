@@ -157,13 +157,13 @@ export class RentalOrderService {
       await this.event(tx, tenant.id, id, order.status as never, to, "SYSTEM", undefined, "H-14 renewal offered");
       return { customer: order.customer };
     });
-    await this.notifications.notify({
+    await this.notifications.notifyCustomer({
       tenantId: tenant.id,
-      customerId: result.customer.id,
-      channel: "WHATSAPP",
+      tenantSlug: tenant.slug,
+      customer: result.customer,
       templateKey: "renewal_offer_h14",
-      recipient: result.customer.phone,
       variables: { orderId: id },
+      link: { purpose: "BOOKING", next: `/portal/bookings/${id}` },
     });
     return { status: "RENEWAL_OFFERED" };
   }

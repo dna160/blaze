@@ -78,3 +78,25 @@ describe("recurringLeaseBookingFsm — full lifecycle happy path", () => {
     );
   });
 });
+
+const ctx = (): BookingActivationContext => fullyReady;
+
+describe("recurringLeaseBookingFsm — PRD v2 waitlist + term end", () => {
+  it("DRAFT can be waitlisted, and a waitlisted booking can be offered a unit back into approval", async () => {
+    expect((await recurringLeaseBookingFsm.fire("DRAFT", "WAITLIST", ctx())).to).toBe("WAITLISTED");
+    expect((await recurringLeaseBookingFsm.fire("WAITLISTED", "OFFER_UNIT", ctx())).to).toBe("PENDING_APPROVAL");
+    expect((await recurringLeaseBookingFsm.fire("WAITLISTED", "REJECT", ctx())).to).toBe("REJECTED");
+    expect((await recurringLeaseBookingFsm.fire("WAITLISTED", "EXPIRE", ctx())).to).toBe("EXPIRED");
+  });
+
+  it("a waitlisted booking cannot be approved directly — it must be offered a unit first", async () => {
+    await expect(recurringLeaseBookingFsm.fire("WAITLISTED", "APPROVE", ctx())).rejects.toThrow(IllegalTransitionError);
+  });
+
+  it("an active/renewing/suspended term ends straight into MOVED_OUT", async () => {
+    expect((await recurringLeaseBookingFsm.fire("ACTIVE", "TERM_ENDED", ctx())).to).toBe("MOVED_OUT");
+    expect((await recurringLeaseBookingFsm.fire("RENEWING", "TERM_ENDED", ctx())).to).toBe("MOVED_OUT");
+    expect((await recurringLeaseBookingFsm.fire("SUSPENDED", "TERM_ENDED", ctx())).to).toBe("MOVED_OUT");
+    await expect(recurringLeaseBookingFsm.fire("APPROVED", "TERM_ENDED", ctx())).rejects.toThrow(IllegalTransitionError);
+  });
+});

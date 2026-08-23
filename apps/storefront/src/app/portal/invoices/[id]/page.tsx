@@ -5,10 +5,11 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { InvoiceDto, PaymentDto } from "@rentos/contracts";
 
-import { apiFetch, ApiError } from "@/lib/api";
+import { apiFetch, ApiError, openPdf } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { getClientTenantSlug } from "@/lib/tenant-client";
 
-const TENANT_SLUG = process.env.NEXT_PUBLIC_DEV_TENANT_SLUG ?? "";
+const TENANT_SLUG = getClientTenantSlug();
 
 type InvoiceWithPayments = InvoiceDto & { payments: PaymentDto[] };
 
@@ -78,14 +79,39 @@ export default function InvoiceDetailPage() {
   if (!invoice) return <p>Loading...</p>;
 
   const payable = invoice.status === "ISSUED" || invoice.status === "OVERDUE";
+  const isProforma = invoice.scheduleIndex === 0 && invoice.status !== "PAID";
+  const isScheduled = invoice.status === "SCHEDULED";
 
   return (
     <div className="max-w-lg space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">{invoice.invoiceNumber}</h1>
+        <p className="text-xs font-semibold uppercase tracking-wide text-accent-500">
+          {isProforma ? "Proforma invoice" : isScheduled ? "Upcoming payment" : "Invoice"}
+        </p>
+        <h1 className="text-2xl font-semibold">{isScheduled ? `Payment ${(invoice.scheduleIndex ?? 0) + 1}` : invoice.invoiceNumber}</h1>
         <p className="mt-1 text-brand-700/70">
           Status: {invoice.status} · Due {new Date(invoice.dueDate).toLocaleDateString("id-ID")}
+          {invoice.periodStart && invoice.periodEnd
+            ? ` · ${new Date(invoice.periodStart).toLocaleDateString("id-ID")} – ${new Date(invoice.periodEnd).toLocaleDateString("id-ID")}`
+            : ""}
         </p>
+        {!isScheduled && (
+          <button
+            type="button"
+            onClick={() => {
+              const token = authClient.getToken();
+              if (token) openPdf(`/invoices/${id}/pdf`, { tenantSlug: TENANT_SLUG, token }).catch(() => setError("Could not open the PDF."));
+            }}
+            className="mt-2 text-sm text-accent-500 underline"
+          >
+            Download PDF
+          </button>
+        )}
+        {isScheduled && (
+          <p className="mt-2 rounded-lg bg-brand-700/5 p-3 text-sm text-brand-700/70">
+            This payment is scheduled — it will be issued about a week before it&apos;s due and you&apos;ll get a message with a pay link.
+          </p>
+        )}
       </div>
 
       <div className="rounded-xl border border-brand-600/10 bg-white p-6">

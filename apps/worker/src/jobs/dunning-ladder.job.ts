@@ -1,7 +1,7 @@
 import { getPrismaClient, markInvoiceOverdue, withTenantContext, type Prisma } from "@rentos/database";
 import { recurringLeaseBookingFsm, type BookingActivationContext } from "@rentos/domain";
 
-import { notify } from "../notify.js";
+import { notify, notifyCustomer } from "../notify.js";
 
 /**
  * BUILD-SPEC #41/#42 — payment reminder ladder H-7/5/3/1 (before due), then
@@ -75,14 +75,31 @@ async function alreadyNotified(tx: Prisma.TransactionClient, invoiceId: string, 
  */
 async function remindBoth(
   tx: Prisma.TransactionClient,
-  tenant: { id: string; featureFlags: unknown },
+  tenant: { id: string; slug: string; featureFlags: unknown },
   invoiceId: string,
   templateKey: string,
-  customer: { id: string; phone: string },
+  customer: {
+    id: string;
+    phone: string | null;
+    email: string | null;
+    fullName?: string | null;
+    preferredChannel: "WHATSAPP" | "EMAIL";
+  },
   variables: Record<string, string>,
 ): Promise<void> {
+  // Customer leg: #42's dual recipient, but sent on the customer's own channel
+  // (D3) and carrying a magic link straight to the invoice (P4), so a reminder
+  // is one tap to pay rather than an OTP round-trip. Admin leg stays a plain
+  // WhatsApp/console send — staff have a console session, not a magic link.
   if (!(await alreadyNotified(tx, invoiceId, templateKey))) {
-    await notify({ tenantId: tenant.id, customerId: customer.id, templateKey, recipient: customer.phone, variables });
+    await notifyCustomer({
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      customer,
+      templateKey,
+      variables,
+      link: { purpose: "INVOICE", next: `/portal/invoices/${invoiceId}` },
+    });
   }
   const admin = adminRecipient(tenant.featureFlags);
   const adminKey = `${templateKey}_admin`;
@@ -164,12 +181,13 @@ export async function runDunningLadder(): Promise<void> {
               },
             });
             const customer = await tx.customer.findUniqueOrThrow({ where: { id: booking.customerId } });
-            await notify({
+            await notifyCustomer({
               tenantId: tenant.id,
-              customerId: customer.id,
+              tenantSlug: tenant.slug,
+              customer,
               templateKey: "lease_suspended",
-              recipient: customer.phone,
               variables: { invoiceNumber: invoice.invoiceNumber },
+              link: { purpose: "INVOICE", next: `/portal/invoices/${invoice.id}` },
             });
           }
         }

@@ -8,6 +8,7 @@ import { StateMachine, type Transition } from "./fsm.js";
  */
 export type BookingStatus =
   | "DRAFT"
+  | "WAITLISTED"
   | "PENDING_APPROVAL"
   | "NEEDS_INFO"
   | "APPROVED"
@@ -32,6 +33,9 @@ export type BookingStatus =
 
 export type BookingEvent =
   | "SUBMIT"
+  | "WAITLIST"
+  | "OFFER_UNIT"
+  | "TERM_ENDED"
   | "APPROVE"
   | "REJECT"
   | "REQUEST_INFO"
@@ -67,6 +71,13 @@ export interface BookingActivationContext {
 
 const RECURRING_LEASE_TRANSITIONS: ReadonlyArray<Transition<BookingStatus, BookingEvent, BookingActivationContext>> = [
   { from: "DRAFT", event: "SUBMIT", to: "PENDING_APPROVAL" },
+  // PRD v2 §7 — "full is never a dead end": no capacity at submission
+  // parks the request on the waitlist (no unit held); staff offer a unit
+  // when one frees up, which re-enters the normal approval path.
+  { from: "DRAFT", event: "WAITLIST", to: "WAITLISTED" },
+  { from: "WAITLISTED", event: "OFFER_UNIT", to: "PENDING_APPROVAL" },
+  { from: "WAITLISTED", event: "REJECT", to: "REJECTED" },
+  { from: "WAITLISTED", event: "EXPIRE", to: "EXPIRED" },
   { from: "PENDING_APPROVAL", event: "APPROVE", to: "APPROVED" },
   { from: "PENDING_APPROVAL", event: "REJECT", to: "REJECTED" },
   { from: "PENDING_APPROVAL", event: "REQUEST_INFO", to: "NEEDS_INFO" },
@@ -89,6 +100,10 @@ const RECURRING_LEASE_TRANSITIONS: ReadonlyArray<Transition<BookingStatus, Booki
   { from: "SUSPENDED", event: "DEFAULT_POLICY_TRIGGERED", to: "DEFAULT" },
   { from: ["ACTIVE", "RENEWING", "SUSPENDED"], event: "GIVE_NOTICE", to: "NOTICE_GIVEN" },
   { from: "NOTICE_GIVEN", event: "END_DATE_REACHED", to: "MOVED_OUT" },
+  // PRD v2 P6 — a fixed term ends on its own end date without a notice
+  // step; the worker's term-lifecycle job fires this. A SUSPENDED lease
+  // whose term runs out also ends (the unpaid invoice stays OVERDUE).
+  { from: ["ACTIVE", "RENEWING", "SUSPENDED"], event: "TERM_ENDED", to: "MOVED_OUT" },
   { from: "MOVED_OUT", event: "SETTLE", to: "CLOSED" },
 ];
 

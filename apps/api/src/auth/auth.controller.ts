@@ -1,6 +1,13 @@
 import { Body, Controller, Post } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
-import { ConsoleLoginRequestSchema, OtpRequestSchema, OtpVerifySchema, PlatformLoginRequestSchema } from "@rentos/contracts";
+import {
+  ClerkExchangeSchema,
+  ConsoleLoginRequestSchema,
+  MagicLinkExchangeSchema,
+  OtpRequestSchema,
+  OtpVerifySchema,
+  PlatformLoginRequestSchema,
+} from "@rentos/contracts";
 
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
@@ -44,5 +51,23 @@ export class AuthController {
     @Body(new ZodValidationPipe(OtpVerifySchema)) body: ReturnType<typeof OtpVerifySchema.parse>,
   ) {
     return this.auth.verifyOtp(tenant, body.phone, body.code);
+  }
+
+  /** PRD v2 §9 — magic link from a WhatsApp/email message -> customer session, no OTP. */
+  @Post("magic/exchange")
+  exchangeMagicLink(
+    @CurrentTenant() tenant: ResolvedTenant,
+    @Body(new ZodValidationPipe(MagicLinkExchangeSchema)) body: ReturnType<typeof MagicLinkExchangeSchema.parse>,
+  ) {
+    return this.auth.exchangeMagicLink(tenant, body.token);
+  }
+
+  /** PRD v2 D3 — Clerk (Google) session token -> customer session keyed by email. */
+  @Post("clerk/exchange")
+  exchangeClerk(
+    @CurrentTenant() tenant: ResolvedTenant,
+    @Body(new ZodValidationPipe(ClerkExchangeSchema)) body: ReturnType<typeof ClerkExchangeSchema.parse>,
+  ) {
+    return this.auth.exchangeClerkSession(tenant, body.token, body.phone);
   }
 }

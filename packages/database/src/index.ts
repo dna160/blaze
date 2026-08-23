@@ -1,5 +1,5 @@
 export * from "../generated/client/index.js";
-export { getPrismaClient } from "./client.js";
+export { getPrismaClient, createPrismaClient } from "./client.js";
 export { withTenantContext, InvalidTenantIdError } from "./tenant-context.js";
 export { withPlatformContext } from "./platform-context.js";
 export { generateMonthlyPlatformInvoices } from "./platform-billing.js";
@@ -9,6 +9,10 @@ export {
   generateInitialInvoice,
   generateNextCycleInvoice,
   generateFinalSettlement,
+  generateTermPaymentSchedule,
+  issueScheduledInvoice,
+  voidScheduledInvoices,
+  provisionalInvoiceNumber,
   markInvoicePaid,
   markInvoiceOverdue,
   createCreditReplacementInvoice,
@@ -18,7 +22,19 @@ export {
   type RentalOrderForInvoicing,
   type InvoiceForCredit,
   type InvoiceLineForCredit,
+  type PersistInvoiceOptions,
 } from "./invoicing.js";
+export {
+  UNIT_HOLDING_STATUSES,
+  listAvailableStorageAssets,
+  countAvailableStorageAssets,
+  findAvailableStorageAsset,
+  resolveBlackoutMonths,
+  resolveInvoiceLeadDays,
+  type StorageWindow,
+  type StorageAvailabilityOptions,
+} from "./storage-availability.js";
+export { findOrCreateCustomerAccessToken, exchangeCustomerAccessToken, hashAccessToken, MAGIC_LINK_TTL_DAYS } from "./magic-link.js";
 export {
   recordPaymentReceivedEntries,
   recordDepositHeldEntries,

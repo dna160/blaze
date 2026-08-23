@@ -119,6 +119,12 @@ async function main() {
         // webhooks. On for the mockup branch so the console's API-access page
         // and the delivery worker are exercisable straight after a seed.
         api_access_enabled: true,
+        // PRD v2 D2 — the deposit-covered month a vacated unit stays unbookable
+        // by anyone but its previous occupant. 0 disables.
+        blackout_months: 1,
+        // PRD v2 §8.2 — days before a scheduled cycle invoice's due date that it
+        // flips SCHEDULED -> ISSUED.
+        invoice_lead_days: 7,
       },
     },
   });
@@ -139,6 +145,10 @@ async function main() {
       name: "Kebon Jeruk",
       address: "Jl. Kebon Jeruk Raya, Jakarta Barat",
       timezone: "Asia/Jakarta",
+      // D4 — Leaflet/OSM branch picker sorts by distance from the browser's
+      // geolocation, so a seeded branch needs real coordinates to be placeable.
+      latitude: -6.1944,
+      longitude: 106.7692,
     },
   });
 
@@ -185,7 +195,7 @@ async function main() {
       name: "Storage Unit 1.5×2m",
       slug: "unit-1-5x2",
       bookingModel: BookingModel.RECURRING_LEASE,
-      attributesSchema: { sizeM2: 3, climateControlled: false },
+      attributesSchema: { sizeM2: 3, climateControlled: false, sizeClass: "SMALL" },
       pricing: {
         basePrice: 450000,
         currency: "IDR",
@@ -211,7 +221,7 @@ async function main() {
       name: "Storage Unit 3×3m",
       slug: "unit-3x3",
       bookingModel: BookingModel.RECURRING_LEASE,
-      attributesSchema: { sizeM2: 9, climateControlled: true },
+      attributesSchema: { sizeM2: 9, climateControlled: true, sizeClass: "MEDIUM" },
       pricing: {
         basePrice: 1200000,
         currency: "IDR",

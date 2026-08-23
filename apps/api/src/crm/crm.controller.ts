@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Param, Patch, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Query, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
+import { ClientListQuerySchema } from "@rentos/contracts";
 
 import { CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
@@ -7,6 +8,7 @@ import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
 import { RequireCapability } from "../common/decorators/require-capability.decorator.js";
 import { CapabilityGuard } from "../common/guards/capability.guard.js";
 import { StaffGuard } from "../common/guards/staff.guard.js";
+import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
 
 import { CrmService } from "./crm.service.js";
@@ -21,6 +23,22 @@ export class CrmController {
   @Get("me")
   getMe(@CurrentTenantId() tenantId: string, @CurrentUser() user: AuthenticatedUser) {
     return this.crm.getById(tenantId, user.id);
+  }
+
+  /** PRD v2 §5.2 client list — search/filter/status. Declared before :id for the same reason as "me". */
+  @Get("clients")
+  @UseGuards(StaffGuard)
+  listClients(
+    @CurrentTenantId() tenantId: string,
+    @Query(new ZodValidationPipe(ClientListQuerySchema)) query: ReturnType<typeof ClientListQuerySchema.parse>,
+  ) {
+    return this.crm.listClients(tenantId, query);
+  }
+
+  @Get("clients/:id")
+  @UseGuards(StaffGuard)
+  getClientDetail(@CurrentTenantId() tenantId: string, @Param("id") id: string) {
+    return this.crm.getClientDetail(tenantId, id);
   }
 
   @Get()

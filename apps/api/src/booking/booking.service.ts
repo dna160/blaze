@@ -1,22 +1,30 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import { assetFsm } from "@rentos/domain";
+import { assetFsm, termEndDate } from "@rentos/domain";
 import {
   computePooledAvailableCount,
   findAvailableNonPooledAsset,
   findAvailablePooledAsset,
+  findAvailableStorageAsset,
+  generateTermPaymentSchedule,
   recordDepositHeldEntries,
+  resolveBlackoutMonths,
+  resolveInvoiceLeadDays,
+  voidScheduledInvoices,
   type Prisma,
 } from "@rentos/database";
+import type { CreateBookingResponse, PipelineBookingDto } from "@rentos/contracts";
 
 import { AuditService } from "../audit/audit.service.js";
 import { CrmService } from "../crm/crm.service.js";
+import { DocumentsService } from "../documents/documents.service.js";
 import { FinanceService } from "../finance/finance.service.js";
-import { NotificationsService } from "../notifications/notifications.service.js";
+import { NotificationsService, type NotifiableCustomer } from "../notifications/notifications.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 import { WebhookDispatcherService } from "../webhook-dispatch/webhook-dispatch.service.js";
 
 import { bookingFsmFor, GuardFailedError, type BookingActivationContext, type BookingStatus } from "./booking-fsm.util.js";
+import { pipelineStageFor } from "./booking-pipeline.util.js";
 
 type RateTierValue = "DAILY" | "WEEKLY" | "MONTHLY";
 
@@ -33,18 +41,28 @@ const DEFAULT_RESERVATION_TTL_HOURS = 48;
 /** Booking models whose invoice math needs both ends of the window (nights/days x rate) — see BookingWindow.endDate. */
 const BOOKING_MODELS_REQUIRING_END_DATE = new Set(["NIGHTLY", "DURATION_ORDER"]);
 
-/** RECURRING_LEASE fixed-term tiers (Travelio-style short stays) — need an endDate the same way NIGHTLY/DURATION_ORDER do; MONTHLY (the original indefinite lease) does not. */
-const FIXED_TERM_RATE_TIERS = new Set<RateTierValue>(["DAILY", "WEEKLY"]);
+/** Pipeline columns the workbench shows (PRD v2 §5.1) — everything before activation. */
+const PIPELINE_STATUSES = ["WAITLISTED", "PENDING_APPROVAL", "NEEDS_INFO", "APPROVED"] as const;
 
 export interface CreateBookingInput {
   assetTypeId: string;
   startDate: Date;
-  /** Checkout/return date — required for NIGHTLY, DURATION_ORDER, and RECURRING_LEASE with a DAILY/WEEKLY rateTier. Ignored otherwise. */
+  /** Checkout/return date — required for NIGHTLY, DURATION_ORDER. Ignored otherwise. */
   endDate?: Date;
-  /** RECURRING_LEASE only — defaults to MONTHLY (the original indefinite lease) when omitted. Ignored for other booking models. */
+  /** RECURRING_LEASE only — MONTHLY is the only tier new bookings accept since PRD v2 D1. */
   rateTier?: RateTierValue;
+  /** PRD v2 §4 — storage flow: branch + term. Required for RECURRING_LEASE. */
+  locationId?: string;
+  termMonths?: number;
+  extendsBookingId?: string;
   customerPhone: string;
   customerFullName: string;
+  /** Set when the storefront sent a customer session (OTP or Google) — the booking is attached to that customer. */
+  authenticatedCustomerId?: string;
+}
+
+function formatDateId(d: Date): string {
+  return d.toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
 }
 
 @Injectable()
@@ -56,23 +74,163 @@ export class BookingService {
     private readonly notifications: NotificationsService,
     private readonly audit: AuditService,
     private readonly webhooks: WebhookDispatcherService,
+    private readonly documents: DocumentsService,
   ) {}
 
-  /** PRD §7.1.2 booking flow steps 1-5: pick AssetType, soft-reserve a unit, submit for approval. */
-  async createBooking(tenant: ResolvedTenant, input: CreateBookingInput) {
-    const customer = await this.crm.getOrCreateByPhone(tenant.id, input.customerPhone, input.customerFullName);
+  /**
+   * PRD §7.1.2 booking flow steps 1-5: pick AssetType, soft-reserve a unit,
+   * submit for approval. Since PRD v2 §4, RECURRING_LEASE (storage) goes
+   * through the branch + size + term flow with date-range availability and
+   * a waitlist; NIGHTLY/DURATION_ORDER keep their pre-v2 path unchanged.
+   */
+  async createBooking(tenant: ResolvedTenant, input: CreateBookingInput): Promise<CreateBookingResponse> {
+    const customer = input.authenticatedCustomerId
+      ? await this.crm.fillProfile(tenant.id, input.authenticatedCustomerId, { phone: input.customerPhone, fullName: input.customerFullName })
+      : await this.crm.getOrCreateByPhone(tenant.id, input.customerPhone, input.customerFullName);
 
+    const assetTypeProbe = await this.prisma.runInTenantContext(tenant.id, (tx) => tx.assetType.findUnique({ where: { id: input.assetTypeId } }));
+    if (!assetTypeProbe || !assetTypeProbe.isPublished) throw new NotFoundException("AssetType not found.");
+
+    if (assetTypeProbe.bookingModel === "RECURRING_LEASE") {
+      return this.createStorageBooking(tenant, customer, input);
+    }
+    return this.createDatedBooking(tenant, customer, input);
+  }
+
+  /** PRD v2 §4.3/§4.4 — the storage path: term + branch, blackout-aware availability, waitlist instead of a dead end. */
+  private async createStorageBooking(
+    tenant: ResolvedTenant,
+    customer: NotifiableCustomer & { isBlocklisted: boolean; kycStatus: string },
+    input: CreateBookingInput,
+  ): Promise<CreateBookingResponse> {
+    if (input.rateTier && input.rateTier !== "MONTHLY") {
+      throw new BadRequestException("Daily and weekly rentals are no longer offered — choose a 1, 3, 6, or 12 month term.");
+    }
+    if (!input.termMonths || !input.locationId) {
+      throw new BadRequestException("A branch and a rental term (1, 3, 6, or 12 months) are required.");
+    }
+    const termMonths = input.termMonths;
+    const locationId = input.locationId;
+    const endDate = termEndDate(input.startDate, termMonths);
+    const blackoutMonths = resolveBlackoutMonths(tenant.featureFlags);
+
+    const { booking, assetCode, waitlistPosition } = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const assetType = await tx.assetType.findUniqueOrThrow({ where: { id: input.assetTypeId } });
+      const location = await tx.location.findUnique({ where: { id: locationId } });
+      if (!location) throw new NotFoundException("Location not found.");
+
+      let preferredAssetId: string | undefined;
+      if (input.extendsBookingId) {
+        const parent = await tx.booking.findUnique({ where: { id: input.extendsBookingId } });
+        if (!parent || parent.customerId !== customer.id) throw new BadRequestException("The booking being extended was not found.");
+        preferredAssetId = parent.assetId ?? undefined;
+      }
+
+      const assetId = await findAvailableStorageAsset(
+        tx,
+        assetType.id,
+        locationId,
+        { startDate: input.startDate, termMonths },
+        { blackoutMonths, customerId: customer.id, extendsBookingId: input.extendsBookingId, preferredAssetId },
+      );
+
+      const fsm = bookingFsmFor("RECURRING_LEASE");
+      const base = {
+        tenantId: tenant.id,
+        customerId: customer.id,
+        assetTypeId: assetType.id,
+        locationId,
+        bookingModel: "RECURRING_LEASE" as const,
+        rateTier: "MONTHLY" as const,
+        startDate: input.startDate,
+        endDate,
+        termMonths,
+        extendsBookingId: input.extendsBookingId,
+        priceSnapshot: assetType.pricing as Prisma.InputJsonValue,
+      };
+
+      if (!assetId) {
+        // Full is never a dead end (PRD v2 P3): park on the waitlist, hold nothing.
+        //
+        // Two rows, deliberately. The Booking is the customer-facing record —
+        // same customer, same price snapshot, same WhatsApp thread, same
+        // workbench card as any other request (P3's actual point). The
+        // WaitlistEntry is the queue: it owns the position under a unique
+        // (tenant, assetType, position) constraint, the ARMED/FIRED/EXPIRED
+        // lifecycle and the payment TTL that stop one non-payer freezing a unit
+        // (BUILD-SPEC C5 rules 1 and 3). Counting bookings, as this used to,
+        // gives a position that silently renumbers whenever an earlier booking
+        // changes status.
+        const { to } = await fsm.fire("DRAFT", "WAITLIST", {} as BookingActivationContext);
+        const created = await tx.booking.create({ data: { ...base, status: to, waitlistedAt: new Date() } });
+        await tx.bookingEvent.create({
+          data: { tenantId: tenant.id, bookingId: created.id, toStatus: to, actorType: "CUSTOMER", actorId: customer.id, reason: "No capacity for the requested dates — waitlisted" },
+        });
+        const lastArmed = await tx.waitlistEntry.findFirst({
+          where: { assetTypeId: assetType.id },
+          orderBy: { position: "desc" },
+          select: { position: true },
+        });
+        const position = (lastArmed?.position ?? 0) + 1;
+        await tx.waitlistEntry.create({
+          data: {
+            tenantId: tenant.id,
+            assetTypeId: assetType.id,
+            customerId: customer.id,
+            bookingId: created.id,
+            locationId,
+            requestedStartDate: input.startDate,
+            termMonths,
+            position,
+            status: "ARMED",
+            kycVerified: customer.kycStatus === "VERIFIED",
+            priceSnapshot: assetType.pricing as Prisma.InputJsonValue,
+          },
+        });
+        return { booking: created, assetCode: null as string | null, waitlistPosition: position };
+      }
+
+      const { to } = await fsm.fire("DRAFT", "SUBMIT", {} as BookingActivationContext);
+      const reservedUntil = new Date(Date.now() + DEFAULT_RESERVATION_TTL_HOURS * 60 * 60 * 1000);
+      const created = await tx.booking.create({ data: { ...base, status: to, assetId, reservedUntil } });
+      await this.softReserveAsset(tx, assetId);
+      await tx.bookingEvent.create({
+        data: { tenantId: tenant.id, bookingId: created.id, toStatus: to, actorType: "CUSTOMER", actorId: customer.id, reason: "Booking submitted via storefront" },
+      });
+      const asset = await tx.asset.findUniqueOrThrow({ where: { id: assetId } });
+      return { booking: created, assetCode: asset.code as string | null, waitlistPosition: null as number | null };
+    });
+
+    const context = await this.bookingContext(tenant.id, booking.id);
+    await this.notifications.notifyCustomer({
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      customer,
+      templateKey: waitlistPosition ? "booking_waitlisted" : "booking_received",
+      variables: {
+        customerName: customer.fullName ?? "Customer",
+        bookingId: booking.id,
+        assetTypeName: context.assetTypeName,
+        locationName: context.locationName ?? "",
+        startDate: formatDateId(booking.startDate),
+        termMonths: String(termMonths),
+        position: waitlistPosition ? String(waitlistPosition) : "",
+      },
+      link: { purpose: "BOOKING", next: `/portal/bookings/${booking.id}` },
+    });
+
+    return { id: booking.id, status: booking.status, waitlistPosition, assetCode };
+  }
+
+  /** Pre-v2 path for NIGHTLY / DURATION_ORDER — unchanged behavior. */
+  private async createDatedBooking(
+    tenant: ResolvedTenant,
+    customer: NotifiableCustomer & { isBlocklisted: boolean; kycStatus: string },
+    input: CreateBookingInput,
+  ): Promise<CreateBookingResponse> {
     const booking = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
-      const assetType = await tx.assetType.findUnique({ where: { id: input.assetTypeId } });
-      if (!assetType || !assetType.isPublished) throw new NotFoundException("AssetType not found.");
-
-      // RECURRING_LEASE's rateTier is meaningless for every other booking
-      // model — normalize to MONTHLY (the column default) rather than
-      // trusting an unrelated client-supplied value onto the row.
-      const rateTier: RateTierValue =
-        assetType.bookingModel === "RECURRING_LEASE" ? (input.rateTier ?? "MONTHLY") : "MONTHLY";
-      const isFixedTermLease = assetType.bookingModel === "RECURRING_LEASE" && FIXED_TERM_RATE_TIERS.has(rateTier);
-      const requiresEndDate = BOOKING_MODELS_REQUIRING_END_DATE.has(assetType.bookingModel) || isFixedTermLease;
+      const assetType = await tx.assetType.findUniqueOrThrow({ where: { id: input.assetTypeId } });
+      const requiresEndDate = BOOKING_MODELS_REQUIRING_END_DATE.has(assetType.bookingModel);
 
       if (requiresEndDate) {
         if (!input.endDate) {
@@ -80,15 +238,6 @@ export class BookingService {
         }
         if (input.endDate.getTime() <= input.startDate.getTime()) {
           throw new BadRequestException("End date must be after the start date.");
-        }
-      }
-      if (isFixedTermLease) {
-        const pricing = assetType.pricing as { dailyRate?: string; weeklyRate?: string };
-        if (rateTier === "DAILY" && !pricing.dailyRate) {
-          throw new BadRequestException("Daily rate is not configured for this listing.");
-        }
-        if (rateTier === "WEEKLY" && !pricing.weeklyRate) {
-          throw new BadRequestException("Weekly rate is not configured for this listing.");
         }
       }
 
@@ -104,10 +253,6 @@ export class BookingService {
           throw new ConflictException("No units of this type are currently available for the requested dates.");
         }
       } else {
-        // OTA-blocked dates (Session 22) only apply to NIGHTLY, the one
-        // booking model synced calendars target — other models pass
-        // null/null and get the exact pre-existing behavior (no
-        // OtaBlockedDate rows exist for their AssetTypes anyway).
         const isNightly = assetType.bookingModel === "NIGHTLY";
         const otaWindowStart = isNightly ? input.startDate : null;
         const otaWindowEnd = isNightly ? (input.endDate ?? null) : null;
@@ -128,7 +273,7 @@ export class BookingService {
           assetTypeId: assetType.id,
           assetId: availableAssetId,
           bookingModel: assetType.bookingModel,
-          rateTier,
+          rateTier: "MONTHLY",
           status: "DRAFT",
           startDate: input.startDate,
           endDate: requiresEndDate ? input.endDate : undefined,
@@ -143,7 +288,7 @@ export class BookingService {
         await tx.asset.update({ where: { id: availableAssetId }, data: { status: "RESERVED" } });
       }
 
-      const updated = await tx.booking.update({ where: { id: created.id }, data: { status: to } });
+      const updated = await tx.booking.update({ where: { id: created.id }, data: { status: to }, include: { asset: true } });
       await tx.bookingEvent.create({
         data: {
           tenantId: tenant.id,
@@ -157,16 +302,47 @@ export class BookingService {
       return updated;
     });
 
-    await this.notifications.notify({
+    await this.notifications.notifyCustomer({
       tenantId: tenant.id,
-      customerId: customer.id,
-      channel: "WHATSAPP",
+      tenantSlug: tenant.slug,
+      customer,
       templateKey: "booking_received",
-      recipient: customer.phone,
-      variables: { customerName: customer.fullName ?? "Customer", bookingId: booking.id },
+      variables: { customerName: customer.fullName ?? "Customer", bookingId: booking.id, startDate: formatDateId(booking.startDate) },
+      link: { purpose: "BOOKING", next: `/portal/bookings/${booking.id}` },
     });
 
-    return booking;
+    return { id: booking.id, status: booking.status, waitlistPosition: null, assetCode: booking.asset?.code ?? null };
+  }
+
+  /** The physical floor state (PRD v2 P8): reserve only a unit that's actually free today — a future booking on an occupied unit leaves it OCCUPIED. */
+  private async softReserveAsset(tx: Prisma.TransactionClient, assetId: string) {
+    const asset = await tx.asset.findUniqueOrThrow({ where: { id: assetId } });
+    if (asset.status === "AVAILABLE") {
+      await assetFsm.fire("AVAILABLE", "RESERVE", undefined);
+      await tx.asset.update({ where: { id: assetId }, data: { status: "RESERVED" } });
+    }
+  }
+
+  /** Release a unit held by a booking that's leaving the pipeline — only if no other committed booking still holds it physically. */
+  private async releaseAsset(tx: Prisma.TransactionClient, assetId: string, exceptBookingId: string) {
+    const stillHeld = await tx.booking.count({
+      where: { assetId, id: { not: exceptBookingId }, status: { in: ["ACTIVE", "RENEWING", "SUSPENDED", "NOTICE_GIVEN", "DEFAULT", "PAID", "CHECKED_IN", "PICKED_UP"] } },
+    });
+    if (stillHeld > 0) return;
+    const asset = await tx.asset.findUniqueOrThrow({ where: { id: assetId } });
+    if (asset.status === "RESERVED" || asset.status === "OCCUPIED") {
+      await tx.asset.update({ where: { id: assetId }, data: { status: "AVAILABLE" } });
+    }
+  }
+
+  private async bookingContext(tenantId: string, bookingId: string) {
+    const b = await this.prisma.runInTenantContext(tenantId, (tx) =>
+      tx.booking.findUniqueOrThrow({
+        where: { id: bookingId },
+        include: { assetType: { select: { name: true } }, asset: { select: { code: true } }, location: { select: { name: true, address: true } } },
+      }),
+    );
+    return { assetTypeName: b.assetType.name, assetCode: b.asset?.code ?? null, locationName: b.location?.name ?? null, locationAddress: b.location?.address ?? null };
   }
 
   async listPendingApproval(tenantId: string) {
@@ -179,11 +355,98 @@ export class BookingService {
     );
   }
 
+  /**
+   * PRD v2 §5.1 — every booking still in the pipeline, with its derived
+   * stage and the context each column's card needs (customer, unit,
+   * branch, first invoice, contract). Waitlist position is read off the
+   * WaitlistEntry queue rather than recomputed by counting cards, so the
+   * number a customer was told in their message is the number staff see.
+   */
+  async listPipeline(tenant: ResolvedTenant): Promise<PipelineBookingDto[]> {
+    const kycRequired = Boolean(tenant.featureFlags.kyc_required);
+    return this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const bookings = await tx.booking.findMany({
+        where: { status: { in: [...PIPELINE_STATUSES] } },
+        include: {
+          customer: { select: { id: true, fullName: true, phone: true, email: true, kycStatus: true, preferredChannel: true, kycDocuments: { where: { status: "PENDING_REVIEW" }, select: { id: true } } } },
+          assetType: { select: { id: true, name: true } },
+          asset: { select: { id: true, code: true } },
+          location: { select: { id: true, name: true } },
+          invoices: { orderBy: [{ scheduleIndex: "asc" }, { issueDate: "asc" }], take: 1, select: { id: true, invoiceNumber: true, status: true, totalAmount: true, dueDate: true } },
+          contracts: { orderBy: { createdAt: "desc" }, take: 1, select: { id: true, signedAt: true, unsignedDocumentUrl: true, documentUrl: true } },
+        },
+        orderBy: { createdAt: "asc" },
+      });
+
+      // One query for the whole board: bookingId -> queue position.
+      const waitlistPositions = new Map<string, number>(
+        (
+          await tx.waitlistEntry.findMany({
+            where: { status: "ARMED", bookingId: { not: null } },
+            select: { bookingId: true, position: true },
+          })
+        ).map((e) => [e.bookingId!, e.position]),
+      );
+      return bookings.map((b) => {
+        const firstInvoice = b.invoices[0] ?? null;
+        const contract = b.contracts[0] ?? null;
+        const { stage, detail } = pipelineStageFor({
+          status: b.status,
+          kycRequired,
+          customerKycStatus: b.customer.kycStatus,
+          kycRequestedAt: b.kycRequestedAt,
+          firstInvoice: firstInvoice ? { status: firstInvoice.status, dueDate: firstInvoice.dueDate } : null,
+          contractGeneratedAt: b.contractGeneratedAt,
+          pendingKycDocuments: b.customer.kycDocuments.length,
+        });
+        const waitlistPosition = b.status === "WAITLISTED" ? (waitlistPositions.get(b.id) ?? null) : null;
+        return {
+          id: b.id,
+          status: b.status,
+          bookingModel: b.bookingModel,
+          assetTypeId: b.assetTypeId,
+          assetId: b.assetId,
+          customerId: b.customerId,
+          startDate: b.startDate.toISOString(),
+          endDate: b.endDate?.toISOString() ?? null,
+          anchorDay: b.anchorDay,
+          rateTier: b.rateTier,
+          reservedUntil: b.reservedUntil?.toISOString() ?? null,
+          locationId: b.locationId,
+          termMonths: b.termMonths,
+          extendsBookingId: b.extendsBookingId,
+          kycRequestedAt: b.kycRequestedAt?.toISOString() ?? null,
+          contractGeneratedAt: b.contractGeneratedAt?.toISOString() ?? null,
+          waitlistedAt: b.waitlistedAt?.toISOString() ?? null,
+          createdAt: b.createdAt.toISOString(),
+          pipelineStage: stage,
+          stageDetail: detail,
+          waitlistPosition,
+          customer: {
+            id: b.customer.id,
+            fullName: b.customer.fullName,
+            phone: b.customer.phone,
+            email: b.customer.email,
+            kycStatus: b.customer.kycStatus,
+            preferredChannel: b.customer.preferredChannel,
+          },
+          assetType: b.assetType,
+          asset: b.asset,
+          location: b.location,
+          firstInvoice: firstInvoice
+            ? { id: firstInvoice.id, invoiceNumber: firstInvoice.invoiceNumber, status: firstInvoice.status, totalAmount: firstInvoice.totalAmount.toString(), dueDate: firstInvoice.dueDate.toISOString() }
+            : null,
+          contract: contract ? { id: contract.id, signedAt: contract.signedAt?.toISOString() ?? null, hasDocument: Boolean(contract.unsignedDocumentUrl ?? contract.documentUrl) } : null,
+        };
+      });
+    });
+  }
+
   async getBooking(tenantId: string, bookingId: string) {
     const booking = await this.prisma.runInTenantContext(tenantId, (tx) =>
       tx.booking.findUnique({
         where: { id: bookingId },
-        include: { customer: true, assetType: true, asset: true, events: { orderBy: { createdAt: "asc" } } },
+        include: { customer: true, assetType: true, asset: true, location: true, events: { orderBy: { createdAt: "asc" } } },
       }),
     );
     if (!booking) throw new NotFoundException("Booking not found.");
@@ -194,17 +457,32 @@ export class BookingService {
     return this.prisma.runInTenantContext(tenantId, (tx) =>
       tx.booking.findMany({
         where: { customerId },
-        include: { assetType: true, asset: true },
+        include: { assetType: true, asset: true, location: true },
         orderBy: { createdAt: "desc" },
       }),
     );
   }
 
-  /** Approval workbench: approve (PRD §7.2.1) — generates the first invoice and sends the payment link in one WA message (automation A3). */
+  /**
+   * Approval workbench: approve (PRD §7.2.1).
+   *
+   * Term leases (PRD v2 §5.1) only move to APPROVED here — the invoice and
+   * contract come later, at "Generate contract + proforma", after KYC. The
+   * customer is told the next step (verify identity) with a magic link.
+   *
+   * NIGHTLY / DURATION_ORDER / legacy leases keep the pre-v2 behavior:
+   * approval generates the first invoice + contract and sends the payment
+   * link in one message (automation A3).
+   */
   async approve(tenant: ResolvedTenant, bookingId: string, approverUserId: string, assetId?: string) {
+    const probe = await this.prisma.runInTenantContext(tenant.id, (tx) => tx.booking.findUnique({ where: { id: bookingId } }));
+    if (!probe) throw new NotFoundException("Booking not found.");
+    if (probe.bookingModel === "RECURRING_LEASE" && probe.termMonths) {
+      return this.approveTermLease(tenant, bookingId, approverUserId);
+    }
+
     const { booking, invoice } = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
-      const existing = await tx.booking.findUnique({ where: { id: bookingId } });
-      if (!existing) throw new NotFoundException("Booking not found.");
+      const existing = await tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
 
       const fsm = bookingFsmFor(existing.bookingModel);
       const { to } = await fsm.fire(existing.status as never, "APPROVE", {} as BookingActivationContext);
@@ -268,13 +546,13 @@ export class BookingService {
     });
 
     const customer = await this.crm.getById(tenant.id, booking.customerId);
-    await this.notifications.notify({
+    await this.notifications.notifyCustomer({
       tenantId: tenant.id,
-      customerId: customer.id,
-      channel: "WHATSAPP",
+      tenantSlug: tenant.slug,
+      customer,
       templateKey: "booking_approved_payment_link",
-      recipient: customer.phone,
       variables: { invoiceNumber: invoice.invoiceNumber, totalAmount: invoice.totalAmount.toString() },
+      link: { purpose: "INVOICE", next: `/portal/invoices/${invoice.id}` },
     });
     await this.audit.record({
       tenantId: tenant.id,
@@ -296,6 +574,251 @@ export class BookingService {
     return { booking, invoice };
   }
 
+  /** PRD v2 §5.1 stage 1 for term leases: APPROVE only; next step is KYC (or contract, if the tenant doesn't require KYC / it's already verified). */
+  private async approveTermLease(tenant: ResolvedTenant, bookingId: string, approverUserId: string) {
+    const booking = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const existing = await tx.booking.findUniqueOrThrow({ where: { id: bookingId } });
+      if (!existing.assetId) throw new BadRequestException("An asset must be assigned before a booking can be approved — offer the customer a unit first.");
+      const fsm = bookingFsmFor(existing.bookingModel);
+      const { to } = await fsm.fire(existing.status as never, "APPROVE", {} as BookingActivationContext);
+      const updated = await tx.booking.update({ where: { id: bookingId }, data: { status: to, approvedByUserId: approverUserId, reservedUntil: null } });
+      await tx.bookingEvent.create({
+        data: { tenantId: tenant.id, bookingId, fromStatus: existing.status, toStatus: to, actorType: "USER", actorId: approverUserId, reason: "Approved via console workbench" },
+      });
+      return updated;
+    });
+
+    const customer = await this.crm.getById(tenant.id, booking.customerId);
+    const kycRequired = Boolean(tenant.featureFlags.kyc_required) && customer.kycStatus !== "VERIFIED";
+    await this.notifications.notifyCustomer({
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      customer,
+      templateKey: "booking_approved",
+      variables: { customerName: customer.fullName ?? "Customer", bookingId: booking.id },
+      link: { purpose: kycRequired ? "KYC" : "BOOKING", next: kycRequired ? "/portal/kyc" : `/portal/bookings/${booking.id}` },
+    });
+    await this.audit.record({ tenantId: tenant.id, actorUserId: approverUserId, action: "BOOKING_APPROVED", entityType: "Booking", entityId: bookingId });
+    return { booking, invoice: null };
+  }
+
+  /** PRD v2 §5.1 stage 2: send (or re-send) the KYC request with a magic link straight into the upload page. */
+  async requestKyc(tenant: ResolvedTenant, bookingId: string, actorUserId: string) {
+    const booking = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const existing = await tx.booking.findUnique({ where: { id: bookingId }, include: { customer: true } });
+      if (!existing) throw new NotFoundException("Booking not found.");
+      if (existing.status !== "APPROVED") throw new ConflictException(`Booking is ${existing.status} — KYC is requested after approval.`);
+      if (existing.customer.kycStatus === "VERIFIED") throw new ConflictException("This customer is already KYC-verified — generate the contract instead.");
+      await tx.bookingEvent.create({
+        data: { tenantId: tenant.id, bookingId, fromStatus: existing.status, toStatus: existing.status, actorType: "USER", actorId: actorUserId, reason: existing.kycRequestedAt ? "KYC request re-sent" : "KYC requested" },
+      });
+      return tx.booking.update({ where: { id: bookingId }, data: { kycRequestedAt: new Date() }, include: { customer: true } });
+    });
+
+    await this.notifications.notifyCustomer({
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      customer: booking.customer,
+      templateKey: "kyc_requested",
+      variables: { customerName: booking.customer.fullName ?? "Customer", bookingId: booking.id },
+      link: { purpose: "KYC", next: "/portal/kyc" },
+    });
+    await this.audit.record({ tenantId: tenant.id, actorUserId, action: "KYC_REQUESTED", entityType: "Booking", entityId: bookingId });
+    return booking;
+  }
+
+  /**
+   * PRD v2 §5.1 stage 3: generate the rental agreement + the whole payment
+   * schedule (proforma issued now, later cycles SCHEDULED), render both
+   * PDFs, and send the customer a pay-now link. Requires KYC to be
+   * satisfied (or not required by the tenant) and a unit assigned.
+   */
+  async generateContractAndProforma(tenant: ResolvedTenant, bookingId: string, actorUserId: string) {
+    const blackoutMonths = resolveBlackoutMonths(tenant.featureFlags);
+    const leadDays = resolveInvoiceLeadDays(tenant.featureFlags);
+    const kycRequired = Boolean(tenant.featureFlags.kyc_required);
+
+    const result = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const booking = await tx.booking.findUnique({
+        where: { id: bookingId },
+        include: { customer: true, assetType: true, asset: true, location: true, invoices: { select: { id: true } } },
+      });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      if (booking.status !== "APPROVED") throw new ConflictException(`Booking is ${booking.status} — the contract is generated after approval.`);
+      if (!booking.termMonths) throw new BadRequestException("Only term leases use the contract + proforma step.");
+      if (!booking.assetId) throw new BadRequestException("Assign a unit before generating the contract.");
+      if (kycRequired && booking.customer.kycStatus !== "VERIFIED") {
+        throw new ConflictException("KYC is not verified yet — the contract can be generated once the customer's documents are approved.");
+      }
+      if (booking.invoices.length > 0) throw new ConflictException("This booking already has its payment schedule.");
+
+      const contract =
+        (await tx.contract.findFirst({ where: { bookingId }, orderBy: { createdAt: "desc" } })) ??
+        (await tx.contract.create({ data: { tenantId: tenant.id, bookingId, templateVersion: "v2-term" } }));
+
+      const { proforma, cycles } = await generateTermPaymentSchedule(
+        tx,
+        tenant.id,
+        tenant.slug,
+        tenant.isPkp,
+        {
+          id: booking.id,
+          bookingModel: booking.bookingModel,
+          customerId: booking.customerId,
+          startDate: booking.startDate,
+          endDate: booking.endDate,
+          anchorDay: booking.anchorDay,
+          rateTier: booking.rateTier,
+          termMonths: booking.termMonths,
+          priceSnapshot: booking.priceSnapshot,
+        },
+        { leadDays },
+      );
+
+      await tx.booking.update({ where: { id: bookingId }, data: { contractGeneratedAt: new Date() } });
+      await tx.bookingEvent.create({
+        data: { tenantId: tenant.id, bookingId, fromStatus: booking.status, toStatus: booking.status, actorType: "USER", actorId: actorUserId, reason: `Contract + proforma ${proforma.invoiceNumber} generated (${1 + cycles.length} payments)` },
+      });
+      return { booking, contract, proforma, cycles };
+    });
+
+    // PDFs are rendered outside the DB transaction (I/O to storage), then the keys are attached.
+    const pricing = result.booking.priceSnapshot as { basePrice?: number; adminFee?: number; currency?: string };
+    const schedule = [result.proforma, ...result.cycles].map((inv) => ({
+      index: inv.scheduleIndex ?? 0,
+      periodStart: inv.periodStart!,
+      periodEnd: inv.periodEnd!,
+      dueDate: inv.dueDate,
+      totalAmount: inv.totalAmount.toString(),
+    }));
+    const depositLine = result.proforma.lines.find((l) => l.lineType === "DEPOSIT");
+    const tenantRow = await this.prisma.raw.tenant.findUniqueOrThrow({ where: { id: tenant.id }, select: { legalName: true } });
+    const contractPdf = await this.documents.renderContract({
+      tenant: { name: tenant.name, legalName: tenantRow.legalName, slug: tenant.slug },
+      contractId: result.contract.id,
+      customer: result.booking.customer,
+      unit: { code: result.booking.asset?.code ?? null, assetTypeName: result.booking.assetType.name, locationName: result.booking.location?.name ?? null, locationAddress: result.booking.location?.address ?? null },
+      term: {
+        startDate: result.booking.startDate,
+        endDate: result.booking.endDate,
+        termMonths: result.booking.termMonths,
+        monthlyRent: String(pricing.basePrice ?? 0),
+        deposit: depositLine?.amount.toString() ?? "0",
+        adminFee: String(pricing.adminFee ?? 0),
+        currency: pricing.currency ?? "IDR",
+      },
+      schedule,
+      blackoutMonths,
+      generatedAt: new Date(),
+    });
+    const contractKey = await this.documents.store(`contracts/${tenant.id}/${bookingId}/agreement-${result.contract.id}.pdf`, contractPdf);
+    const proformaPdf = await this.documents.renderInvoice({
+      tenant: { name: tenant.name, legalName: tenantRow.legalName, isPkp: tenant.isPkp },
+      invoice: { ...result.proforma, subtotal: result.proforma.subtotal.toString(), taxAmount: result.proforma.taxAmount.toString(), totalAmount: result.proforma.totalAmount.toString(), lines: result.proforma.lines.map((l) => ({ description: l.description, quantity: l.quantity.toString(), unitPrice: l.unitPrice.toString(), amount: l.amount.toString(), lineType: l.lineType })) },
+      customer: result.booking.customer,
+      unit: { code: result.booking.asset?.code ?? null, assetTypeName: result.booking.assetType.name, locationName: result.booking.location?.name ?? null },
+    });
+    const proformaKey = await this.documents.store(`invoices/${tenant.id}/${result.proforma.id}/proforma.pdf`, proformaPdf);
+    await this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      await tx.contract.update({ where: { id: result.contract.id }, data: { unsignedDocumentUrl: contractKey } });
+      await tx.invoice.update({ where: { id: result.proforma.id }, data: { documentUrl: proformaKey } });
+    });
+
+    await this.notifications.notifyCustomer({
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      customer: result.booking.customer,
+      templateKey: "contract_proforma_ready",
+      variables: {
+        customerName: result.booking.customer.fullName ?? "Customer",
+        invoiceNumber: result.proforma.invoiceNumber,
+        totalAmount: result.proforma.totalAmount.toString(),
+        dueDate: formatDateId(result.proforma.dueDate),
+        assetCode: result.booking.asset?.code ?? "",
+      },
+      link: { purpose: "INVOICE", next: `/portal/invoices/${result.proforma.id}` },
+    });
+    await this.audit.record({
+      tenantId: tenant.id,
+      actorUserId,
+      action: "CONTRACT_PROFORMA_GENERATED",
+      entityType: "Booking",
+      entityId: bookingId,
+      metadata: { contractId: result.contract.id, proformaInvoiceId: result.proforma.id, scheduledInvoices: result.cycles.length },
+    });
+    // The tenant-facing "booking.approved" webhook (Session 20) carries invoice fields, so for
+    // term leases it fires here — the moment the invoice actually exists — not at approval.
+    await this.webhooks.dispatch(tenant, "booking.approved", {
+      bookingId: result.booking.id,
+      bookingModel: result.booking.bookingModel,
+      assetId: result.booking.assetId,
+      customerId: result.booking.customerId,
+      invoiceId: result.proforma.id,
+      invoiceNumber: result.proforma.invoiceNumber,
+      totalAmount: result.proforma.totalAmount.toString(),
+    });
+
+    return { contractId: result.contract.id, proformaInvoiceId: result.proforma.id, scheduledInvoices: result.cycles.length };
+  }
+
+  /** PRD v2 §5.1 waitlist column: staff offer a unit once capacity exists — re-checks availability, reserves, re-enters approval. */
+  async offerUnit(tenant: ResolvedTenant, bookingId: string, actorUserId: string, assetId?: string) {
+    const blackoutMonths = resolveBlackoutMonths(tenant.featureFlags);
+    const booking = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const existing = await tx.booking.findUnique({ where: { id: bookingId }, include: { customer: true } });
+      if (!existing) throw new NotFoundException("Booking not found.");
+      if (existing.status !== "WAITLISTED") throw new ConflictException(`Booking is ${existing.status}, not waitlisted.`);
+      if (!existing.termMonths) throw new BadRequestException("Only term leases can be waitlisted.");
+
+      const chosen =
+        assetId ??
+        (await findAvailableStorageAsset(
+          tx,
+          existing.assetTypeId,
+          existing.locationId ?? undefined,
+          { startDate: existing.startDate, termMonths: existing.termMonths },
+          { blackoutMonths, customerId: existing.customerId },
+        ));
+      if (!chosen) throw new ConflictException("Still no unit free for this customer's dates — try a different branch or date, or wait.");
+      const asset = await tx.asset.findUnique({ where: { id: chosen } });
+      if (!asset || asset.assetTypeId !== existing.assetTypeId) throw new BadRequestException("That unit is not of the requested type.");
+
+      const fsm = bookingFsmFor(existing.bookingModel);
+      const { to } = await fsm.fire(existing.status as never, "OFFER_UNIT", {} as BookingActivationContext);
+      const reservedUntil = new Date(Date.now() + DEFAULT_RESERVATION_TTL_HOURS * 60 * 60 * 1000);
+      const updated = await tx.booking.update({
+        where: { id: bookingId },
+        data: { status: to, assetId: chosen, reservedUntil },
+        include: { customer: true, asset: true, assetType: true, location: true },
+      });
+      await this.softReserveAsset(tx, chosen);
+      // The queue row leaves the queue with the booking. CONVERTED (not
+      // CANCELLED) — this entry got what it was waiting for. Remaining ARMED
+      // entries keep their positions; they are ordered relative to each other,
+      // and resequencing them here would renumber every customer's "#n" on
+      // every offer.
+      await tx.waitlistEntry.updateMany({
+        where: { bookingId, status: "ARMED" },
+        data: { status: "CONVERTED", firedAt: new Date() },
+      });
+      await tx.bookingEvent.create({
+        data: { tenantId: tenant.id, bookingId, fromStatus: existing.status, toStatus: to, actorType: "USER", actorId: actorUserId, reason: `Unit ${asset.code} offered from the waitlist` },
+      });
+      return updated;
+    });
+
+    await this.notifications.notifyCustomer({
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      customer: booking.customer,
+      templateKey: "waitlist_unit_offered",
+      variables: { customerName: booking.customer.fullName ?? "Customer", assetTypeName: booking.assetType.name, assetCode: booking.asset?.code ?? "", locationName: booking.location?.name ?? "" },
+      link: { purpose: "BOOKING", next: `/portal/bookings/${booking.id}` },
+    });
+    await this.audit.record({ tenantId: tenant.id, actorUserId, action: "WAITLIST_UNIT_OFFERED", entityType: "Booking", entityId: bookingId, metadata: { assetId: booking.assetId } });
+    return booking;
+  }
+
   async reject(tenant: ResolvedTenant, bookingId: string, approverUserId: string, reason: string) {
     const booking = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
       const existing = await tx.booking.findUnique({ where: { id: bookingId } });
@@ -310,7 +833,7 @@ export class BookingService {
       });
 
       if (existing.assetId) {
-        await tx.asset.update({ where: { id: existing.assetId }, data: { status: "AVAILABLE" } });
+        await this.releaseAsset(tx, existing.assetId, bookingId);
       }
       await tx.bookingEvent.create({
         data: {
@@ -327,12 +850,11 @@ export class BookingService {
     });
 
     const customer = await this.crm.getById(tenant.id, booking.customerId);
-    await this.notifications.notify({
+    await this.notifications.notifyCustomer({
       tenantId: tenant.id,
-      customerId: customer.id,
-      channel: "WHATSAPP",
+      tenantSlug: tenant.slug,
+      customer,
       templateKey: "booking_rejected",
-      recipient: customer.phone,
       variables: { reason },
     });
     await this.audit.record({
@@ -381,7 +903,7 @@ export class BookingService {
     // that's what excludes them from the recurring-invoice worker job's
     // `anchorDay: { not: null } }` cycle-generation query — they're a
     // one-invoice booking, not an indefinite lease. Only MONTHLY tier
-    // (the original indefinite lease) gets one.
+    // (the original indefinite lease, and v2 term leases) gets one.
     let anchorDay: number | null = null;
     if (booking.rateTier === "MONTHLY") {
       const priceSnapshot = booking.priceSnapshot as { prorationRule?: "ANCHOR_DATE" | "FULL_FIRST_PERIOD" };
@@ -390,7 +912,8 @@ export class BookingService {
     await tx.booking.update({ where: { id: booking.id }, data: { status: to, anchorDay } });
 
     if (booking.assetId) {
-      await assetFsm.fire("RESERVED", "MOVE_IN", undefined);
+      const asset = await tx.asset.findUniqueOrThrow({ where: { id: booking.assetId } });
+      if (asset.status === "RESERVED") await assetFsm.fire("RESERVED", "MOVE_IN", undefined);
       await tx.asset.update({ where: { id: booking.assetId }, data: { status: "OCCUPIED" } });
     }
 
@@ -686,20 +1209,28 @@ export class BookingService {
     });
   }
 
-  /** Self-service portal: give notice (PRD §7.1.4) — enforces nothing beyond a valid FSM transition in v1; notice-period minimums are a tenant-config TODO (docs/HANDOFF.md). */
+  /**
+   * Self-service portal: give notice (PRD §7.1.4).
+   *
+   * Term leases (PRD v2 P7): the remaining SCHEDULED cycles on/after the
+   * effective date are voided — never billed — and no prorated final
+   * invoice is generated ("no more proration"); already-issued invoices
+   * stand. The worker's term-lifecycle job moves the booking to MOVED_OUT
+   * on the effective date. Legacy indefinite leases keep the pre-v2
+   * prorated final settlement.
+   */
   async giveNotice(tenant: ResolvedTenant, bookingId: string, customerId: string, noticeEffectiveDate: Date) {
-    const { booking, finalInvoice } = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
+    const { booking, finalInvoice, voided } = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
       const existing = await tx.booking.findUnique({ where: { id: bookingId } });
       if (!existing) throw new NotFoundException("Booking not found.");
       if (existing.customerId !== customerId) throw new BadRequestException("This booking does not belong to you.");
-      if (FIXED_TERM_RATE_TIERS.has(existing.rateTier as RateTierValue)) {
-        // DAILY/WEEKLY bookings are a fixed term, not an indefinite lease
-        // — computeFinalSettlement's month-anchor proration doesn't apply
-        // (anchorDay is never set for these). They end automatically on
-        // their own endDate; renewal is a new booking, not a notice.
+      if (existing.rateTier === "DAILY" || existing.rateTier === "WEEKLY") {
         throw new BadRequestException(
           "This booking has a fixed end date and does not support giving notice. Contact support to modify it.",
         );
+      }
+      if (existing.termMonths && existing.endDate && noticeEffectiveDate.getTime() >= existing.endDate.getTime()) {
+        throw new BadRequestException("Your term already ends on or before that date — no notice is needed.");
       }
 
       const fsm = bookingFsmFor(existing.bookingModel);
@@ -709,6 +1240,14 @@ export class BookingService {
         where: { id: bookingId },
         data: { status: to, noticeGivenAt: new Date(), noticeEffectiveDate },
       });
+
+      if (existing.termMonths) {
+        const count = await voidScheduledInvoices(tx, bookingId, noticeEffectiveDate);
+        await tx.bookingEvent.create({
+          data: { tenantId: tenant.id, bookingId, fromStatus: existing.status, toStatus: to, actorType: "CUSTOMER", actorId: customerId, reason: `Termination notice given via portal — ${count} scheduled invoice(s) voided` },
+        });
+        return { booking: updated, finalInvoice: null, voided: count };
+      }
 
       const invoice = await this.finance.generateFinalSettlement(
         tx,
@@ -738,16 +1277,17 @@ export class BookingService {
         },
       });
 
-      return { booking: updated, finalInvoice: invoice };
+      return { booking: updated, finalInvoice: invoice, voided: 0 };
     });
 
-    await this.notifications.notify({
+    const customer = await this.crm.getById(tenant.id, customerId);
+    await this.notifications.notifyCustomer({
       tenantId: tenant.id,
-      customerId,
-      channel: "WHATSAPP",
+      tenantSlug: tenant.slug,
+      customer,
       templateKey: "notice_confirmed",
-      recipient: (await this.crm.getById(tenant.id, customerId)).phone,
-      variables: { noticeEffectiveDate: noticeEffectiveDate.toISOString(), finalInvoiceNumber: finalInvoice.invoiceNumber },
+      variables: { noticeEffectiveDate: formatDateId(noticeEffectiveDate), finalInvoiceNumber: finalInvoice?.invoiceNumber ?? "", voidedInvoices: String(voided) },
+      link: { purpose: "BOOKING", next: `/portal/bookings/${booking.id}` },
     });
 
     return { booking, finalInvoice };

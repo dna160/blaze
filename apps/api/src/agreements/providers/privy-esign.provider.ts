@@ -43,7 +43,7 @@ export class PrivyESignProvider implements ESignProvider {
       `${params.envelopeRef}.pdf`,
     );
     form.append("recipient_name", params.signerName);
-    form.append("recipient_phone", params.signerPhone);
+    if (params.signerPhone) form.append("recipient_phone", params.signerPhone);
     if (params.signerEmail) form.append("recipient_email", params.signerEmail);
 
     const response = await fetch(`${this.apiBase}/document/upload`, {

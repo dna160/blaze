@@ -4,7 +4,9 @@ import IORedis from "ioredis";
 import { deliverTenantWebhook, markWebhookDeliveryFailed, type WebhookDeliveryJobPayload } from "./jobs/deliver-tenant-webhook.job.js";
 import { runDunningLadder } from "./jobs/dunning-ladder.job.js";
 import { runGenerateRecurringInvoices } from "./jobs/generate-recurring-invoices.job.js";
+import { runIssueScheduledInvoices } from "./jobs/issue-scheduled-invoices.job.js";
 import { runLedgerBalanceCheck } from "./jobs/ledger-balance-check.job.js";
+import { runTermLifecycle } from "./jobs/term-lifecycle.job.js";
 import { runPlatformBilling } from "./jobs/platform-billing.job.js";
 import { runRenewalOffers } from "./jobs/renewal-offer.job.js";
 import { runRenewalTimeouts } from "./jobs/renewal-timeout.job.js";
@@ -12,6 +14,10 @@ import { runSyncOtaCalendars } from "./jobs/sync-ota-calendars.job.js";
 import { runWaitlistExpiry } from "./jobs/waitlist-expiry.job.js";
 
 export const INVOICE_GENERATION_QUEUE = "invoice-generation";
+/** PRD v2 §8 — issues the SCHEDULED cycles of term payment schedules on their issue date. */
+export const SCHEDULED_INVOICE_ISSUE_QUEUE = "scheduled-invoice-issue";
+/** PRD v2 P6 — expires stale requests, ends terms, applies notice dates. */
+export const TERM_LIFECYCLE_QUEUE = "term-lifecycle";
 export const DUNNING_LADDER_QUEUE = "dunning-ladder";
 export const LEDGER_BALANCE_CHECK_QUEUE = "ledger-balance-check";
 export const RENEWAL_OFFER_QUEUE = "renewal-offer";
@@ -48,6 +54,21 @@ export async function scheduleRepeatableJobs(connection: IORedis): Promise<void>
   const waitlistExpiryQueue = new Queue(WAITLIST_EXPIRY_QUEUE, { connection });
   const otaSyncQueue = new Queue(OTA_CALENDAR_SYNC_QUEUE, { connection });
   const platformBillingQueue = new Queue(PLATFORM_BILLING_QUEUE, { connection });
+  const scheduledIssueQueue = new Queue(SCHEDULED_INVOICE_ISSUE_QUEUE, { connection });
+  const termLifecycleQueue = new Queue(TERM_LIFECYCLE_QUEUE, { connection });
+
+  // PRD v2: run the term clock before the invoice issuer so a lease that
+  // ended today doesn't get a cycle issued in the same tick.
+  await termLifecycleQueue.add(
+    "tick",
+    {},
+    { repeat: { pattern: process.env.TERM_LIFECYCLE_CRON ?? "30 0 * * *" }, jobId: "term-lifecycle-daily" },
+  );
+  await scheduledIssueQueue.add(
+    "tick",
+    {},
+    { repeat: { pattern: process.env.SCHEDULED_INVOICE_ISSUE_CRON ?? "45 0 * * *" }, jobId: "scheduled-invoice-issue-daily" },
+  );
 
   await invoiceQueue.add(
     "tick",
@@ -100,6 +121,8 @@ export async function scheduleRepeatableJobs(connection: IORedis): Promise<void>
   );
 
   await invoiceQueue.close();
+  await scheduledIssueQueue.close();
+  await termLifecycleQueue.close();
   await dunningQueue.close();
   await ledgerQueue.close();
   await renewalOfferQueue.close();
@@ -122,6 +145,8 @@ export function startWorkers(connection: IORedis): Worker[] {
     );
 
   const invoiceWorker = simpleWorker(INVOICE_GENERATION_QUEUE, runGenerateRecurringInvoices);
+  const scheduledIssueWorker = simpleWorker(SCHEDULED_INVOICE_ISSUE_QUEUE, runIssueScheduledInvoices);
+  const termLifecycleWorker = simpleWorker(TERM_LIFECYCLE_QUEUE, runTermLifecycle);
   const dunningWorker = simpleWorker(DUNNING_LADDER_QUEUE, runDunningLadder);
   const ledgerWorker = simpleWorker(LEDGER_BALANCE_CHECK_QUEUE, runLedgerBalanceCheck);
   const renewalOfferWorker = simpleWorker(RENEWAL_OFFER_QUEUE, runRenewalOffers);
@@ -151,6 +176,8 @@ export function startWorkers(connection: IORedis): Worker[] {
 
   const workers = [
     invoiceWorker,
+    scheduledIssueWorker,
+    termLifecycleWorker,
     dunningWorker,
     ledgerWorker,
     renewalOfferWorker,
