@@ -7,8 +7,27 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "infra/docker/api.Dockerfile"
+# The API's schema lives in packages/database, so a deploy must be triggered by
+# changes there too — most importantly a new migration. The dashboard default
+# was "/apps/api/**" alone, which means adding a migration would NOT redeploy
+# the API and the schema would fall behind the code again. That is precisely
+# the drift that took production down on 2026-08-23. infra/docker is included
+# because it builds the image.
+watchPatterns = ["/apps/api/**", "/packages/**", "/infra/docker/**", "/pnpm-lock.yaml"]
 
 [deploy]
+# Declared here rather than left to the dashboard. The release step
+# (apps/api/start.sh) runs `prisma migrate deploy` and then the API; leaving the
+# start command as dashboard-only configuration is how it ended up pointing at a
+# path that turbo prune does not ship, failing three deploys in a row with
+# "can't open 'scripts/start-api.sh'". Config-as-code makes it reviewable.
+#
+# Railway also supports `preDeployCommand`, which is the more idiomatic home for
+# migrations (it runs once per deploy, before any new container serves traffic,
+# and its failure fails the deploy). Worth moving to once there is a deploy to
+# test it against — the wrapper below is equivalent at one replica and fails
+# just as loudly, since the script exits non-zero if migrations fail.
+startCommand = "sh apps/api/start.sh"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"

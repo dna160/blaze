@@ -4,6 +4,12 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "infra/docker/console.Dockerfile"
+# Deploy triggers. Railway's default for a monorepo service is its own app
+# directory alone, which is wrong here: the console compiles @rentos/contracts into its bundle, so a contracts
+# change must rebuild it. Leaving it narrow is how a
+# shared-package change silently fails to reach a service — the drift class
+# that took production down on 2026-08-23.
+watchPatterns = ["/apps/console/**", "/packages/**", "/infra/docker/**", "/pnpm-lock.yaml"]
 
 [deploy]
 healthcheckPath = "/login"

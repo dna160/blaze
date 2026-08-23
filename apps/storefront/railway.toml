@@ -4,6 +4,12 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "infra/docker/storefront.Dockerfile"
+# Deploy triggers. Railway's default for a monorepo service is its own app
+# directory alone, which is wrong here: the storefront compiles @rentos/contracts into its bundle, so a contracts
+# change must rebuild it. Leaving it narrow is how a
+# shared-package change silently fails to reach a service — the drift class
+# that took production down on 2026-08-23.
+watchPatterns = ["/apps/storefront/**", "/packages/**", "/infra/docker/**", "/pnpm-lock.yaml"]
 
 [deploy]
 healthcheckPath = "/"
@@ -18,3 +24,9 @@ restartPolicyMaxRetries = 5
 # Attach your custom domain (or Railway's generated one) to this service —
 # that Host is what apps/api's TenantMiddleware ultimately resolves the
 # tenant from in production, once you move off NEXT_PUBLIC_DEV_TENANT_SLUG.
+#
+# NOTE on rebuilds after an env-var change: NEXT_PUBLIC_* are inlined at BUILD
+# time, so changing NEXT_PUBLIC_DEV_TENANT_SLUG in Railway does NOT take effect
+# until this service builds again. No commit changes when you edit a variable,
+# so watchPatterns will never fire for it — trigger a redeploy by hand after
+# changing one.
