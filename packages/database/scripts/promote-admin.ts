@@ -11,8 +11,13 @@
  *
  * Run via the API's release step (see apps/api/start.sh):
  *   PROMOTE_ADMIN_EMAIL=you@example.com
- *   PROMOTE_ADMIN_TENANT=<tenant slug>     # optional when there is exactly one
+ *   PROMOTE_ADMIN_TENANT=<slug[,slug...]>  # optional when there is exactly one
  *   PROMOTE_ADMIN_PASSWORD=<password>      # optional; sets/resets it
+ *
+ * A comma-separated list grants on each named tenant. Console login is scoped
+ * to one tenant — it looks the user up by (tenantId, email) — so an operator
+ * who does not know which tenant a given console build points at can name the
+ * candidates rather than deploy once per guess.
  *
  * Runs as the migrator/owner role (DATABASE_URL), like the seed, so it does not
  * go through withTenantContext.
@@ -34,50 +39,54 @@ async function main() {
   const tenants = await prisma.tenant.findMany({ select: { id: true, slug: true, name: true }, orderBy: { slug: "asc" } });
   if (tenants.length === 0) throw new Error("No tenants exist — run the seed first.");
 
-  let tenant;
-  if (slug) {
-    tenant = tenants.find((t) => t.slug === slug);
-    if (!tenant) {
-      throw new Error(`No tenant with slug "${slug}". Available: ${tenants.map((t) => t.slug).join(", ")}`);
+  const requested = slug ? slug.split(",").map((v) => v.trim()).filter(Boolean) : [];
+  let targets;
+  if (requested.length > 0) {
+    const missing = requested.filter((r) => !tenants.some((t) => t.slug === r));
+    if (missing.length > 0) {
+      throw new Error(`No tenant with slug ${missing.map((m) => `"${m}"`).join(", ")}. Available: ${tenants.map((t) => t.slug).join(", ")}`);
     }
+    targets = tenants.filter((t) => requested.includes(t.slug));
   } else if (tenants.length === 1) {
-    tenant = tenants[0]!;
+    targets = tenants;
   } else {
     // Refuse to guess: picking the wrong tenant silently grants admin on the
     // wrong branch, which is worse than making the caller name it.
     throw new Error(`PROMOTE_ADMIN_TENANT is required — ${tenants.length} tenants exist: ${tenants.map((t) => t.slug).join(", ")}`);
   }
 
-  const existing = await prisma.user.findUnique({ where: { tenantId_email: { tenantId: tenant.id, email } } });
   const passwordHash = password ? await hash(password, SALT_ROUNDS) : undefined;
 
-  if (!existing && !passwordHash) {
-    throw new Error(`User ${email} does not exist on ${tenant.slug}; PROMOTE_ADMIN_PASSWORD is required to create it.`);
+  for (const tenant of targets) {
+    const existing = await prisma.user.findUnique({ where: { tenantId_email: { tenantId: tenant.id, email } } });
+    if (!existing && !passwordHash) {
+      throw new Error(`User ${email} does not exist on ${tenant.slug}; PROMOTE_ADMIN_PASSWORD is required to create it.`);
+    }
+
+    const user = existing
+      ? await prisma.user.update({
+          where: { id: existing.id },
+          data: { status: "ACTIVE", ...(passwordHash ? { passwordHash } : {}) },
+        })
+      : await prisma.user.create({
+          data: { tenantId: tenant.id, email, displayName: email.split("@")[0]!, passwordHash: passwordHash!, status: "ACTIVE" },
+        });
+
+    // ORGANIZATION scope with an empty tenantIds reaches every branch in the org —
+    // the "Super Admin (HO)" cell of docs/RBAC.md §2. tenantIds only narrows a
+    // TENANT-scoped role.
+    await prisma.userRole.upsert({
+      where: { userId_role_scope: { userId: user.id, role: BaseRole.ADMIN, scope: RoleScope.ORGANIZATION } },
+      update: { tenantIds: [] },
+      create: { userId: user.id, role: BaseRole.ADMIN, scope: RoleScope.ORGANIZATION, tenantIds: [] },
+    });
+
+    // eslint-disable-next-line no-console
+    console.log(
+      `Granted ADMIN x ORGANIZATION to ${email} on tenant "${tenant.slug}" (${tenant.name})` +
+        `${existing ? "" : " — user created"}${passwordHash ? ", password set" : ""}.`,
+    );
   }
-
-  const user = existing
-    ? await prisma.user.update({
-        where: { id: existing.id },
-        data: { status: "ACTIVE", ...(passwordHash ? { passwordHash } : {}) },
-      })
-    : await prisma.user.create({
-        data: { tenantId: tenant.id, email, displayName: email.split("@")[0]!, passwordHash: passwordHash!, status: "ACTIVE" },
-      });
-
-  // ORGANIZATION scope with an empty tenantIds reaches every branch in the org —
-  // the "Super Admin (HO)" cell of docs/RBAC.md §2. tenantIds only narrows a
-  // TENANT-scoped role.
-  await prisma.userRole.upsert({
-    where: { userId_role_scope: { userId: user.id, role: BaseRole.ADMIN, scope: RoleScope.ORGANIZATION } },
-    update: { tenantIds: [] },
-    create: { userId: user.id, role: BaseRole.ADMIN, scope: RoleScope.ORGANIZATION, tenantIds: [] },
-  });
-
-  // eslint-disable-next-line no-console
-  console.log(
-    `Granted ADMIN x ORGANIZATION to ${email} on tenant "${tenant.slug}" (${tenant.name})` +
-      `${existing ? "" : " — user created"}${passwordHash ? ", password set" : ""}.`,
-  );
 }
 
 main()
