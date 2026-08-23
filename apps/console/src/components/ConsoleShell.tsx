@@ -22,7 +22,10 @@ const NAV = [
 ];
 
 /** Admin-only nav (manage_users). BUILD-SPEC C2 user & role administration. */
-const ADMIN_NAV = [{ href: "/settings/users", label: "Users & Roles" }];
+const ADMIN_NAV = [
+  { href: "/settings/users", label: "Users & Roles" },
+  { href: "/settings/messaging", label: "Messaging" },
+];
 
 /** Console shell — sidebar nav + top bar, shown once staff is authenticated. */
 export function ConsoleShell({ children }: { children: ReactNode }) {

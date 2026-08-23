@@ -1,4 +1,4 @@
-import { findOrCreateCustomerAccessToken, getPrismaClient, withTenantContext } from "@rentos/database";
+import { findOrCreateCustomerAccessToken, getPrismaClient, resolveMessagingConfig, withTenantContext } from "@rentos/database";
 import { buildMagicLinkUrl, renderMessage } from "@rentos/domain";
 
 /**
@@ -42,7 +42,7 @@ export async function notify(params: {
     const providerRef =
       channel === "EMAIL"
         ? await sendEmail(params.recipient, params.templateKey, params.variables)
-        : await sendWhatsApp(params.templateKey, params.recipient, params.variables);
+        : await sendWhatsApp(params.tenantId, params.templateKey, params.recipient, params.variables);
     await withTenantContext(prisma, params.tenantId, (tx) =>
       tx.notification.update({ where: { id: record.id }, data: { status: "SENT", providerRef, sentAt: new Date() } }),
     );
@@ -95,20 +95,27 @@ async function storefrontBaseUrl(tenantId: string, tenantSlug: string): Promise<
   return "http://localhost:3000";
 }
 
-async function sendWhatsApp(templateKey: string, to: string, variables: Record<string, string>): Promise<string> {
-  if (process.env.MESSAGING_PROVIDER !== "whatsapp_cloud") {
+/**
+ * The worker's own WhatsApp sender — same wire format as apps/api's
+ * WhatsAppCloudMessagingProvider, but resolved per tenant: since #40 the
+ * number belongs to the organization and is set from the console, so a cron
+ * job sending a dunning reminder must look the credentials up for the tenant
+ * it is currently iterating, not read one pair of env vars for the whole
+ * process. resolveMessagingConfig falls back to those env vars, then to
+ * console_log, so a half-onboarded org still produces an auditable log line
+ * instead of throwing inside a batch and skipping the rest of the tenants.
+ */
+async function sendWhatsApp(tenantId: string, templateKey: string, to: string, variables: Record<string, string>): Promise<string> {
+  const config = await resolveMessagingConfig(getPrismaClient(), tenantId);
+  if (config.provider !== "whatsapp_cloud" || !config.whatsapp) {
     console.log(`[WA -> ${to}] ${templateKey} ${JSON.stringify(variables)}`);
     return `console-${Date.now()}`;
   }
 
-  const token = process.env.WHATSAPP_CLOUD_TOKEN;
-  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-  if (!token || !phoneNumberId) {
-    throw new Error("WHATSAPP_CLOUD_TOKEN / WHATSAPP_PHONE_NUMBER_ID are not configured.");
-  }
+  const { accessToken, phoneNumberId } = config.whatsapp;
   const response = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       messaging_product: "whatsapp",
       to,

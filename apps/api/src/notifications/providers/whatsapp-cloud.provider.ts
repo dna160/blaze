@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import type { ResolvedMessagingConfig } from "@rentos/database";
 
 import type {
   MessagingProvider,
@@ -7,12 +8,12 @@ import type {
 } from "../messaging-provider.interface.js";
 
 /**
- * Meta WhatsApp Cloud API adapter — coded against the real API shape but
- * requires WHATSAPP_CLOUD_TOKEN / WHATSAPP_PHONE_NUMBER_ID to actually
- * send (PRD §7.1.5, §11 MessagingProvider port). Selecting this over
- * ConsoleLogMessagingProvider is a single env var
- * (MESSAGING_PROVIDER=whatsapp_cloud, see notifications.module.ts) — no
- * code change in any caller.
+ * Meta WhatsApp Cloud API adapter (PRD §7.1.5, §11 MessagingProvider port).
+ *
+ * Stateless: the phone number and access token come from the resolved config
+ * for the organization this message belongs to (#40), not from the process
+ * environment, so one deployment serves many orgs' numbers and the console's
+ * "send a test" can pass credentials that are not saved yet.
  */
 @Injectable()
 export class WhatsAppCloudMessagingProvider implements MessagingProvider {
@@ -20,19 +21,18 @@ export class WhatsAppCloudMessagingProvider implements MessagingProvider {
   private readonly logger = new Logger("MessagingProvider");
   private readonly apiBase = "https://graph.facebook.com/v21.0";
 
-  async send(params: SendTemplateMessageParams): Promise<SendTemplateMessageResult> {
-    const token = process.env.WHATSAPP_CLOUD_TOKEN;
-    const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-    if (!token || !phoneNumberId) {
+  async send(params: SendTemplateMessageParams, config: ResolvedMessagingConfig): Promise<SendTemplateMessageResult> {
+    const creds = config.whatsapp;
+    if (!creds?.accessToken || !creds.phoneNumberId) {
       throw new Error(
-        "WHATSAPP_CLOUD_TOKEN / WHATSAPP_PHONE_NUMBER_ID are not configured — " +
-          "set MESSAGING_PROVIDER=console_log for local dev, or provide real credentials.",
+        "WhatsApp Cloud is selected but no phone number ID / access token is configured — " +
+          "set them in Console → Settings → Messaging, or switch the provider back to console_log.",
       );
     }
 
-    const response = await fetch(`${this.apiBase}/${phoneNumberId}/messages`, {
+    const response = await fetch(`${this.apiBase}/${creds.phoneNumberId}/messages`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${creds.accessToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         messaging_product: "whatsapp",
         to: params.to,
@@ -52,8 +52,9 @@ export class WhatsAppCloudMessagingProvider implements MessagingProvider {
 
     if (!response.ok) {
       const body = await response.text();
+      // Meta echoes the request back on some errors; never log the auth header.
       this.logger.error(`WhatsApp Cloud API error ${response.status}: ${body}`);
-      throw new Error(`WhatsApp Cloud API error ${response.status}`);
+      throw new Error(`WhatsApp Cloud API error ${response.status}: ${body.slice(0, 300)}`);
     }
 
     const json = (await response.json()) as { messages?: Array<{ id: string }> };

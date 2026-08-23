@@ -48,3 +48,18 @@ export { computePooledAvailableCount, findAvailablePooledAsset, type PooledAsset
 export { findAvailableNonPooledAsset } from "./ota-blocking.js";
 export { generateIcalFeed, parseIcalEvents, type IcalEvent } from "./ical.js";
 export { fireNextWaitlistEntry } from "./waitlist.js";
+export {
+  resolveMessagingConfig,
+  getMessagingConfigView,
+  saveMessagingConfig,
+  readStoredConfig,
+  messagingConfigKey,
+  sealSecret,
+  openSecret,
+  secretsMatch,
+  type MessagingProviderName,
+  type ResolvedMessagingConfig,
+  type MessagingConfigView,
+  type MessagingConfigUpdate,
+  type WhatsAppCloudCredentials,
+} from "./messaging-config.js";

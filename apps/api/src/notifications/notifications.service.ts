@@ -1,11 +1,11 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { findOrCreateCustomerAccessToken } from "@rentos/database";
+import { findOrCreateCustomerAccessToken, resolveMessagingConfig, type ResolvedMessagingConfig } from "@rentos/database";
 import { buildMagicLinkUrl, renderMessage } from "@rentos/domain";
 
 import { PrismaService } from "../prisma/prisma.service.js";
 
 import { EMAIL_PROVIDER, type EmailProvider } from "./email-provider.interface.js";
-import { MESSAGING_PROVIDER, type MessagingProvider } from "./messaging-provider.interface.js";
+import { MESSAGING_PROVIDERS, type MessagingProviderRegistry } from "./messaging-provider.interface.js";
 
 export interface NotifyParams {
   tenantId: string;
@@ -54,7 +54,7 @@ export class NotificationsService {
 
   constructor(
     private readonly prisma: PrismaService,
-    @Inject(MESSAGING_PROVIDER) private readonly provider: MessagingProvider,
+    @Inject(MESSAGING_PROVIDERS) private readonly providers: MessagingProviderRegistry,
     @Inject(EMAIL_PROVIDER) private readonly email: EmailProvider,
   ) {}
 
@@ -96,7 +96,11 @@ export class NotificationsService {
       const result =
         params.channel === "EMAIL"
           ? await this.email.send({ to: params.recipient, ...renderMessage(params.templateKey, params.variables) })
-          : await this.provider.send({ to: params.recipient, templateKey: params.templateKey, variables: params.variables });
+          : await this.sendWhatsApp(params.tenantId, {
+              to: params.recipient,
+              templateKey: params.templateKey,
+              variables: params.variables,
+            });
       await this.prisma.runInTenantContext(params.tenantId, (tx) =>
         tx.notification.update({
           where: { id: record.id },
@@ -112,6 +116,22 @@ export class NotificationsService {
         }),
       );
     }
+  }
+
+  /** Resolves the org's configured adapter (#40) and sends through it. */
+  private async sendWhatsApp(tenantId: string, params: { to: string; templateKey: string; variables: Record<string, string> }) {
+    const config = await resolveMessagingConfig(this.prisma.raw, tenantId);
+    return this.providers[config.provider].send(params, config);
+  }
+
+  /**
+   * Console "send a test message" — sends through an EXPLICIT config rather
+   * than the saved one, so staff can prove a credential works before saving
+   * it. Deliberately not persisted as a Notification: it belongs to no
+   * customer and would pollute the message trail.
+   */
+  async sendTestMessage(config: ResolvedMessagingConfig, to: string, templateKey: string, variables: Record<string, string>) {
+    return this.providers[config.provider].send({ to, templateKey, variables }, config);
   }
 
   /** Public so other modules (e.g. the console "copy KYC link" action) can mint a link without sending a message. */

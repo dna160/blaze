@@ -1,8 +1,23 @@
 import { BadRequestException, ForbiddenException, Injectable } from "@nestjs/common";
-import { withOrgReadContext } from "@rentos/database";
+import {
+  getMessagingConfigView,
+  messagingConfigKey,
+  resolveMessagingConfig,
+  saveMessagingConfig,
+  withOrgReadContext,
+  type ResolvedMessagingConfig,
+} from "@rentos/database";
 import { can, hasOrganizationScope } from "@rentos/domain";
 
+import { NotificationsService } from "../notifications/notifications.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
+import type {
+  MessagingConfigResponse,
+  TestMessagingRequest,
+  TestMessagingResponse,
+  UpdateMessagingConfigRequest,
+} from "@rentos/contracts";
+
 import type { AuthenticatedUser } from "../common/types/express-request.js";
 
 /**
@@ -14,7 +29,10 @@ import type { AuthenticatedUser } from "../common/types/express-request.js";
  */
 @Injectable()
 export class OrganizationService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   private assertOrgScope(user: AuthenticatedUser): string {
     if (!user.organizationId || !hasOrganizationScope(user.roleAssignments)) {
@@ -110,5 +128,67 @@ export class OrganizationService {
       },
     });
     return { id: tenant.id, slug: tenant.slug, name: tenant.name, organizationId: orgId };
+  }
+
+  // ---------------------------------------------------------------------------
+  // #40 — messaging setup. One WhatsApp number per organization, all branches.
+  // ---------------------------------------------------------------------------
+
+  private assertOrgId(user: AuthenticatedUser): string {
+    if (!user.organizationId) throw new ForbiddenException("No organization on session.");
+    return user.organizationId;
+  }
+
+  async getMessagingConfig(user: AuthenticatedUser): Promise<MessagingConfigResponse> {
+    const view = await getMessagingConfigView(this.prisma.raw, this.assertOrgId(user));
+    return { ...view, canStoreSecrets: messagingConfigKey() !== null };
+  }
+
+  async updateMessagingConfig(user: AuthenticatedUser, body: UpdateMessagingConfigRequest): Promise<MessagingConfigResponse> {
+    const orgId = this.assertOrgId(user);
+    if (body.accessToken && messagingConfigKey() === null) {
+      // Refuse rather than store it readable. Better a clear error now than a
+      // credential sitting in plaintext in a JSON column nobody re-audits.
+      throw new BadRequestException(
+        "MESSAGING_CONFIG_KEY is not set on the API, so an access token cannot be stored securely. " +
+          "Generate one with `openssl rand -hex 32`, set it, and restart before saving a token.",
+      );
+    }
+    const current = await getMessagingConfigView(this.prisma.raw, orgId);
+    if (body.provider === "whatsapp_cloud" && !body.accessToken && !current.hasAccessToken) {
+      throw new BadRequestException("An access token is required the first time WhatsApp Cloud is enabled.");
+    }
+    const view = await saveMessagingConfig(this.prisma.raw, orgId, body, user.id);
+    return { ...view, canStoreSecrets: true };
+  }
+
+  /**
+   * Prove a credential works before committing to it. When the caller supplies
+   * a token/number they are used as-is (nothing is written), otherwise the
+   * saved config for the user's active branch is resolved. Failures come back
+   * as `{ ok: false, error }` rather than a 500 — a bad credential is an
+   * expected answer here, not a server fault.
+   */
+  async testMessaging(user: AuthenticatedUser, body: TestMessagingRequest): Promise<TestMessagingResponse> {
+    this.assertOrgId(user);
+    if (!user.tenantId) throw new ForbiddenException("A branch session is required to send a test.");
+
+    let config: ResolvedMessagingConfig;
+    if (body.accessToken && body.phoneNumberId) {
+      config = {
+        provider: "whatsapp_cloud",
+        whatsapp: { accessToken: body.accessToken, phoneNumberId: body.phoneNumberId },
+        source: "organization",
+      };
+    } else {
+      config = await resolveMessagingConfig(this.prisma.raw, user.tenantId);
+    }
+
+    try {
+      const result = await this.notifications.sendTestMessage(config, body.to, "otp_code", { code: "123456" });
+      return { ok: true, provider: config.provider, providerRef: result.providerRef, error: null };
+    } catch (err) {
+      return { ok: false, provider: config.provider, providerRef: null, error: (err as Error).message };
+    }
   }
 }
