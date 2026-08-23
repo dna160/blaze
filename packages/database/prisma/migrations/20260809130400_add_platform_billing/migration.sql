@@ -1,14 +1,33 @@
--- CreateEnum
-CREATE TYPE "BillingPlan" AS ENUM ('TRIAL', 'STARTER', 'GROWTH', 'SCALE');
+-- IDEMPOTENT. This migration was originally named with a 202607xx timestamp and
+-- was applied to at least one live database under that name (production, hand-
+-- migrated in July when Phase 4 was verified). It was later re-timestamped to
+-- sort AFTER 20260809120200_harden_tenant_isolation_nullctx, because that
+-- migration rewrites every tenant_isolation policy and would otherwise strip the
+-- platform-admin branch this set adds to `users`.
+--
+-- Renaming makes Prisma treat it as brand new, so it re-runs against databases
+-- that already have these objects — which is exactly what happened on
+-- 2026-08-23: `Database error code 42710` (duplicate_object), and P3009 blocking
+-- every later migration. Every statement below is therefore guarded so that
+-- re-running is a no-op. Do not add an unguarded CREATE to this file.
 
 -- CreateEnum
-CREATE TYPE "PlatformInvoiceStatus" AS ENUM ('ISSUED', 'PAID');
+DO $$ BEGIN
+  CREATE TYPE "BillingPlan" AS ENUM ('TRIAL', 'STARTER', 'GROWTH', 'SCALE');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- CreateEnum
+DO $$ BEGIN
+  CREATE TYPE "PlatformInvoiceStatus" AS ENUM ('ISSUED', 'PAID');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- AlterTable
-ALTER TABLE "tenants" ADD COLUMN     "billing_plan" "BillingPlan" NOT NULL DEFAULT 'TRIAL';
+ALTER TABLE "tenants" ADD COLUMN IF NOT EXISTS "billing_plan" "BillingPlan" NOT NULL DEFAULT 'TRIAL';
 
 -- CreateTable
-CREATE TABLE "platform_invoices" (
+CREATE TABLE IF NOT EXISTS "platform_invoices" (
     "id" UUID NOT NULL,
     "tenant_id" UUID NOT NULL,
     "billing_plan" "BillingPlan" NOT NULL,
@@ -28,13 +47,16 @@ CREATE TABLE "platform_invoices" (
 );
 
 -- CreateIndex
-CREATE INDEX "platform_invoices_tenant_id_idx" ON "platform_invoices"("tenant_id");
+CREATE INDEX IF NOT EXISTS "platform_invoices_tenant_id_idx" ON "platform_invoices"("tenant_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "platform_invoices_tenant_id_period_year_period_month_key" ON "platform_invoices"("tenant_id", "period_year", "period_month");
+CREATE UNIQUE INDEX IF NOT EXISTS "platform_invoices_tenant_id_period_year_period_month_key" ON "platform_invoices"("tenant_id", "period_year", "period_month");
 
 -- AddForeignKey
-ALTER TABLE "platform_invoices" ADD CONSTRAINT "platform_invoices_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "platform_invoices" ADD CONSTRAINT "platform_invoices_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Row-Level Security — same shape as every migration since enable_rls:
 -- new tables aren't retroactively covered by that migration, so each one
@@ -44,6 +66,7 @@ ALTER TABLE "platform_invoices" ADD CONSTRAINT "platform_invoices_tenant_id_fkey
 -- the standard policy shape applies unchanged.
 ALTER TABLE "platform_invoices" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "platform_invoices" FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON "platform_invoices";
 CREATE POLICY tenant_isolation ON "platform_invoices"
   USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
   WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
@@ -85,7 +108,8 @@ CREATE POLICY tenant_isolation ON "platform_invoices"
 -- than NULL on a pooled connection that has ever set it, and ''::uuid raises
 -- instead of matching nothing. nullif keeps unset and reverted both NULL, so
 -- forgetting tenant scope stays structurally a zero-rows result.
-DROP POLICY tenant_isolation ON "users";
+DROP POLICY IF EXISTS tenant_isolation ON "users";
+DROP POLICY IF EXISTS tenant_isolation ON "users";
 CREATE POLICY tenant_isolation ON "users"
   USING (
     tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid

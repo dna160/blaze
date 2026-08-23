@@ -1,8 +1,24 @@
+-- IDEMPOTENT. This migration was originally named with a 202607xx timestamp and
+-- was applied to at least one live database under that name (production, hand-
+-- migrated in July when Phase 4 was verified). It was later re-timestamped to
+-- sort AFTER 20260809120200_harden_tenant_isolation_nullctx, because that
+-- migration rewrites every tenant_isolation policy and would otherwise strip the
+-- platform-admin branch this set adds to `users`.
+--
+-- Renaming makes Prisma treat it as brand new, so it re-runs against databases
+-- that already have these objects — which is exactly what happened on
+-- 2026-08-23: `Database error code 42710` (duplicate_object), and P3009 blocking
+-- every later migration. Every statement below is therefore guarded so that
+-- re-running is a no-op. Do not add an unguarded CREATE to this file.
+
 -- CreateEnum
-CREATE TYPE "WebhookDeliveryStatus" AS ENUM ('PENDING', 'SUCCEEDED', 'FAILED');
+DO $$ BEGIN
+  CREATE TYPE "WebhookDeliveryStatus" AS ENUM ('PENDING', 'SUCCEEDED', 'FAILED');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateTable
-CREATE TABLE "tenant_api_keys" (
+CREATE TABLE IF NOT EXISTS "tenant_api_keys" (
     "id" UUID NOT NULL,
     "tenant_id" UUID NOT NULL,
     "label" TEXT NOT NULL,
@@ -17,7 +33,7 @@ CREATE TABLE "tenant_api_keys" (
 );
 
 -- CreateTable
-CREATE TABLE "tenant_webhook_subscriptions" (
+CREATE TABLE IF NOT EXISTS "tenant_webhook_subscriptions" (
     "id" UUID NOT NULL,
     "tenant_id" UUID NOT NULL,
     "url" TEXT NOT NULL,
@@ -32,7 +48,7 @@ CREATE TABLE "tenant_webhook_subscriptions" (
 );
 
 -- CreateTable
-CREATE TABLE "tenant_webhook_deliveries" (
+CREATE TABLE IF NOT EXISTS "tenant_webhook_deliveries" (
     "id" UUID NOT NULL,
     "tenant_id" UUID NOT NULL,
     "subscription_id" UUID NOT NULL,
@@ -49,28 +65,37 @@ CREATE TABLE "tenant_webhook_deliveries" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "tenant_api_keys_key_hash_key" ON "tenant_api_keys"("key_hash");
+CREATE UNIQUE INDEX IF NOT EXISTS "tenant_api_keys_key_hash_key" ON "tenant_api_keys"("key_hash");
 
 -- CreateIndex
-CREATE INDEX "tenant_api_keys_tenant_id_idx" ON "tenant_api_keys"("tenant_id");
+CREATE INDEX IF NOT EXISTS "tenant_api_keys_tenant_id_idx" ON "tenant_api_keys"("tenant_id");
 
 -- CreateIndex
-CREATE INDEX "tenant_webhook_subscriptions_tenant_id_idx" ON "tenant_webhook_subscriptions"("tenant_id");
+CREATE INDEX IF NOT EXISTS "tenant_webhook_subscriptions_tenant_id_idx" ON "tenant_webhook_subscriptions"("tenant_id");
 
 -- CreateIndex
-CREATE INDEX "tenant_webhook_deliveries_tenant_id_idx" ON "tenant_webhook_deliveries"("tenant_id");
+CREATE INDEX IF NOT EXISTS "tenant_webhook_deliveries_tenant_id_idx" ON "tenant_webhook_deliveries"("tenant_id");
 
 -- CreateIndex
-CREATE INDEX "tenant_webhook_deliveries_subscription_id_idx" ON "tenant_webhook_deliveries"("subscription_id");
+CREATE INDEX IF NOT EXISTS "tenant_webhook_deliveries_subscription_id_idx" ON "tenant_webhook_deliveries"("subscription_id");
 
 -- AddForeignKey
-ALTER TABLE "tenant_api_keys" ADD CONSTRAINT "tenant_api_keys_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "tenant_api_keys" ADD CONSTRAINT "tenant_api_keys_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "tenant_webhook_subscriptions" ADD CONSTRAINT "tenant_webhook_subscriptions_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "tenant_webhook_subscriptions" ADD CONSTRAINT "tenant_webhook_subscriptions_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "tenant_webhook_deliveries" ADD CONSTRAINT "tenant_webhook_deliveries_subscription_id_fkey" FOREIGN KEY ("subscription_id") REFERENCES "tenant_webhook_subscriptions"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "tenant_webhook_deliveries" ADD CONSTRAINT "tenant_webhook_deliveries_subscription_id_fkey" FOREIGN KEY ("subscription_id") REFERENCES "tenant_webhook_subscriptions"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Row-Level Security — same shape as every migration since enable_rls: new
 -- tables aren't retroactively covered by that migration, so each one
@@ -82,18 +107,21 @@ ALTER TABLE "tenant_webhook_deliveries" ADD CONSTRAINT "tenant_webhook_deliverie
 -- never as an unscoped cross-tenant scan. See docs/HANDOFF.md Session 20.
 ALTER TABLE "tenant_api_keys" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "tenant_api_keys" FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON "tenant_api_keys";
 CREATE POLICY tenant_isolation ON "tenant_api_keys"
   USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
   WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
 
 ALTER TABLE "tenant_webhook_subscriptions" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "tenant_webhook_subscriptions" FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON "tenant_webhook_subscriptions";
 CREATE POLICY tenant_isolation ON "tenant_webhook_subscriptions"
   USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
   WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
 
 ALTER TABLE "tenant_webhook_deliveries" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "tenant_webhook_deliveries" FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON "tenant_webhook_deliveries";
 CREATE POLICY tenant_isolation ON "tenant_webhook_deliveries"
   USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)
   WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);

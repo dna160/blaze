@@ -35,6 +35,24 @@ if [ -z "$DATABASE_URL" ]; then
   exit 1
 fi
 
+# Recovery hatch for a migration left in the FAILED state.
+#
+# When a migration errors part-way, Prisma records it as failed and every later
+# `migrate deploy` aborts with P3009 rather than retrying — deliberately, since
+# blindly re-running a half-applied migration can corrupt data. Clearing that
+# marker is a one-off human decision, so it is an explicit env var rather than
+# anything automatic.
+#
+# ONLY safe when the named migration is idempotent (all the 20260809130* ones
+# are — see their headers) or you have confirmed it left nothing behind.
+# `--rolled-back` tells Prisma the migration did not take effect, so it is
+# retried on this same run. Set it for one deploy, then remove it.
+if [ -n "$RESOLVE_ROLLED_BACK" ]; then
+  echo "[entrypoint] Marking '$RESOLVE_ROLLED_BACK' as rolled back so it can be retried…"
+  pnpm --filter @rentos/database exec prisma migrate resolve --rolled-back "$RESOLVE_ROLLED_BACK"
+  echo "[entrypoint] Resolved. Remove RESOLVE_ROLLED_BACK now."
+fi
+
 echo "[entrypoint] Applying database migrations…"
 # Not backgrounded and not tolerated on failure: a half-migrated schema serving
 # traffic is worse than a failed deploy. Railway keeps the previous deployment
