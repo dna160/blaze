@@ -1,6 +1,14 @@
 #!/bin/sh
 # Release step for apps/api: bring the schema up to date, then start the API.
 #
+# Lives in scripts/, not infra/docker/, because it is NOT Docker-specific. The
+# Railway services are built with RAILPACK and started from a dashboard Start
+# Command, which overrides the Dockerfile CMD — so a release step that only
+# existed in the Dockerfile would silently never run (it didn't: deploy
+# d6011038 on 2026-08-23 started Nest directly and left the schema untouched).
+# Point the service's Start Command at this script and it runs under either
+# builder:  sh scripts/start-api.sh
+#
 # Why this exists: until now nothing applied migrations in production. The
 # repo's only migrate path was `pnpm db:migrate`, run by hand, so the schema
 # and the deployed code drifted apart silently — on 2026-08-23 the API shipped

@@ -2,7 +2,7 @@
   "name": "rentos",
   "version": "0.1.0",
   "private": true,
-  "description": "RentOS — multi-tenant rental operations platform",
+  "description": "RentOS \u2014 multi-tenant rental operations platform",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=22.0.0",
@@ -12,6 +12,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
+    "start:api": "sh scripts/start-api.sh",
     "lint": "turbo run lint",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",

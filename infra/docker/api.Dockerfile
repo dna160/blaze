@@ -48,11 +48,11 @@ COPY --from=builder /app .
 # why the two roles must stay separate. The runtime image already carries the
 # Prisma CLI and prisma/migrations because this stage copies the full installed
 # workspace from `builder`, devDependencies included.
-COPY --chmod=0755 infra/docker/api-entrypoint.sh /usr/local/bin/api-entrypoint.sh
+COPY --chmod=0755 scripts/start-api.sh /usr/local/bin/start-api.sh
 
 USER rentos
 EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD wget -qO- http://127.0.0.1:4000/api/health || exit 1
 
-CMD ["/usr/local/bin/api-entrypoint.sh"]
+CMD ["/usr/local/bin/start-api.sh"]
