@@ -43,13 +43,23 @@ RUN addgroup -S rentos && adduser -S rentos -G rentos
 
 COPY --from=builder /app .
 
-# The release step lives in apps/api/start.sh and therefore arrives with the
-# pruned workspace above — no extra COPY, and the same path works whether it is
-# invoked as this CMD or as a Railway Start Command. It runs `prisma migrate
-# deploy` (owner role, DATABASE_URL) before starting the API (rentos_app,
-# DATABASE_URL_APP); see the script for why those roles must stay separate. The
-# Prisma CLI and prisma/migrations are present because this stage copies the
-# full installed workspace from `builder`, devDependencies included.
+# The release step lives in apps/api/start.sh and arrives with the pruned
+# workspace above. It runs `prisma migrate deploy` (owner role, DATABASE_URL)
+# before starting the API (rentos_app, DATABASE_URL_APP); see the script for why
+# those roles must stay separate. The Prisma CLI and prisma/migrations are
+# present because this stage copies the full installed workspace from `builder`,
+# devDependencies included.
+#
+# The second copy is a compatibility path, not a duplicate source of truth.
+# `turbo prune --docker` keeps only workspace packages, so a repo-root scripts/
+# directory does not survive into the image — yet scripts/start-api.sh is the
+# obvious place to look for a start script, and a Railway Start Command pointing
+# there fails with "can't open" (deploys a963e6c3 and beb9c127 both died that
+# way). Placing the same file at both paths means the container starts correctly
+# whichever one the service is configured with. apps/api/start.sh is the file
+# that is edited; this is a copy of it made at build time.
+COPY --chmod=0755 apps/api/start.sh scripts/start-api.sh
+
 USER rentos
 EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
