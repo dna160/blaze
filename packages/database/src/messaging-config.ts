@@ -142,6 +142,24 @@ async function organizationIdForTenant(prisma: PrismaClient, tenantId: string): 
   return tenant?.organizationId ?? null;
 }
 
+/**
+ * Which organization owns a WhatsApp number, by the phone number ID Meta puts
+ * in every webhook payload. Meta allows one callback URL per app, not per
+ * number, so an inbound delivery receipt arrives with no tenant in the path and
+ * this is the only thing that identifies the sender. `organizations` sits
+ * outside RLS, so this is a plain read.
+ */
+export async function findOrganizationIdByPhoneNumberId(
+  prisma: PrismaClient,
+  phoneNumberId: string,
+): Promise<string | null> {
+  const org = await prisma.organization.findFirst({
+    where: { messagingConfig: { path: ["phoneNumberId"], equals: phoneNumberId } },
+    select: { id: true },
+  });
+  return org?.id ?? null;
+}
+
 export async function readStoredConfig(prisma: PrismaClient, organizationId: string): Promise<StoredConfig> {
   const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { messagingConfig: true } });
   return ((org?.messagingConfig ?? {}) as StoredConfig) ?? {};

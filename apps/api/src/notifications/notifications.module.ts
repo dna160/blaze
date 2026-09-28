@@ -1,12 +1,16 @@
 import { Module } from "@nestjs/common";
 
+import { PrismaModule } from "../prisma/prisma.module.js";
+
 import { EMAIL_PROVIDER } from "./email-provider.interface.js";
 import { MESSAGING_PROVIDERS, type MessagingProviderRegistry } from "./messaging-provider.interface.js";
+import { NotificationsController } from "./notifications.controller.js";
 import { NotificationsService } from "./notifications.service.js";
 import { ConsoleLogEmailProvider } from "./providers/console-log-email.provider.js";
 import { ConsoleLogMessagingProvider } from "./providers/console-log.provider.js";
 import { ResendEmailProvider } from "./providers/resend-email.provider.js";
 import { WhatsAppCloudMessagingProvider } from "./providers/whatsapp-cloud.provider.js";
+import { WhatsAppWebhookService } from "./whatsapp-webhook.service.js";
 
 /**
  * The WhatsApp adapter is no longer chosen at boot: #40 puts the number on the
@@ -16,7 +20,10 @@ import { WhatsAppCloudMessagingProvider } from "./providers/whatsapp-cloud.provi
  * Both default to console_log so local dev needs zero credentials.
  */
 @Module({
+  imports: [PrismaModule],
+  controllers: [NotificationsController],
   providers: [
+    WhatsAppWebhookService,
     ConsoleLogMessagingProvider,
     WhatsAppCloudMessagingProvider,
     ConsoleLogEmailProvider,

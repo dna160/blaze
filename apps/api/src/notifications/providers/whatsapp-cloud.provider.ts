@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import type { ResolvedMessagingConfig } from "@rentos/database";
+import { buildWhatsAppTemplatePayload } from "@rentos/domain";
 
 import type {
   MessagingProvider,
@@ -30,24 +31,15 @@ export class WhatsAppCloudMessagingProvider implements MessagingProvider {
       );
     }
 
+    // Wire format comes from the shared registry, not from this call's variable
+    // insertion order — see packages/domain/src/comms/whatsapp-templates.ts for
+    // why that distinction is a correctness one.
+    const payload = buildWhatsAppTemplatePayload(params.templateKey, params.to, params.variables);
+
     const response = await fetch(`${this.apiBase}/${creds.phoneNumberId}/messages`, {
       method: "POST",
       headers: { Authorization: `Bearer ${creds.accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to: params.to,
-        type: "template",
-        template: {
-          name: params.templateKey,
-          language: { code: "id" },
-          components: [
-            {
-              type: "body",
-              parameters: Object.values(params.variables).map((text) => ({ type: "text", text })),
-            },
-          ],
-        },
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {

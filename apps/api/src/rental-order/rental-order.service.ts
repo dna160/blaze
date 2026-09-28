@@ -162,7 +162,7 @@ export class RentalOrderService {
       tenantSlug: tenant.slug,
       customer: result.customer,
       templateKey: "renewal_offer_h14",
-      variables: { orderId: id },
+      variables: {},
       link: { purpose: "BOOKING", next: `/portal/bookings/${id}` },
     });
     return { status: "RENEWAL_OFFERED" };

@@ -137,6 +137,7 @@ export async function runDunningLadder(): Promise<void> {
             invoiceId: invoice.id,
             invoiceNumber: invoice.invoiceNumber,
             totalAmount: invoice.totalAmount.toString(),
+            daysUntilDue: String(daysUntilDue),
           });
         }
 
@@ -157,6 +158,7 @@ export async function runDunningLadder(): Promise<void> {
           await remindBoth(tx, tenant, invoice.id, templateKey, customer, {
             invoiceId: invoice.id,
             invoiceNumber: invoice.invoiceNumber,
+            totalAmount: invoice.totalAmount.toString(),
             daysOverdue: String(daysOverdue),
           });
         }

@@ -50,6 +50,7 @@ export { generateIcalFeed, parseIcalEvents, type IcalEvent } from "./ical.js";
 export { fireNextWaitlistEntry } from "./waitlist.js";
 export {
   resolveMessagingConfig,
+  findOrganizationIdByPhoneNumberId,
   getMessagingConfigView,
   saveMessagingConfig,
   readStoredConfig,

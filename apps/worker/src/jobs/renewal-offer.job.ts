@@ -60,7 +60,7 @@ export async function runRenewalOffers(): Promise<void> {
         tenantSlug: tenant.slug,
         customer: n.customer,
         templateKey: "renewal_offer_h14",
-        variables: { orderId: n.orderId },
+        variables: {},
         link: { purpose: "BOOKING", next: `/portal/bookings/${n.orderId}` },
       });
     }

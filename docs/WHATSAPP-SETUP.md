@@ -1,0 +1,194 @@
+# WhatsApp Business setup — plug and play
+
+Everything needed to take RentOS from `console_log` to real WhatsApp, in order.
+Meta business verification is the long-lead item and is assumed done.
+
+The messages themselves are defined in
+[`packages/domain/src/comms/whatsapp-templates.ts`](../packages/domain/src/comms/whatsapp-templates.ts)
+— one registry that both senders and the registration script read, so what Meta
+holds and what we send cannot drift.
+
+---
+
+## 0. What you need from Meta
+
+From **developers.facebook.com → your app → WhatsApp → API Setup**:
+
+| Value | Where | Used as |
+|---|---|---|
+| Phone number ID | API Setup, under the sending number | saved in the console |
+| WhatsApp Business Account ID (WABA) | API Setup | saved in the console, and `--waba` for the template script |
+| Permanent access token | Business Settings → System Users → generate token, scopes `whatsapp_business_messaging` + `whatsapp_business_management` | saved in the console |
+| App Secret | App Settings → Basic → App Secret | `WHATSAPP_APP_SECRET` |
+
+Use a **System User** token, not a user token: user tokens expire and take
+messaging down with them.
+
+---
+
+## 1. Environment variables
+
+Two secrets you generate yourself:
+
+```bash
+openssl rand -hex 32     # MESSAGING_CONFIG_KEY  (exactly 64 hex chars)
+openssl rand -hex 24     # WHATSAPP_WEBHOOK_VERIFY_TOKEN (any opaque string)
+```
+
+### `@rentos/api`
+
+| Variable | Value | Why |
+|---|---|---|
+| `MESSAGING_CONFIG_KEY` | the 64-hex key | AES-256-GCM key sealing the access token at rest. **Without it the console refuses to save a token** (`canStoreSecrets: false`). |
+| `STOREFRONT_BASE_URL` | e.g. `https://rentosstorefront-production.up.railway.app` | Every message carries a magic link. Links fall back to the tenant's primary domain, then this, then `http://localhost:3000` — so if this is unset and no real domain is registered, **every link you send is dead**. |
+| `WHATSAPP_WEBHOOK_VERIFY_TOKEN` | the opaque string | Meta's GET handshake when you save the callback URL. |
+| `WHATSAPP_APP_SECRET` | App Secret | Verifies `X-Hub-Signature-256` on every delivery. Unset = webhook rejects everything, by design. |
+
+### `@rentos/worker`
+
+Dunning reminders, renewal offers and term-end notices are sent by the worker, in
+its own process — it needs its own copy or those messages silently degrade to a
+log line.
+
+| Variable | Value |
+|---|---|
+| `MESSAGING_CONFIG_KEY` | **the same value as the API** |
+| `STOREFRONT_BASE_URL` | same as the API |
+
+> `MESSAGING_PROVIDER` is only the fallback for a deployment with no console
+> config. Leave it at `console_log`; the per-organization setting overrides it.
+
+---
+
+## 2. Save the credentials in the console
+
+**Console → Settings → Messaging** (admin only):
+
+1. Provider → **WhatsApp Cloud**
+2. Phone number ID, WhatsApp Business Account ID, access token
+3. **Send a test message** to your own number *before* saving — the test uses the
+   credentials in the form, not the stored ones, so it proves them first
+4. Save
+
+Credentials live on the **Organization**, so one number serves every branch. The
+screen only ever shows the last 4 characters of a saved token.
+
+---
+
+## 3. Register the templates
+
+WhatsApp will not send free-form business-initiated messages — every one must be
+a template Meta has approved. There are 22.
+
+```bash
+pnpm wa:templates print     # markdown, for entering by hand
+pnpm wa:templates push      # create every missing one via the Graph API
+pnpm wa:templates status    # what Meta holds; exits non-zero if any is missing or unapproved
+```
+
+`push` and `status` need:
+
+```bash
+export WHATSAPP_BUSINESS_ACCOUNT_ID=...   # or --waba <id>
+export WHATSAPP_CLOUD_TOKEN=...           # or --token <token>
+```
+
+`push` never edits or deletes: a name that already exists is reported as
+`exists` and left alone. Approval is Meta's call, usually minutes. Re-run
+`status` until it is clean — a template that is missing or unapproved means those
+messages fail at send time.
+
+### About the parameters
+
+Template bodies are positional (`{{1}}`, `{{2}}`…). The registry declares each
+template's parameters **by name, in order**, and the senders fill them by name —
+so the wire format is a property of the registry, not of whichever call site
+happens to be sending. `packages/domain/test/whatsapp-callsites.test.ts` asserts
+every call site still satisfies its template; if you add a message, add a case
+there too.
+
+Two consequences worth knowing:
+
+- A missing or blank parameter **throws** rather than sending a message with a
+  hole in it. The failure lands on the `notifications` row (`status = FAILED`,
+  `error` naming the parameter).
+- Newlines, tabs and runs of spaces inside a parameter are collapsed, because
+  Meta rejects them. Customer names and rejection reasons are free text.
+
+`otp_code` is Meta's **AUTHENTICATION** category: Meta owns the body wording, and
+the code is echoed into a copy-code button. Sending a passcode through a UTILITY
+template gets the template rejected or the number flagged.
+
+---
+
+## 4. Point Meta's webhook at the API
+
+Without this, a notification goes to `SENT` the moment Meta *accepts* the call and
+never moves again — so a message Meta accepted and then failed to deliver reads as
+delivered forever.
+
+In **your app → WhatsApp → Configuration → Webhook**:
+
+- **Callback URL**: `https://<your-api-domain>/api/notifications/whatsapp/webhook`
+  (production today: `https://rentosapi-production.up.railway.app/api/notifications/whatsapp/webhook`)
+- **Verify token**: the `WHATSAPP_WEBHOOK_VERIFY_TOKEN` you set
+- **Subscribe to**: `messages` (covers both delivery statuses and inbound replies)
+
+One callback URL serves every organization: Meta allows one per app, and the
+payload's `phone_number_id` is what identifies the sender, so routing happens
+from the payload rather than from the URL.
+
+What it does:
+
+| Meta says | `notifications.status` becomes |
+|---|---|
+| `delivered` | `DELIVERED` |
+| `read` | `READ` |
+| `failed` | `FAILED`, with Meta's error code and detail in `error` |
+| an inbound reply | a new row, `templateKey = inbound_message`, `status = RECEIVED` |
+
+Status never goes backwards — Meta does not guarantee ordering, so a late
+`delivered` cannot undo a `read` that already landed. Redelivered inbound
+messages are deduplicated on Meta's message id. Inbound replies are attributed to
+a customer by phone number where one matches, and recorded unattributed where
+none does; **surfacing them in the console is not built yet** — this guarantees
+they are not lost.
+
+---
+
+## 5. Verify
+
+```bash
+pnpm wa:templates status                       # every template APPROVED
+```
+
+Then, in the product:
+
+1. Console → Settings → Messaging → **Send a test message** → arrives on your phone
+2. Submit a storefront booking with your own number → `booking_received` arrives,
+   and its link opens the portal **signed in** (that link is the magic link; if it
+   points at `localhost`, `STOREFRONT_BASE_URL` is unset)
+3. Check `notifications` — the row should reach `DELIVERED`, then `READ` once you
+   open it. Still `SENT` after a minute means the webhook is not wired
+4. Reply to the message on WhatsApp → a row appears with
+   `template_key = 'inbound_message'`
+
+```sql
+select template_key, status, error, created_at
+from notifications order by created_at desc limit 10;
+```
+
+---
+
+## Notes
+
+- **24-hour window.** Business-initiated messages must be templates, which is why
+  everything here is one. Free-form replies are only allowed within 24 hours of
+  the customer's last message.
+- **One number per organization.** Per-branch numbers would mean moving
+  `messagingConfig` from `Organization` to `Tenant`.
+- **Egress.** Sending requires outbound access to `graph.facebook.com`.
+- **Rotating the token** is a console save, not a deploy. Rotating
+  `MESSAGING_CONFIG_KEY` orphans the sealed token — messages fall back to the
+  environment or to `console_log` rather than failing, so re-save the credentials
+  in the console after any key change.

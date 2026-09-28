@@ -24,6 +24,12 @@ const TEMPLATES: Record<string, (vars: Vars) => RenderedMessage> = {
       `Halo ${v(vars, "customerName", "Pelanggan")}, permintaan unit ${v(vars, "assetTypeName", "")} di ${v(vars, "locationName", "")} untuk ${v(vars, "termMonths", "")} bulan mulai ${v(vars, "startDate", "")} sudah kami terima. Tim kami akan mengonfirmasi segera.\n` +
       `Hi ${v(vars, "customerName", "there")}, we received your request. We'll confirm shortly.\n\nLihat status / Track it: ${v(vars, "link")}`,
   }),
+  booking_received_basic: (vars) => ({
+    subject: "Permintaan booking diterima / Booking request received",
+    text:
+      `Halo ${v(vars, "customerName", "Pelanggan")}, permintaan booking Anda untuk ${v(vars, "startDate", "")} sudah kami terima. Tim kami akan mengonfirmasi segera.\n` +
+      `Hi ${v(vars, "customerName", "there")}, we received your booking request for ${v(vars, "startDate", "")} and will confirm shortly.\n\nLihat status / Track it: ${v(vars, "link")}`,
+  }),
   booking_waitlisted: (vars) => ({
     subject: "Anda masuk daftar tunggu / You're on the waitlist",
     text:
@@ -41,6 +47,18 @@ const TEMPLATES: Record<string, (vars: Vars) => RenderedMessage> = {
     text:
       `Halo ${v(vars, "customerName", "Pelanggan")}, masa sewa unit ${v(vars, "assetTypeName", "")} ${v(vars, "assetCode", "")} berakhir pada ${v(vars, "endDate", "")}. Ingin memperpanjang? Pilih 1, 3, 6, atau 12 bulan melalui tautan di bawah. Tanpa konfirmasi, sewa berakhir pada tanggal tersebut.\n` +
       `Your rental ends on ${v(vars, "endDate", "")}. To continue, pick a new 1/3/6/12-month term using the link below. Without a confirmation the rental simply ends on that date.\n\nPerpanjang / Renew: ${v(vars, "link")}`,
+  }),
+  /**
+   * The RentalOrder (C4) renewal path. Distinct from term_renewal_offer_h14
+   * above, which is the PRD v2 term-lease gate and can quote the unit; this one
+   * only knows that a term is ending. Without an entry here it rendered as a
+   * `key: value` dump.
+   */
+  renewal_offer_h14: (vars) => ({
+    subject: "Masa sewa berakhir 14 hari lagi / Your rental ends in 14 days",
+    text:
+      `Halo ${v(vars, "customerName", "Pelanggan")}, masa sewa Anda akan berakhir dalam 14 hari. Ingin memperpanjang? Konfirmasi melalui tautan di bawah. Tanpa konfirmasi, sewa berakhir pada tanggal tersebut.\n` +
+      `Your rental ends in 14 days. To continue, confirm using the link below. Without a confirmation the rental simply ends on that date.\n\nPerpanjang / Renew: ${v(vars, "link")}`,
   }),
   waitlist_unit_offered: (vars) => ({
     subject: "Unit tersedia untuk Anda / A unit is available for you",
@@ -108,6 +126,18 @@ export function renderMessage(templateKey: string, variables: Vars): RenderedMes
   const template = TEMPLATES[templateKey];
   if (template) return template(variables);
   // Dunning reminders are keyed dynamically (invoice_reminder_h7, invoice_overdue_d3...).
+  // #42's branch-admin leg. Checked BEFORE the customer prefixes below, which
+  // would otherwise match `invoice_reminder_h7_admin` and tell staff to pay.
+  if (templateKey.endsWith("_admin")) {
+    const days = v(variables, "daysOverdue") || v(variables, "daysUntilDue");
+    const overdue = templateKey.startsWith("invoice_overdue_");
+    return {
+      subject: `${overdue ? "Invoice terlambat / Overdue" : "Pengingat internal / Internal reminder"} — ${v(variables, "invoiceNumber", "")}`,
+      text: overdue
+        ? `Perhatian: invoice ${v(variables, "invoiceNumber", "")} sudah lewat jatuh tempo ${days} hari.\nAttention: invoice ${v(variables, "invoiceNumber", "")} is ${days} day(s) overdue. Check the console for details.`
+        : `Pengingat internal: invoice ${v(variables, "invoiceNumber", "")} sebesar Rp ${v(variables, "totalAmount", "")} jatuh tempo dalam ${days} hari.\nInternal reminder: invoice ${v(variables, "invoiceNumber", "")} (Rp ${v(variables, "totalAmount", "")}) is due in ${days} day(s). Check the console for details.`,
+    };
+  }
   if (templateKey.startsWith("invoice_reminder_")) {
     return {
       subject: `Pengingat pembayaran / Payment reminder — ${v(variables, "invoiceNumber", "")}`,

@@ -69,7 +69,11 @@ export class NotificationsService {
     }
 
     const variables = { ...params.variables };
-    if (!variables.customerName && customer.fullName) variables.customerName = customer.fullName;
+    // Always set, never conditional: a WhatsApp template's parameter count is
+    // fixed at registration, so letting this depend on whether the customer
+    // gave a name made the same template send 3 parameters for one customer and
+    // 4 for the next — one of which Meta always rejects.
+    if (!variables.customerName) variables.customerName = customer.fullName ?? "Pelanggan";
     if (params.link) {
       variables.link = await this.mintMagicLink(params.tenantId, params.tenantSlug, customer.id, params.link.purpose, params.link.next);
     }

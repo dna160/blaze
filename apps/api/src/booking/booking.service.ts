@@ -209,7 +209,6 @@ export class BookingService {
       templateKey: waitlistPosition ? "booking_waitlisted" : "booking_received",
       variables: {
         customerName: customer.fullName ?? "Customer",
-        bookingId: booking.id,
         assetTypeName: context.assetTypeName,
         locationName: context.locationName ?? "",
         startDate: formatDateId(booking.startDate),
@@ -306,8 +305,8 @@ export class BookingService {
       tenantId: tenant.id,
       tenantSlug: tenant.slug,
       customer,
-      templateKey: "booking_received",
-      variables: { customerName: customer.fullName ?? "Customer", bookingId: booking.id, startDate: formatDateId(booking.startDate) },
+      templateKey: "booking_received_basic",
+      variables: { customerName: customer.fullName ?? "Customer", startDate: formatDateId(booking.startDate) },
       link: { purpose: "BOOKING", next: `/portal/bookings/${booking.id}` },
     });
 
@@ -605,7 +604,7 @@ export class BookingService {
       tenantSlug: tenant.slug,
       customer,
       templateKey: "booking_approved",
-      variables: { customerName: customer.fullName ?? "Customer", bookingId: booking.id },
+      variables: { customerName: customer.fullName ?? "Customer" },
       link: { purpose: kycRequired ? "KYC" : "BOOKING", next: kycRequired ? "/portal/kyc" : `/portal/bookings/${booking.id}` },
     });
     await this.audit.record({ tenantId: tenant.id, actorUserId: approverUserId, action: "BOOKING_APPROVED", entityType: "Booking", entityId: bookingId });
@@ -630,7 +629,7 @@ export class BookingService {
       tenantSlug: tenant.slug,
       customer: booking.customer,
       templateKey: "kyc_requested",
-      variables: { customerName: booking.customer.fullName ?? "Customer", bookingId: booking.id },
+      variables: { customerName: booking.customer.fullName ?? "Customer" },
       link: { purpose: "KYC", next: "/portal/kyc" },
     });
     await this.audit.record({ tenantId: tenant.id, actorUserId, action: "KYC_REQUESTED", entityType: "Booking", entityId: bookingId });

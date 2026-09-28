@@ -139,3 +139,14 @@ export {
   type PriceComposition,
 } from "./pricing/discounts.js";
 export { renderMessage, buildMagicLinkUrl, type RenderedMessage } from "./comms/templates.js";
+export {
+  allWhatsAppTemplates,
+  buildWhatsAppTemplatePayload,
+  resolveWhatsAppTemplate,
+  sanitizeTemplateParam,
+  WhatsAppTemplateError,
+  WHATSAPP_TEMPLATE_LANGUAGE,
+  type MetaTemplateCategory,
+  type WhatsAppSendPayload,
+  type WhatsAppTemplateSpec,
+} from "./comms/whatsapp-templates.js";

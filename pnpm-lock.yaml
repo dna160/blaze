@@ -299,6 +299,9 @@ importers:
       '@rentos/config':
         specifier: workspace:*
         version: link:../config
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

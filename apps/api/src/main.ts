@@ -9,6 +9,10 @@ import { AppModule } from "./app.module.js";
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: ["error", "warn", "log"],
+    // Meta signs the WhatsApp webhook with an HMAC over the exact bytes it
+    // sent; re-serialising the parsed body would not reproduce them. This keeps
+    // normal JSON parsing and additionally exposes req.rawBody.
+    rawBody: true,
   });
 
   app.enableCors({ origin: (process.env.CORS_ORIGINS ?? "*").split(","), credentials: true });

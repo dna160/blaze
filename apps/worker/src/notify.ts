@@ -1,5 +1,5 @@
 import { findOrCreateCustomerAccessToken, getPrismaClient, resolveMessagingConfig, withTenantContext } from "@rentos/database";
-import { buildMagicLinkUrl, renderMessage } from "@rentos/domain";
+import { buildMagicLinkUrl, buildWhatsAppTemplatePayload, renderMessage } from "@rentos/domain";
 
 /**
  * Standalone counterpart to apps/api's NotificationsService — same
@@ -74,7 +74,7 @@ export async function notifyCustomer(params: {
     return;
   }
   const variables = { ...params.variables };
-  if (!variables.customerName && customer.fullName) variables.customerName = customer.fullName;
+  if (!variables.customerName) variables.customerName = customer.fullName ?? "Pelanggan";
   if (params.link) {
     const prisma = getPrismaClient();
     const { token } = await withTenantContext(prisma, params.tenantId, (tx) =>
@@ -113,21 +113,14 @@ async function sendWhatsApp(tenantId: string, templateKey: string, to: string, v
   }
 
   const { accessToken, phoneNumberId } = config.whatsapp;
+  // Same shared registry as apps/api's provider — one wire format, two senders.
+  const payload = buildWhatsAppTemplatePayload(templateKey, to, variables);
   const response = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      messaging_product: "whatsapp",
-      to,
-      type: "template",
-      template: {
-        name: templateKey,
-        language: { code: "id" },
-        components: [{ type: "body", parameters: Object.values(variables).map((text) => ({ type: "text", text })) }],
-      },
-    }),
+    body: JSON.stringify(payload),
   });
-  if (!response.ok) throw new Error(`WhatsApp Cloud API error ${response.status}`);
+  if (!response.ok) throw new Error(`WhatsApp Cloud API error ${response.status}: ${(await response.text()).slice(0, 300)}`);
   const json = (await response.json()) as { messages?: Array<{ id: string }> };
   return json.messages?.[0]?.id ?? "unknown";
 }
