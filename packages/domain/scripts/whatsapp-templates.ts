@@ -4,6 +4,7 @@
  *   pnpm wa:templates print     # markdown table, for pasting into Meta by hand
  *   pnpm wa:templates push      # create every missing template via the Graph API
  *   pnpm wa:templates status    # what Meta currently holds, and what's missing
+ *   pnpm wa:templates diagnose  # is this the right WABA, and may this token manage it?
  *
  * `push` and `status` need, either as env vars or as `--waba`/`--token`:
  *   WHATSAPP_BUSINESS_ACCOUNT_ID   the WABA id (Meta Business Settings -> WhatsApp Accounts)
@@ -263,6 +264,72 @@ async function status(argv: string[]): Promise<void> {
   if (missing || notApproved) process.exitCode = 1;
 }
 
+/**
+ * Answer "is this the right WABA, and may this token manage it?" without
+ * guessing. Three questions, each of which has sent setups wrong:
+ *
+ *   - does the WABA id resolve at all, and to what name
+ *   - does it own the phone number the console is configured with
+ *   - which WABAs does this token actually hold management rights on
+ *
+ * The last comes from debug_token's granular_scopes, which lists the asset ids
+ * each permission was granted against — the one place Meta states plainly what
+ * a token may manage, rather than making you infer it from a refusal.
+ */
+async function diagnose(argv: string[]): Promise<void> {
+  const { waba, token } = credentials(argv);
+  const phoneArg = argv.indexOf("--phone");
+  const phoneNumberId = phoneArg >= 0 ? argv[phoneArg + 1] : process.env.WHATSAPP_PHONE_NUMBER_ID;
+
+  const get = async (path: string) => {
+    const res = await fetch(`${GRAPH}/${path}${path.includes("?") ? "&" : "?"}access_token=${encodeURIComponent(token)}`);
+    return { ok: res.ok, status: res.status, json: await graphJson(res) };
+  };
+
+  console.log(`WABA ${waba}`);
+  const acct = await get(`${waba}?fields=id,name,account_review_status,message_template_namespace`);
+  if (!acct.ok) {
+    console.log(`  cannot read it: ${describeGraphError(acct.json, acct.status)}`);
+  } else {
+    const a = acct.json as Record<string, unknown>;
+    console.log(`  name: ${a.name ?? "(none)"}`);
+    console.log(`  review status: ${a.account_review_status ?? "(not reported)"}`);
+  }
+
+  console.log("\nPhone numbers on this WABA:");
+  const phones = await get(`${waba}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating`);
+  if (!phones.ok) {
+    console.log(`  cannot list them: ${describeGraphError(phones.json, phones.status)}`);
+  } else {
+    const data = ((phones.json as { data?: Array<Record<string, unknown>> }).data ?? []);
+    if (data.length === 0) console.log("  none — this WABA has no numbers, so it is almost certainly not the one you want.");
+    for (const p of data) {
+      const mine = phoneNumberId && p.id === phoneNumberId ? "  <-- the number you configured" : "";
+      console.log(`  ${p.id}  ${p.display_phone_number ?? ""}  ${p.verified_name ?? ""}${mine}`);
+    }
+    if (phoneNumberId && !data.some((p) => p.id === phoneNumberId)) {
+      console.log(`  NOTE: ${phoneNumberId} is NOT on this WABA. The id and the number belong to different accounts.`);
+    }
+  }
+
+  console.log("\nWhat this token may manage (debug_token granular scopes):");
+  const dbg = await get(`debug_token?input_token=${encodeURIComponent(token)}`);
+  if (!dbg.ok) {
+    console.log(`  could not inspect the token: ${describeGraphError(dbg.json, dbg.status)}`);
+    console.log("  (Meta often requires an app token here; not a problem on its own.)");
+  } else {
+    const d = ((dbg.json as { data?: Record<string, unknown> }).data ?? {});
+    const scopes = (d.granular_scopes ?? []) as Array<{ scope: string; target_ids?: string[] }>;
+    if (scopes.length === 0) console.log("  none reported");
+    for (const sc of scopes) {
+      console.log(`  ${sc.scope}: ${sc.target_ids?.length ? sc.target_ids.join(", ") : "(all)"}`);
+      if (sc.scope === "whatsapp_business_management" && sc.target_ids?.length && !sc.target_ids.includes(waba)) {
+        console.log(`    ^ ${waba} is NOT in this list, which is exactly why template creation is refused.`);
+      }
+    }
+  }
+}
+
 async function push(argv: string[]): Promise<void> {
   const { waba, token } = credentials(argv);
   const existing = new Set(
@@ -313,6 +380,7 @@ async function main(): Promise<void> {
   const [mode = "print", ...rest] = process.argv.slice(2);
   if (mode === "push") return push(rest);
   if (mode === "status") return status(rest);
+  if (mode === "diagnose") return diagnose(rest);
   if (mode === "payload") {
     // Offline: the exact JSON each creation POST would carry.
     for (const spec of allWhatsAppTemplates()) {
