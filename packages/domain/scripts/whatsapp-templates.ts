@@ -95,7 +95,40 @@ function credentials(argv: string[]): { waba: string; token: string } {
     );
     process.exit(1);
   }
+  checkCredential("WHATSAPP_CLOUD_TOKEN", token);
+  checkCredential("WHATSAPP_BUSINESS_ACCOUNT_ID", waba);
   return { waba, token };
+}
+
+/**
+ * Reject a value that is obviously a placeholder from the setup doc rather than
+ * a real credential.
+ *
+ * Without this, a pasted `EAAP…` or `<your token>` reaches fetch() and comes
+ * back as "Cannot convert argument to a ByteString because the character at
+ * index 21 has a value of 8230" — an error about header encoding that says
+ * nothing about the actual mistake. Anything outside printable ASCII cannot go
+ * in an HTTP header at all, so checking here costs nothing and turns a dead end
+ * into an instruction.
+ */
+function checkCredential(name: string, value: string): void {
+  const nonAscii = [...value].find((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) > 126);
+  if (nonAscii) {
+    console.error(
+      `${name} contains a character that cannot appear in an HTTP header: ${JSON.stringify(nonAscii)} ` +
+        `(U+${nonAscii.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")}).\n` +
+        "This is almost always a placeholder pasted from the docs — an ellipsis or angle brackets.\n" +
+        "Paste the whole real value instead, with nothing standing in for the middle of it.",
+    );
+    process.exit(1);
+  }
+  if (/[<>]/.test(value) || /\.\.\./.test(value) || /\b(your|paste|token here)\b/i.test(value)) {
+    console.error(
+      `${name} still looks like a placeholder (${JSON.stringify(value.slice(0, 32))}...).\n` +
+        "Replace it with the real value — including the angle brackets, if you copied those.",
+    );
+    process.exit(1);
+  }
 }
 
 interface RemoteTemplate {
@@ -105,17 +138,45 @@ interface RemoteTemplate {
   language: string;
 }
 
+/**
+ * Read a Graph response as JSON without assuming it is JSON. A corporate proxy,
+ * an egress filter or a Meta error page all return text, and `res.json()` on
+ * those throws "Unexpected token 'H'" — which hides both the status code and
+ * whatever the body actually said.
+ */
+async function graphJson(res: Response): Promise<Record<string, unknown>> {
+  const body = await res.text();
+  try {
+    return JSON.parse(body) as Record<string, unknown>;
+  } catch {
+    throw new Error(
+      `Expected JSON from the Graph API but got ${res.status} ${res.statusText} with a non-JSON body:\n` +
+        `${body.slice(0, 300)}\n` +
+        "A proxy or network filter between you and graph.facebook.com is the usual cause.",
+    );
+  }
+}
+
 async function fetchRemote(waba: string, token: string): Promise<RemoteTemplate[]> {
   const out: RemoteTemplate[] = [];
   let url = `${GRAPH}/${waba}/message_templates?fields=name,status,category,language&limit=100`;
   while (url) {
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    const json = (await res.json()) as {
+    const json = (await graphJson(res)) as {
       data?: RemoteTemplate[];
       paging?: { next?: string };
-      error?: { message: string };
+      error?: { message?: string; code?: number };
     };
-    if (!res.ok) throw new Error(`Graph API ${res.status}: ${json.error?.message ?? "unknown error"}`);
+    if (!res.ok) {
+      const message = json.error?.message ?? `HTTP ${res.status}`;
+      throw new Error(
+        `Graph API rejected the request: ${message}\n` +
+          (res.status === 403 || json.error?.code === 190
+            ? "A 403 or code 190 here usually means the token lacks the whatsapp_business_management\n" +
+              "scope, has expired, or the WABA id belongs to a different business than the token."
+            : ""),
+      );
+    }
     out.push(...(json.data ?? []));
     url = json.paging?.next ?? "";
   }
@@ -186,7 +247,7 @@ async function push(argv: string[]): Promise<void> {
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(creationPayload(spec)),
     });
-    const json = (await res.json()) as { id?: string; status?: string; error?: { message: string } };
+    const json = (await graphJson(res)) as { id?: string; status?: string; error?: { message?: string } };
     if (!res.ok) {
       console.error(`FAILED    ${spec.metaName}: ${json.error?.message ?? res.status}`);
       failed += 1;
