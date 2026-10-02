@@ -238,6 +238,25 @@ async function status(argv: string[]): Promise<void> {
     if (found.status !== "APPROVED") notApproved += 1;
     console.log(`${found.status.padEnd(9)} ${spec.metaName}${found.category !== spec.category ? `  (Meta says ${found.category}, we expect ${spec.category})` : ""}`);
   }
+  // Anything Meta holds that we did not ask for. Vital signal: an empty WABA
+  // when the UI clearly shows templates means the id here is not the account
+  // you are looking at, which no amount of permission-fixing would reveal.
+  const expected = new Set(allWhatsAppTemplates().map((t) => t.metaName));
+  const extra = remote.filter((t) => !expected.has(t.name));
+  console.log(`\nMeta holds ${remote.length} template(s) on WABA ${waba} in all languages.`);
+  if (extra.length > 0) {
+    console.log("Not ours (fine — listed so you can confirm this is the right account):");
+    for (const t of extra.slice(0, 15)) console.log(`  ${t.status.padEnd(9)} ${t.name} [${t.language}]`);
+    if (extra.length > 15) console.log(`  ...and ${extra.length - 15} more`);
+  }
+  if (remote.length === 0) {
+    console.log(
+      "Meta reports this WABA has NO templates at all. If WhatsApp Manager shows templates\n" +
+        "for your account, then this WABA id belongs to a different account than the one you\n" +
+        "are looking at — check the id in WhatsApp Manager -> Account tools -> Account info.",
+    );
+  }
+
   console.log(`\n${allWhatsAppTemplates().length} expected · ${missing} missing · ${notApproved} not yet approved`);
   // A missing or unapproved template means those messages fail at send time, so
   // this is a useful CI/pre-launch gate, not just information.
