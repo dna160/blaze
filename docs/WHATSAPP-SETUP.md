@@ -254,6 +254,35 @@ handshake:
 The symptom of either is identical and silent: messages arrive on the phone,
 nothing reaches the API, and the logs show only the original verification `GET`.
 
+### The number must be on the Cloud API, not On-Premise
+
+A number can be present on the WABA, `CONNECTED`, with an approved display name,
+and still be on the **On-Premise** platform. This integration speaks to the Cloud
+API, and Cloud API webhooks only fire for numbers registered on it — so an
+On-Premise number produces exactly the silence described above, with every piece
+of webhook configuration correct.
+
+`pnpm wa:templates diagnose` reports `platform_type` per number. `CLOUD_API` is
+what you need; `ON_PREMISE` or `NOT_APPLICABLE` is the problem.
+
+Migrating needs the number verified first, then registered:
+
+```bash
+curl -X POST "https://graph.facebook.com/v21.0/<PHONE_NUMBER_ID>/request_code" \
+  -H "Authorization: Bearer $WHATSAPP_CLOUD_TOKEN" -d "code_method=SMS&language=en_US"
+curl -X POST "https://graph.facebook.com/v21.0/<PHONE_NUMBER_ID>/verify_code" \
+  -H "Authorization: Bearer $WHATSAPP_CLOUD_TOKEN" -d "code=<6 digits>"
+curl -X POST "https://graph.facebook.com/v21.0/<PHONE_NUMBER_ID>/register" \
+  -H "Authorization: Bearer $WHATSAPP_CLOUD_TOKEN" -H "Content-Type: application/json" \
+  -d '{"messaging_product":"whatsapp","pin":"<your 6-digit PIN>"}'
+```
+
+**Check who owns the number before doing this.** An On-Premise number, especially
+alongside a `manage_app_solution` scope on your token, usually means a BSP or
+solution partner onboarded it. They may hold the number and the template rights —
+which is also what `WABA not allowed to manage templates` means — and if the
+number carries live traffic, migrating it is their decision, not yours.
+
 What it does:
 
 | Meta says | `notifications.status` becomes |

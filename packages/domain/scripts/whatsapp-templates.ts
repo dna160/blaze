@@ -321,6 +321,18 @@ async function diagnose(argv: string[]): Promise<void> {
         console.log('            -H "Content-Type: application/json" \\');
         console.log('            -d \'{"messaging_product":"whatsapp","pin":"000000"}\'');
         console.log("        (choose your own 6-digit PIN; it becomes the number's two-step PIN)");
+        if (p.code_verification_status && p.code_verification_status !== "VERIFIED") {
+          console.log(`      ^ and verification is ${p.code_verification_status}, so register will be refused until the`);
+          console.log("        number is verified first:");
+          console.log(`          curl -X POST "https://graph.facebook.com/v21.0/${p.id}/request_code" \\`);
+          console.log('            -H "Authorization: Bearer $WHATSAPP_CLOUD_TOKEN" \\');
+          console.log(`            -d "code_method=SMS&language=en_US"`);
+          console.log(`          curl -X POST "https://graph.facebook.com/v21.0/${p.id}/verify_code" \\`);
+          console.log('            -H "Authorization: Bearer $WHATSAPP_CLOUD_TOKEN" \\');
+          console.log('            -d "code=<the 6 digits you receive>"');
+        }
+        console.log("        ON_PREMISE usually means a BSP or solution partner holds this number.");
+        console.log("        Check with them before migrating — if it carries live traffic, moving it is their call.");
       }
       if (p.status && p.status !== "CONNECTED") {
         console.log(`      ^ status is ${p.status}, not CONNECTED — the number is not ready to send or receive via the API.`);
