@@ -297,7 +297,9 @@ async function diagnose(argv: string[]): Promise<void> {
   }
 
   console.log("\nPhone numbers on this WABA:");
-  const phones = await get(`${waba}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating`);
+  const phones = await get(
+    `${waba}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,status,platform_type,code_verification_status,throughput`,
+  );
   if (!phones.ok) {
     console.log(`  cannot list them: ${describeGraphError(phones.json, phones.status)}`);
   } else {
@@ -306,6 +308,23 @@ async function diagnose(argv: string[]): Promise<void> {
     for (const p of data) {
       const mine = phoneNumberId && p.id === phoneNumberId ? "  <-- the number you configured" : "";
       console.log(`  ${p.id}  ${p.display_phone_number ?? ""}  ${p.verified_name ?? ""}${mine}`);
+      console.log(`      status: ${p.status ?? "(not reported)"}   platform: ${p.platform_type ?? "(not reported)"}   verification: ${p.code_verification_status ?? "(not reported)"}`);
+
+      // A number can sit on a WABA, fully verified, and still not be activated
+      // for Cloud API messaging. Until it is, messages to it never reach a
+      // webhook — which looks identical to a webhook that is misconfigured.
+      if (p.platform_type && p.platform_type !== "CLOUD_API") {
+        console.log(`      ^ NOT on the Cloud API (platform_type ${p.platform_type}). Inbound messages will never`);
+        console.log("        reach your webhook until the number is registered:");
+        console.log(`          curl -X POST "https://graph.facebook.com/v21.0/${p.id}/register" \\`);
+        console.log('            -H "Authorization: Bearer $WHATSAPP_CLOUD_TOKEN" \\');
+        console.log('            -H "Content-Type: application/json" \\');
+        console.log('            -d \'{"messaging_product":"whatsapp","pin":"000000"}\'');
+        console.log("        (choose your own 6-digit PIN; it becomes the number's two-step PIN)");
+      }
+      if (p.status && p.status !== "CONNECTED") {
+        console.log(`      ^ status is ${p.status}, not CONNECTED — the number is not ready to send or receive via the API.`);
+      }
     }
     if (phoneNumberId && !data.some((p) => p.id === phoneNumberId)) {
       console.log(`  NOTE: ${phoneNumberId} is NOT on this WABA. The id and the number belong to different accounts.`);
