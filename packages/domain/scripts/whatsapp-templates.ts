@@ -312,6 +312,27 @@ async function diagnose(argv: string[]): Promise<void> {
     }
   }
 
+  // The step that verification does NOT cover. A callback URL can verify
+  // perfectly and still receive nothing, because events flow only once the WABA
+  // itself is subscribed to the app. The two are configured in different places
+  // and nothing in the UI connects them.
+  console.log("\nApps subscribed to this WABA (this is what makes events arrive):");
+  const subs = await get(`${waba}/subscribed_apps`);
+  if (!subs.ok) {
+    console.log(`  cannot list them: ${describeGraphError(subs.json, subs.status)}`);
+  } else {
+    const data = ((subs.json as { data?: Array<Record<string, unknown>> }).data ?? []);
+    if (data.length === 0) {
+      console.log("  NONE. This is why no webhook POST ever arrives, even though the");
+      console.log("  callback URL verified. Subscribe the app to the WABA with:");
+      console.log(`    curl -X POST "https://graph.facebook.com/v21.0/${waba}/subscribed_apps?access_token=$WHATSAPP_CLOUD_TOKEN"`);
+    }
+    for (const a of data) {
+      const app = (a.whatsapp_business_api_data ?? a) as Record<string, unknown>;
+      console.log(`  ${app.id ?? "(no id)"}  ${app.name ?? ""}`);
+    }
+  }
+
   console.log("\nWhat this token may manage (debug_token granular scopes):");
   const dbg = await get(`debug_token?input_token=${encodeURIComponent(token)}`);
   if (!dbg.ok) {

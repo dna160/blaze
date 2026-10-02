@@ -231,6 +231,29 @@ One callback URL serves every organization: Meta allows one per app, and the
 payload's `phone_number_id` is what identifies the sender, so routing happens
 from the payload rather than from the URL.
 
+### Verifying the URL is not the same as receiving events
+
+A callback URL can verify perfectly — Meta sends one `GET` with `hub.challenge`,
+gets its 200, and shows the webhook as saved — and then deliver nothing at all,
+forever. Two further things have to be true, and neither is implied by that
+handshake:
+
+1. **The `messages` field must be subscribed.** Saving the URL does not subscribe
+   anything; the field list is behind **Manage** next to the webhook.
+2. **The WABA must be subscribed to the app.** This is separate from the app's
+   webhook config and is not visible on the same screen. Check and fix it with:
+
+   ```bash
+   curl -s "https://graph.facebook.com/v21.0/<WABA_ID>/subscribed_apps?access_token=$WHATSAPP_CLOUD_TOKEN"
+   curl -s -X POST "https://graph.facebook.com/v21.0/<WABA_ID>/subscribed_apps?access_token=$WHATSAPP_CLOUD_TOKEN"
+   ```
+
+   An empty `data` array on the first means no app receives this WABA's events.
+   `pnpm wa:templates diagnose` reports the same thing in context.
+
+The symptom of either is identical and silent: messages arrive on the phone,
+nothing reaches the API, and the logs show only the original verification `GET`.
+
 What it does:
 
 | Meta says | `notifications.status` becomes |
