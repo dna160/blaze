@@ -13,6 +13,8 @@ interface MessagingConfig {
   provider: ProviderName;
   phoneNumberId: string | null;
   businessAccountId: string | null;
+  autoReplyEnabled: boolean;
+  autoReplyText: string | null;
   accessTokenHint: string | null;
   hasAccessToken: boolean;
   updatedAt: string | null;
@@ -62,6 +64,8 @@ export default function MessagingSettingsPage() {
   const [phoneNumberId, setPhoneNumberId] = useState("");
   const [businessAccountId, setBusinessAccountId] = useState("");
   const [accessToken, setAccessToken] = useState("");
+  const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
+  const [autoReplyText, setAutoReplyText] = useState("");
 
   const [testTo, setTestTo] = useState("");
   const [testResult, setTestResult] = useState<TestResult | null>(null);
@@ -74,6 +78,8 @@ export default function MessagingSettingsPage() {
       setProvider(data.provider);
       setPhoneNumberId(data.phoneNumberId ?? "");
       setBusinessAccountId(data.businessAccountId ?? "");
+      setAutoReplyEnabled(data.autoReplyEnabled);
+      setAutoReplyText(data.autoReplyText ?? "");
       setError(null);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) return router.push("/login");
@@ -99,6 +105,8 @@ export default function MessagingSettingsPage() {
           provider,
           phoneNumberId: phoneNumberId.trim() || null,
           businessAccountId: businessAccountId.trim() || null,
+          autoReplyEnabled,
+          autoReplyText: autoReplyText.trim() || null,
           // Blank means "keep what's stored" — the token is never sent back to
           // the browser, so an empty field can't mean "clear it".
           ...(accessToken.trim() ? { accessToken: accessToken.trim() } : {}),
@@ -241,6 +249,44 @@ export default function MessagingSettingsPage() {
             </div>
           )}
         </form>
+
+        {canEdit && (
+          <form onSubmit={save} className="space-y-4 rounded border border-slate-200 bg-white p-4">
+            <h2 className="text-sm font-semibold text-slate-800">Reply automatically to incoming messages</h2>
+            <p className="text-xs text-slate-500">
+              When a customer messages your WhatsApp number, send this back. Unlike the messages RentOS sends on its own,
+              a reply needs no approved template — WhatsApp allows free text for 24 hours after the customer writes to
+              you. That also makes it the one thing you can test before templates are approved.
+            </p>
+
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={autoReplyEnabled}
+                onChange={(e) => setAutoReplyEnabled(e.target.checked)}
+                disabled={!canEdit}
+              />
+              <span className="text-slate-700">Reply automatically</span>
+            </label>
+
+            <label className="block text-sm">
+              <span className="text-slate-700">Reply text</span>
+              <textarea
+                value={autoReplyText}
+                onChange={(e) => setAutoReplyText(e.target.value)}
+                disabled={!canEdit || !autoReplyEnabled}
+                rows={3}
+                maxLength={1000}
+                placeholder="Terima kasih, pesan Anda sudah kami terima. Tim kami akan membalas segera. / Thanks — we've got your message and will reply shortly."
+                className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
+              />
+            </label>
+
+            <button type="submit" disabled={busy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+              {busy ? "Saving…" : "Save"}
+            </button>
+          </form>
+        )}
 
         {canEdit && (
           <div className="space-y-3 rounded border border-slate-200 bg-white p-4">

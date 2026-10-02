@@ -24,9 +24,22 @@ export interface SendTemplateMessageResult {
  */
 export const MESSAGING_PROVIDERS = Symbol("MESSAGING_PROVIDERS");
 
+export interface SendTextMessageParams {
+  to: string;
+  text: string;
+}
+
 export interface MessagingProvider {
   readonly name: string;
   send(params: SendTemplateMessageParams, config: ResolvedMessagingConfig): Promise<SendTemplateMessageResult>;
+  /**
+   * Free-form text, which WhatsApp permits only inside the 24-hour customer
+   * service window — i.e. within 24h of the customer's own last message. Every
+   * caller today is replying TO an inbound message, so the window is open by
+   * construction; anything business-initiated must still go through `send` and
+   * an approved template.
+   */
+  sendText(params: SendTextMessageParams, config: ResolvedMessagingConfig): Promise<SendTemplateMessageResult>;
 }
 
 /** Every adapter, keyed by the provider name stored on the organization. */

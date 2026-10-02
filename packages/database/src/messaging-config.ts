@@ -47,6 +47,8 @@ export interface MessagingConfigView {
   provider: MessagingProviderName;
   phoneNumberId: string | null;
   businessAccountId: string | null;
+  autoReplyEnabled: boolean;
+  autoReplyText: string | null;
   /** Last 4 characters of the saved token, so staff can tell which one is loaded. */
   accessTokenHint: string | null;
   hasAccessToken: boolean;
@@ -60,6 +62,9 @@ interface StoredConfig {
   phoneNumberId?: string;
   businessAccountId?: string;
   accessTokenHint?: string;
+  /** Auto-reply to an inbound WhatsApp message. Free-form, so it needs no approved template. */
+  autoReplyEnabled?: boolean;
+  autoReplyText?: string;
   /** AES-256-GCM, "<iv-hex>:<tag-hex>:<ciphertext-hex>". */
   accessTokenSealed?: string;
   updatedAt?: string;
@@ -165,6 +170,23 @@ export async function readStoredConfig(prisma: PrismaClient, organizationId: str
   return ((org?.messagingConfig ?? {}) as StoredConfig) ?? {};
 }
 
+/**
+ * The auto-reply configured for the organization that owns this tenant. Read
+ * separately from resolveMessagingConfig because the webhook needs the text,
+ * not the credentials, and the two have different failure modes.
+ */
+export async function resolveAutoReply(
+  prisma: PrismaClient,
+  tenantId: string,
+): Promise<{ enabled: boolean; text: string } | null> {
+  const organizationId = await organizationIdForTenant(prisma, tenantId);
+  if (!organizationId) return null;
+  const stored = await readStoredConfig(prisma, organizationId);
+  if (!stored.autoReplyEnabled) return null;
+  const text = stored.autoReplyText?.trim();
+  return text ? { enabled: true, text } : null;
+}
+
 /** What actually sends a message for this tenant, and where those credentials came from. */
 export async function resolveMessagingConfig(prisma: PrismaClient, tenantId: string): Promise<ResolvedMessagingConfig> {
   const organizationId = await organizationIdForTenant(prisma, tenantId);
@@ -182,6 +204,8 @@ export async function getMessagingConfigView(prisma: PrismaClient, organizationI
     provider: (stored.provider as MessagingProviderName) ?? resolved.provider,
     phoneNumberId: stored.phoneNumberId ?? null,
     businessAccountId: stored.businessAccountId ?? null,
+    autoReplyEnabled: stored.autoReplyEnabled ?? false,
+    autoReplyText: stored.autoReplyText ?? null,
     accessTokenHint: stored.accessTokenHint ?? null,
     hasAccessToken: Boolean(stored.accessTokenSealed),
     updatedAt: stored.updatedAt ?? null,
@@ -194,6 +218,8 @@ export interface MessagingConfigUpdate {
   provider: MessagingProviderName;
   phoneNumberId?: string | null;
   businessAccountId?: string | null;
+  autoReplyEnabled?: boolean;
+  autoReplyText?: string | null;
   /** Omit to keep the stored token; pass a new one to replace it. */
   accessToken?: string | null;
 }
@@ -210,6 +236,8 @@ export async function saveMessagingConfig(
     provider: update.provider,
     phoneNumberId: update.phoneNumberId ?? undefined,
     businessAccountId: update.businessAccountId ?? undefined,
+    autoReplyEnabled: update.autoReplyEnabled ?? existing.autoReplyEnabled,
+    autoReplyText: update.autoReplyText ?? existing.autoReplyText,
     updatedAt: new Date().toISOString(),
     updatedByUserId,
   };

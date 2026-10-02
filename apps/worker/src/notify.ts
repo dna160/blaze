@@ -115,7 +115,8 @@ async function sendWhatsApp(tenantId: string, templateKey: string, to: string, v
   const { accessToken, phoneNumberId } = config.whatsapp;
   // Same shared registry as apps/api's provider — one wire format, two senders.
   const payload = buildWhatsAppTemplatePayload(templateKey, to, variables);
-  const response = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+  const graphBase = process.env.WHATSAPP_GRAPH_BASE_URL ?? "https://graph.facebook.com/v21.0";
+  const response = await fetch(`${graphBase}/${phoneNumberId}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify(payload),

@@ -1,7 +1,9 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { createHmac } from "node:crypto";
 
-import { findOrganizationIdByPhoneNumberId, secretsMatch } from "@rentos/database";
+import { findOrganizationIdByPhoneNumberId, resolveAutoReply, resolveMessagingConfig, secretsMatch } from "@rentos/database";
+
+import { MESSAGING_PROVIDERS, type MessagingProviderRegistry } from "./messaging-provider.interface.js";
 
 import { PrismaService } from "../prisma/prisma.service.js";
 
@@ -50,7 +52,10 @@ export interface WhatsAppWebhookPayload {
 export class WhatsAppWebhookService {
   private readonly logger = new Logger("WhatsAppWebhook");
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(MESSAGING_PROVIDERS) private readonly providers: MessagingProviderRegistry,
+  ) {}
 
   /** Meta's GET handshake when the callback URL is first saved, and on every re-subscribe. */
   verifySubscription(mode: string | undefined, token: string | undefined, challenge: string | undefined): string | null {
@@ -189,22 +194,68 @@ export class WhatsAppWebhookService {
         tx.customer.findFirst({ where: { phone: { in: candidates } }, select: { id: true } }),
       );
       if (!customer) continue;
-      await this.saveInbound(tenantId, customer.id, message, text);
+      const saved = await this.saveInbound(tenantId, customer.id, message, text);
+      if (saved) await this.autoReply(tenantId, message.from);
       return;
     }
 
     // An unrecognised number still leaves a trail, on the organization's first
     // branch, rather than being dropped.
     const fallback = tenantIds[0];
-    if (fallback) await this.saveInbound(fallback, null, message, text);
+    if (fallback) {
+      const saved = await this.saveInbound(fallback, null, message, text);
+      if (saved) await this.autoReply(fallback, message.from);
+    }
   }
 
-  private async saveInbound(tenantId: string, customerId: string | null, message: MetaMessage, text: string): Promise<void> {
-    await this.prisma.runInTenantContext(tenantId, async (tx) => {
+  /**
+   * Reply to the customer, if the organization has an auto-reply configured.
+   *
+   * Free-form rather than a template, which is the whole point: WhatsApp allows
+   * arbitrary text within 24 hours of the customer's own message, and we are
+   * answering one right now, so this works before a single template has been
+   * approved.
+   *
+   * Only fires for a message we actually recorded, so Meta's redeliveries do not
+   * produce a reply each time. A failure here is logged and swallowed: an
+   * unanswered message is better than a webhook that errors and gets retried
+   * into a loop.
+   */
+  private async autoReply(tenantId: string, to: string): Promise<void> {
+    try {
+      const reply = await resolveAutoReply(this.prisma.raw, tenantId);
+      if (!reply) return;
+
+      const config = await resolveMessagingConfig(this.prisma.raw, tenantId);
+      const result = await this.providers[config.provider].sendText({ to, text: reply.text }, config);
+
+      await this.prisma.runInTenantContext(tenantId, (tx) =>
+        tx.notification.create({
+          data: {
+            tenantId,
+            channel: "WHATSAPP",
+            templateKey: "auto_reply",
+            recipientRole: "CUSTOMER",
+            recipient: to,
+            payload: { text: reply.text },
+            status: "SENT",
+            providerRef: result.providerRef,
+            sentAt: new Date(),
+          },
+        }),
+      );
+    } catch (err) {
+      this.logger.error(`Auto-reply to ${to} failed: ${(err as Error).message}`);
+    }
+  }
+
+  /** Returns false when this message was already recorded, so callers can skip re-acting to a redelivery. */
+  private async saveInbound(tenantId: string, customerId: string | null, message: MetaMessage, text: string): Promise<boolean> {
+    return this.prisma.runInTenantContext(tenantId, async (tx) => {
       // Meta retries a delivery it thinks failed, so the same message id can
       // arrive more than once.
       const seen = await tx.notification.findFirst({ where: { providerRef: message.id, templateKey: "inbound_message" } });
-      if (seen) return;
+      if (seen) return false;
       await tx.notification.create({
         data: {
           tenantId,
@@ -219,6 +270,7 @@ export class WhatsAppWebhookService {
           sentAt: new Date(),
         },
       });
+      return true;
     });
   }
 }

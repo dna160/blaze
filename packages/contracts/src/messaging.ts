@@ -12,6 +12,9 @@ export const MessagingConfigResponseSchema = z.object({
   provider: MessagingProviderSchema,
   phoneNumberId: z.string().nullable(),
   businessAccountId: z.string().nullable(),
+  /** Auto-reply to inbound WhatsApp messages. Free-form, so no approved template is needed. */
+  autoReplyEnabled: z.boolean(),
+  autoReplyText: z.string().nullable(),
   /** Last 4 characters of the saved token — enough to tell two credentials apart, useless on its own. */
   accessTokenHint: z.string().nullable(),
   hasAccessToken: z.boolean(),
@@ -29,6 +32,8 @@ export const UpdateMessagingConfigRequestSchema = z
     provider: MessagingProviderSchema,
     phoneNumberId: z.string().trim().min(1).max(64).nullable().optional(),
     businessAccountId: z.string().trim().min(1).max(64).nullable().optional(),
+    autoReplyEnabled: z.boolean().optional(),
+    autoReplyText: z.string().trim().max(1000).nullable().optional(),
     /** Omit to keep the stored token; send a new value to replace it. Never returned by any read. */
     accessToken: z.string().trim().min(20).max(1024).nullable().optional(),
   })

@@ -5,6 +5,7 @@ import { buildWhatsAppTemplatePayload } from "@rentos/domain";
 import type {
   MessagingProvider,
   SendTemplateMessageParams,
+  SendTextMessageParams,
   SendTemplateMessageResult,
 } from "../messaging-provider.interface.js";
 
@@ -20,7 +21,12 @@ import type {
 export class WhatsAppCloudMessagingProvider implements MessagingProvider {
   readonly name = "WHATSAPP_CLOUD";
   private readonly logger = new Logger("MessagingProvider");
-  private readonly apiBase = "https://graph.facebook.com/v21.0";
+  /**
+   * Overridable so a sandbox or an integration test can point at a stub, and so
+   * the Graph version can be pinned without a code change. Defaults to the real
+   * endpoint, so an unset variable behaves exactly as before.
+   */
+  private readonly apiBase = process.env.WHATSAPP_GRAPH_BASE_URL ?? "https://graph.facebook.com/v21.0";
 
   async send(params: SendTemplateMessageParams, config: ResolvedMessagingConfig): Promise<SendTemplateMessageResult> {
     const creds = config.whatsapp;
@@ -46,6 +52,41 @@ export class WhatsAppCloudMessagingProvider implements MessagingProvider {
       const body = await response.text();
       // Meta echoes the request back on some errors; never log the auth header.
       this.logger.error(`WhatsApp Cloud API error ${response.status}: ${body}`);
+      throw new Error(`WhatsApp Cloud API error ${response.status}: ${body.slice(0, 300)}`);
+    }
+
+    const json = (await response.json()) as { messages?: Array<{ id: string }> };
+    return { providerRef: json.messages?.[0]?.id ?? "unknown" };
+  }
+
+  /**
+   * Free-form text. Needs no registered template, because WhatsApp allows it
+   * inside the 24-hour window opened by the customer's own message — which is
+   * why replying to an inbound works before a single template is approved.
+   * Outside that window Meta rejects it with error 131047, and that refusal is
+   * surfaced rather than swallowed.
+   */
+  async sendText(params: SendTextMessageParams, config: ResolvedMessagingConfig): Promise<SendTemplateMessageResult> {
+    const creds = config.whatsapp;
+    if (!creds?.accessToken || !creds.phoneNumberId) {
+      throw new Error("WhatsApp Cloud is selected but no phone number ID / access token is configured.");
+    }
+
+    const response = await fetch(`${this.apiBase}/${creds.phoneNumberId}/messages`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${creds.accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: params.to,
+        type: "text",
+        text: { preview_url: false, body: params.text },
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      this.logger.error(`WhatsApp Cloud text send failed ${response.status}: ${body}`);
       throw new Error(`WhatsApp Cloud API error ${response.status}: ${body.slice(0, 300)}`);
     }
 

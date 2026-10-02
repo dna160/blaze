@@ -178,6 +178,42 @@ the screen only ever shows the last 4 characters of a saved token.
 
 ---
 
+## 3b. Testing before any template is approved
+
+Template approval is the long pole, and until it clears nothing RentOS sends on
+its own can be delivered. One thing can be tested immediately: **a reply**.
+
+WhatsApp permits free-form text within 24 hours of a customer messaging you — the
+customer service window — so answering an inbound message needs no approved
+template at all. Console → Settings → Messaging → **Reply automatically to
+incoming messages**, set the text, save. Then message the business number from
+your own phone.
+
+What that proves, in one round trip: the saved credentials work, the number can
+receive, the webhook is reachable and its signature check passes, routing by
+`phone_number_id` finds the right organization, and the outbound path reaches
+Meta. Everything except the templates themselves.
+
+Both legs are recorded in `notifications`: the inbound as `inbound_message`
+(status `RECEIVED`), the answer as `auto_reply` (status `SENT`).
+
+```sql
+select template_key, status, recipient, payload->>'text', created_at
+from notifications
+where template_key in ('inbound_message', 'auto_reply')
+order by created_at desc;
+```
+
+The reply fires only for a message that was newly recorded, so Meta's
+redeliveries do not produce repeat replies, and a send failure is logged and
+swallowed — an unanswered message beats a webhook that errors and gets retried
+into a loop.
+
+Business-initiated messages still require an approved template. This window only
+ever opens because the customer wrote first.
+
+---
+
 ## 4. Point Meta's webhook at the API
 
 Without this, a notification goes to `SENT` the moment Meta *accepts* the call and

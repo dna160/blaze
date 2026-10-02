@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type {
   MessagingProvider,
   SendTemplateMessageParams,
+  SendTextMessageParams,
   SendTemplateMessageResult,
 } from "../messaging-provider.interface.js";
 
@@ -15,6 +16,11 @@ export class ConsoleLogMessagingProvider implements MessagingProvider {
 
   async send(params: SendTemplateMessageParams): Promise<SendTemplateMessageResult> {
     this.logger.log(`[WA -> ${params.to}] ${params.templateKey} ${JSON.stringify(params.variables)}`);
+    return { providerRef: `console-${randomUUID()}` };
+  }
+
+  async sendText(params: SendTextMessageParams): Promise<SendTemplateMessageResult> {
+    this.logger.log(`[WA text -> ${params.to}] ${params.text}`);
     return { providerRef: `console-${randomUUID()}` };
   }
 }
