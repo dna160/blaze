@@ -12,7 +12,19 @@ holds and what we send cannot drift.
 
 ## 0. What you need from Meta
 
-From **developers.facebook.com → your app → WhatsApp → API Setup**:
+Business verification is necessary but not sufficient. Before any of the values
+below exist you also need, in **developers.facebook.com**:
+
+- An **app** of type Business with the **WhatsApp** product added.
+- A **real sending number** added under WhatsApp → API Setup. The test number Meta
+  gives you can only message numbers on its allow-list, so it cannot carry
+  production traffic. A number already signed in to the WhatsApp or WhatsApp
+  Business *app* must be deleted from there first, or Meta refuses to register it.
+- A **payment method** on the WhatsApp Business Account. Verification alone does
+  not let you message arbitrary numbers; check WhatsApp Manager → Billing, because
+  this is the usual reason a correctly configured number still won't send.
+
+Then, from **your app → WhatsApp → API Setup**:
 
 | Value | Where | Used as |
 |---|---|---|
@@ -60,25 +72,15 @@ log line.
 
 ---
 
-## 2. Save the credentials in the console
+## 2. Register the templates
 
-**Console → Settings → Messaging** (admin only):
+**Do this before touching the console.** WhatsApp will not send free-form
+business-initiated messages — every one must be a template Meta has approved —
+and the console's "Send a test message" button sends the `otp_code` *template*.
+Until that template exists and is approved, the test fails with a template error
+that looks exactly like bad credentials.
 
-1. Provider → **WhatsApp Cloud**
-2. Phone number ID, WhatsApp Business Account ID, access token
-3. **Send a test message** to your own number *before* saving — the test uses the
-   credentials in the form, not the stored ones, so it proves them first
-4. Save
-
-Credentials live on the **Organization**, so one number serves every branch. The
-screen only ever shows the last 4 characters of a saved token.
-
----
-
-## 3. Register the templates
-
-WhatsApp will not send free-form business-initiated messages — every one must be
-a template Meta has approved. There are 22.
+There are 22.
 
 ```bash
 pnpm wa:templates print     # markdown, for entering by hand
@@ -118,6 +120,30 @@ Two consequences worth knowing:
 `otp_code` is Meta's **AUTHENTICATION** category: Meta owns the body wording, and
 the code is echoed into a copy-code button. Sending a passcode through a UTILITY
 template gets the template rejected or the number flagged.
+
+---
+
+## 3. Save the credentials in the console
+
+Once `pnpm wa:templates status` reports `otp_code` APPROVED:
+
+**Console → Settings → Messaging** (admin only):
+
+1. **Sending** → "On — send via WhatsApp Cloud API"
+2. Phone number ID, WhatsApp Business account ID, permanent access token
+3. **Send a test message** to your own number *before* saving — the test uses the
+   credentials typed in the form rather than the stored ones, so it proves them
+   first. Success reads "Delivered. Meta message id …"
+4. **Save**
+
+The banner at the top of that page tells you what is actually in force:
+"Not sending — logging only" (nothing configured), "Using deployment credentials"
+(falling back to env vars), or "Using your saved number". If you instead see an
+amber warning about `MESSAGING_CONFIG_KEY`, step 1 was not applied — saving a
+token will be refused.
+
+Credentials live on the **Organization**, so one number serves every branch, and
+the screen only ever shows the last 4 characters of a saved token.
 
 ---
 
