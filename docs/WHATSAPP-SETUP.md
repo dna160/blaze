@@ -121,6 +121,37 @@ Two consequences worth knowing:
 the code is echoed into a copy-code button. Sending a passcode through a UTILITY
 template gets the template rejected or the number flagged.
 
+### When `push` fails on every template
+
+All 22 failing identically means the cause is the account or the request shape,
+not the copy. The script prints Meta's full error object and the rejected request
+beside the first failure — read `error_user_msg`, not `message`, which is always
+the generic "Invalid parameter".
+
+**`WABA not allowed to manage templates` (code 100, subcode 2494160).** Meta is
+refusing on account state; nothing in this repo can fix it, and a new token will
+not help. Note that `status` succeeding proves the token's
+`whatsapp_business_management` scope is fine — reads work, writes are blocked, so
+the restriction belongs to the WABA. Work through, in order:
+
+1. **Try creating one template by hand**, WhatsApp Manager → Account tools →
+   Message templates → Create template. The UI explains the block far better than
+   the API does, usually with a link straight to the remedy. If the UI also
+   refuses, everything below is the likely cause; if it succeeds, re-run `push`.
+2. **Attach a payment method** — WhatsApp Manager → Billing. The most common
+   cause, and Meta reports it as a template restriction rather than a billing
+   one. Business verification does not cover this.
+3. **Check whether the number is Meta's test number.** A test WABA, created
+   automatically with the app, is limited. A real sending number added under
+   WhatsApp → API Setup is what carries production traffic.
+4. **Check who owns the WABA** — Business Settings → Accounts → WhatsApp
+   Accounts. If a BSP or partner owns it (common when it was created through an
+   embedded-signup or agency flow), only they can manage templates, and the fix
+   is to have it transferred or to have them register these for you.
+5. **Look for restrictions on the WABA itself** on the same screen — a policy
+   flag or an incomplete onboarding step blocks template management while
+   leaving reads working, which is exactly the shape of this error.
+
 ---
 
 ## 3. Save the credentials in the console
