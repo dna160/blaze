@@ -157,6 +157,24 @@ async function graphJson(res: Response): Promise<Record<string, unknown>> {
   }
 }
 
+/**
+ * Meta's "Invalid parameter" is a top-level placeholder; the reason is in the
+ * sibling fields. Printing only `error.message` turns a specific complaint into
+ * a dead end, so flatten everything Meta offers.
+ */
+function describeGraphError(payload: Record<string, unknown>, status: number): string {
+  const e = (payload.error ?? {}) as Record<string, unknown>;
+  const data = (e.error_data ?? {}) as Record<string, unknown>;
+  const parts = [
+    e.message ?? `HTTP ${status}`,
+    e.error_user_title ? `title: ${e.error_user_title}` : null,
+    e.error_user_msg ? `detail: ${e.error_user_msg}` : null,
+    data.details ? `details: ${data.details}` : null,
+    e.code !== undefined ? `code ${e.code}${e.error_subcode ? `/${e.error_subcode}` : ""}` : null,
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
 async function fetchRemote(waba: string, token: string): Promise<RemoteTemplate[]> {
   const out: RemoteTemplate[] = [];
   let url = `${GRAPH}/${waba}/message_templates?fields=name,status,category,language&limit=100`;
@@ -168,9 +186,8 @@ async function fetchRemote(waba: string, token: string): Promise<RemoteTemplate[
       error?: { message?: string; code?: number };
     };
     if (!res.ok) {
-      const message = json.error?.message ?? `HTTP ${res.status}`;
       throw new Error(
-        `Graph API rejected the request: ${message}\n` +
+        `Graph API rejected the request: ${describeGraphError(json as Record<string, unknown>, res.status)}\n` +
           (res.status === 403 || json.error?.code === 190
             ? "A 403 or code 190 here usually means the token lacks the whatsapp_business_management\n" +
               "scope, has expired, or the WABA id belongs to a different business than the token."
@@ -247,9 +264,19 @@ async function push(argv: string[]): Promise<void> {
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(creationPayload(spec)),
     });
-    const json = (await graphJson(res)) as { id?: string; status?: string; error?: { message?: string } };
+    const json = await graphJson(res);
     if (!res.ok) {
-      console.error(`FAILED    ${spec.metaName}: ${json.error?.message ?? res.status}`);
+      console.error(`FAILED    ${spec.metaName}: ${describeGraphError(json, res.status)}`);
+      // The first failure gets the request printed beside it. When every
+      // template fails the same way the cause is in the shape we sent, and
+      // guessing across 22 of them costs far more than one dump.
+      if (failed === 0) {
+        console.error("\n--- the request that was rejected ---");
+        console.error(JSON.stringify(creationPayload(spec), null, 2));
+        console.error("--- Meta's full response ---");
+        console.error(JSON.stringify(json, null, 2));
+        console.error("");
+      }
       failed += 1;
       continue;
     }
@@ -267,6 +294,14 @@ async function main(): Promise<void> {
   const [mode = "print", ...rest] = process.argv.slice(2);
   if (mode === "push") return push(rest);
   if (mode === "status") return status(rest);
+  if (mode === "payload") {
+    // Offline: the exact JSON each creation POST would carry.
+    for (const spec of allWhatsAppTemplates()) {
+      console.log(`--- ${spec.metaName}`);
+      console.log(JSON.stringify(creationPayload(spec), null, 2));
+    }
+    return;
+  }
   return print();
 }
 
