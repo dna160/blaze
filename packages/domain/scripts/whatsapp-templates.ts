@@ -21,7 +21,7 @@ import {
   type WhatsAppTemplateSpec,
 } from "../src/comms/whatsapp-templates.js";
 
-const GRAPH = "https://graph.facebook.com/v21.0";
+import { checkCredential, describeGraphError, graphJson, GRAPH } from "./graph.js";
 
 /**
  * Meta requires a sample value per `{{n}}` at submission — a template with
@@ -101,36 +101,6 @@ function credentials(argv: string[]): { waba: string; token: string } {
   return { waba, token };
 }
 
-/**
- * Reject a value that is obviously a placeholder from the setup doc rather than
- * a real credential.
- *
- * Without this, a pasted `EAAP…` or `<your token>` reaches fetch() and comes
- * back as "Cannot convert argument to a ByteString because the character at
- * index 21 has a value of 8230" — an error about header encoding that says
- * nothing about the actual mistake. Anything outside printable ASCII cannot go
- * in an HTTP header at all, so checking here costs nothing and turns a dead end
- * into an instruction.
- */
-function checkCredential(name: string, value: string): void {
-  const nonAscii = [...value].find((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) > 126);
-  if (nonAscii) {
-    console.error(
-      `${name} contains a character that cannot appear in an HTTP header: ${JSON.stringify(nonAscii)} ` +
-        `(U+${nonAscii.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")}).\n` +
-        "This is almost always a placeholder pasted from the docs — an ellipsis or angle brackets.\n" +
-        "Paste the whole real value instead, with nothing standing in for the middle of it.",
-    );
-    process.exit(1);
-  }
-  if (/[<>]/.test(value) || /\.\.\./.test(value) || /\b(your|paste|token here)\b/i.test(value)) {
-    console.error(
-      `${name} still looks like a placeholder (${JSON.stringify(value.slice(0, 32))}...).\n` +
-        "Replace it with the real value — including the angle brackets, if you copied those.",
-    );
-    process.exit(1);
-  }
-}
 
 interface RemoteTemplate {
   name: string;
@@ -139,42 +109,7 @@ interface RemoteTemplate {
   language: string;
 }
 
-/**
- * Read a Graph response as JSON without assuming it is JSON. A corporate proxy,
- * an egress filter or a Meta error page all return text, and `res.json()` on
- * those throws "Unexpected token 'H'" — which hides both the status code and
- * whatever the body actually said.
- */
-async function graphJson(res: Response): Promise<Record<string, unknown>> {
-  const body = await res.text();
-  try {
-    return JSON.parse(body) as Record<string, unknown>;
-  } catch {
-    throw new Error(
-      `Expected JSON from the Graph API but got ${res.status} ${res.statusText} with a non-JSON body:\n` +
-        `${body.slice(0, 300)}\n` +
-        "A proxy or network filter between you and graph.facebook.com is the usual cause.",
-    );
-  }
-}
 
-/**
- * Meta's "Invalid parameter" is a top-level placeholder; the reason is in the
- * sibling fields. Printing only `error.message` turns a specific complaint into
- * a dead end, so flatten everything Meta offers.
- */
-function describeGraphError(payload: Record<string, unknown>, status: number): string {
-  const e = (payload.error ?? {}) as Record<string, unknown>;
-  const data = (e.error_data ?? {}) as Record<string, unknown>;
-  const parts = [
-    e.message ?? `HTTP ${status}`,
-    e.error_user_title ? `title: ${e.error_user_title}` : null,
-    e.error_user_msg ? `detail: ${e.error_user_msg}` : null,
-    data.details ? `details: ${data.details}` : null,
-    e.code !== undefined ? `code ${e.code}${e.error_subcode ? `/${e.error_subcode}` : ""}` : null,
-  ].filter(Boolean);
-  return parts.join(" · ");
-}
 
 async function fetchRemote(waba: string, token: string): Promise<RemoteTemplate[]> {
   const out: RemoteTemplate[] = [];

@@ -20,7 +20,8 @@
     "db:migrate": "pnpm --filter @rentos/database migrate:deploy",
     "db:seed": "pnpm --filter @rentos/database seed",
     "format": "prettier --write \"**/*.{ts,tsx,md,json}\" --ignore-path .gitignore",
-    "wa:templates": "pnpm --filter @rentos/domain wa:templates"
+    "wa:templates": "pnpm --filter @rentos/domain wa:templates",
+    "wa:number": "pnpm --filter @rentos/domain wa:number"
   },
   "devDependencies": {
     "prettier": "^3.4.2",

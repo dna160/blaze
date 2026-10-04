@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "lint": "eslint . --ext .ts",
     "typecheck": "tsc --noEmit",
-    "wa:templates": "tsx scripts/whatsapp-templates.ts"
+    "wa:templates": "tsx scripts/whatsapp-templates.ts",
+    "wa:number": "tsx scripts/whatsapp-number.ts"
   },
   "dependencies": {
     "decimal.js": "^10.4.3"
