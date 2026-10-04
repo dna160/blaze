@@ -29,10 +29,17 @@ export function checkCredential(name: string, value: string): void {
     );
     process.exit(1);
   }
-  if (/[<>]/.test(value) || /\.\.\./.test(value) || /\b(your|paste|token here|here)\b/i.test(value)) {
+  // SCREAMING_SNAKE_CASE is how every placeholder in the docs is written, and
+  // the previous check missed it: it looked for the word "paste" with word
+  // boundaries, and `_` is a word character, so PASTE_THE_EXPLORER_TOKEN slipped
+  // past into an Authentication Error. Requiring a letter or underscore keeps a
+  // purely numeric id (a WABA, a phone number) from being mistaken for one.
+  const screamingSnake = /^(?=.*[A-Z_])[A-Z0-9_]{4,}$/.test(value);
+  if (screamingSnake || /[<>]/.test(value) || /\.\.\./.test(value) || /(your|paste|replace|example)/i.test(value)) {
     console.error(
-      `${name} still looks like a placeholder (${JSON.stringify(value.slice(0, 32))}...).\n` +
-        "Replace it with the real value — including the angle brackets, if you copied those.",
+      `${name} is a placeholder, not a value: ${JSON.stringify(value.slice(0, 40))}.\n` +
+        "Substitute the real thing — the whole string, with nothing standing in for part of it,\n" +
+        "and without any angle brackets you may have copied along with it.",
     );
     process.exit(1);
   }
@@ -79,8 +86,8 @@ export function describeGraphError(payload: Record<string, unknown>, status: num
   if (e.error_subcode === 33) {
     text +=
       "\n  Subcode 33 means one of: the id does not exist, your token has no access to it, or the\n" +
-      "  endpoint does not support this call. Run `pnpm wa:number list` to see what this token can\n" +
-      "  actually reach — an id that is simply gone looks identical to one you cannot see.";
+      "  endpoint does not support this call. An id that has been torn down looks identical to one\n" +
+      "  your token simply cannot see, so check the asset assignment before concluding it is gone.";
   }
   return text;
 }
