@@ -254,6 +254,49 @@ handshake:
 The symptom of either is identical and silent: messages arrive on the phone,
 nothing reaches the API, and the logs show only the original verification `GET`.
 
+### If a number is stuck, the handset is the first thing to check
+
+A number signed in to the WhatsApp or WhatsApp Business **app** is not free, and
+Meta will not verify it for the Cloud API while that is true. The refusal is
+`POST /{phone-number-id}/request_code` returning code 136024 / subcode 2388091,
+whose text claims the servers are temporarily unavailable and asks you to wait an
+hour. It is not transient: it persisted for days here, across billing checks,
+token regenerations and two wrong theories about partner ownership.
+
+Delete the account in the app first (Settings → Account → Delete my account),
+then `request_code` works. That erases the chat history on that handset and is
+not reversible.
+
+**Deleting it can also tear down the WABA.** That happened here: the account went,
+and the WhatsApp Business Account and its phone number id went with it. Every
+subsequent read failed with subcode 33, which is indistinguishable from a
+permissions problem — see below. If this happens, re-onboard through
+developers.facebook.com → your app → WhatsApp → API Setup: the number is now free,
+so it registers on the Cloud API from the start, with no migration needed. You
+get a new WABA id and a new phone number id, and both have to be updated in
+Console → Settings → Messaging.
+
+### Subcode 33 and (#200) mean "look at your token", not "it is broken"
+
+Two error shapes cost hours here and neither says what it means:
+
+- **`(#200) Requires business_management permission`** — the token lacks that
+  scope. The WhatsApp scopes alone cannot enumerate a business's accounts, and
+  `business_management` is easy to miss because it is not what you go looking for
+  when setting up WhatsApp.
+- **Subcode 33, "does not exist, cannot be loaded due to missing permissions, or
+  does not support this operation"** — all three at once, with no way to tell
+  which. A system user holding `whatsapp_business_management` but with **no WABA
+  assigned as an asset** produces exactly this, and reads identically to an
+  account that has genuinely been deleted.
+
+`pnpm wa:number list` exists to separate them: it prints the token's type, its
+scopes, which required ones are missing, and whether a system user has any assets
+at all. Run it before concluding anything from a subcode 33.
+
+A system user needs **Business Settings → Users → System Users → Add Assets →
+WhatsApp Accounts → Full control**. Scopes without assets grant nothing.
+
 ### The number must be on the Cloud API, not On-Premise
 
 A number can be present on the WABA, `CONNECTED`, with an approved display name,
