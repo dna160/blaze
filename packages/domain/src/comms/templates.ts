@@ -72,6 +72,12 @@ const TEMPLATES: Record<string, (vars: Vars) => RenderedMessage> = {
       `Halo ${v(vars, "customerName", "Pelanggan")}, permintaan Anda disetujui. Langkah berikutnya: verifikasi identitas (unggah KTP dan selfie) melalui tautan di bawah.\n` +
       `Your request is approved. Next: verify your identity (KTP + selfie) using the link below.\n\n${v(vars, "link")}`,
   }),
+  login_link: (vars) => ({
+    subject: "Tautan masuk / Your sign-in link",
+    text:
+      `Halo ${v(vars, "customerName", "Pelanggan")}, berikut tautan untuk masuk ke akun sewa Anda. Berlaku 15 menit, mohon jangan dibagikan.\n` +
+      `Here is your link to sign in to your rental account. Valid for 15 minutes — please don't share it.\n\nMasuk / Sign in: ${v(vars, "link")}`,
+  }),
   kyc_requested: (vars) => ({
     subject: "Verifikasi identitas Anda / Verify your identity",
     text:

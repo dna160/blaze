@@ -82,6 +82,9 @@ const CALL_SITES: Array<{ site: string; templateKey: string; variables: Record<s
   { site: "dunning-ladder.job (suspend)", templateKey: "lease_suspended", metaName: "lease_suspended", params: 3,
     variables: viaNotifyCustomer({ invoiceNumber: "INV-1" }) },
 
+  { site: "auth.service requestMagicLink", templateKey: "login_link", metaName: "login_link", params: 2,
+    variables: viaNotify({ customerName: "Budi Santoso", link: "https://s.example/m/tok?next=%2Fportal" }) },
+
   // apps/api/src/auth/auth.service.ts — through `notify`, code only.
   { site: "auth.service sendOtp", templateKey: "otp_code", metaName: "otp_code", params: 1, variables: viaNotify({ code: "483920" }) },
 ];
@@ -122,6 +125,7 @@ describe("notify call sites satisfy their WhatsApp templates", () => {
         "invoice_reminder_admin",
         "kyc_requested",
         "lease_suspended",
+        "login_link",
         "notice_confirmed",
         "otp_code",
         "renewal_offer_h14",

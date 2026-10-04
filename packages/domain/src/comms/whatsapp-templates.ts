@@ -198,6 +198,22 @@ const TEMPLATES: Record<string, WhatsAppTemplateSpec> = {
 
   /* ------------------------------------------------------------ onboarding */
 
+  /**
+   * Passwordless sign-in. Exists because Meta gates AUTHENTICATION-category
+   * templates separately, and `otp_code` is refused on a new WABA — but a link
+   * that signs the customer straight into their own rental is better UX than a
+   * code they have to retype, and it rides a category this account can create.
+   */
+  login_link: {
+    metaName: "login_link",
+    category: "UTILITY",
+    params: ["customerName", "link"],
+    body:
+      "Halo {{1}}, berikut tautan untuk masuk ke akun sewa Anda. Tautan ini hanya berlaku 15 menit dan hanya untuk Anda — mohon jangan dibagikan.\n" +
+      "Hi {{1}}, here is your link to sign in to your rental account. It is valid for 15 minutes and is just for you — please don't share it.\n\n" +
+      `Masuk / Sign in: {{2}}\n${THANKS}`,
+  },
+
   kyc_requested: {
     metaName: "kyc_requested",
     category: "UTILITY",

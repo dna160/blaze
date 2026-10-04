@@ -4,6 +4,7 @@ import {
   ClerkExchangeSchema,
   ConsoleLoginRequestSchema,
   MagicLinkExchangeSchema,
+  MagicLinkRequestSchema,
   OtpRequestSchema,
   OtpVerifySchema,
   PlatformLoginRequestSchema,
@@ -51,6 +52,20 @@ export class AuthController {
     @Body(new ZodValidationPipe(OtpVerifySchema)) body: ReturnType<typeof OtpVerifySchema.parse>,
   ) {
     return this.auth.verifyOtp(tenant, body.phone, body.code);
+  }
+
+  /**
+   * Ask for a sign-in link by phone. Always answers "sent", whether or not the
+   * number is known — the alternative turns this into a way to find out who
+   * rents from this branch.
+   */
+  @Post("magic/request")
+  async requestMagicLink(
+    @CurrentTenant() tenant: ResolvedTenant,
+    @Body(new ZodValidationPipe(MagicLinkRequestSchema)) body: ReturnType<typeof MagicLinkRequestSchema.parse>,
+  ) {
+    await this.auth.requestMagicLink(tenant, body.phone);
+    return { status: "sent" };
   }
 
   /** PRD v2 §9 — magic link from a WhatsApp/email message -> customer session, no OTP. */

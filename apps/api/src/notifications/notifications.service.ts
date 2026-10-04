@@ -139,9 +139,20 @@ export class NotificationsService {
   }
 
   /** Public so other modules (e.g. the console "copy KYC link" action) can mint a link without sending a message. */
-  async mintMagicLink(tenantId: string, tenantSlug: string, customerId: string, purpose: string, next: string): Promise<string> {
+  async mintMagicLink(
+    tenantId: string,
+    tenantSlug: string,
+    customerId: string,
+    purpose: string,
+    next: string,
+    ttlDays?: number,
+  ): Promise<string> {
     const { token } = await this.prisma.runInTenantContext(tenantId, (tx) =>
-      findOrCreateCustomerAccessToken(tx, tenantId, customerId, purpose),
+      // Omitted, the shared default applies: a link in a booking message stays
+      // usable for the life of that message. Sign-in links pass a short one.
+      ttlDays === undefined
+        ? findOrCreateCustomerAccessToken(tx, tenantId, customerId, purpose)
+        : findOrCreateCustomerAccessToken(tx, tenantId, customerId, purpose, ttlDays),
     );
     return buildMagicLinkUrl(await this.storefrontBaseUrl(tenantId, tenantSlug), token, next);
   }

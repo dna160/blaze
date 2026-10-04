@@ -86,6 +86,15 @@ export const CustomerSessionSchema = z.object({
  * Magic link (PRD v2 §9): the token from a `/m/{token}` link in a WhatsApp
  * or email message, exchanged for a normal customer session — no OTP.
  */
+/**
+ * Passwordless sign-in by phone: we send a magic link rather than a code.
+ * The response never says whether the number is known — see the service.
+ */
+export const MagicLinkRequestSchema = z.object({
+  phone: z.string().trim().min(8).max(20),
+});
+export type MagicLinkRequest = z.infer<typeof MagicLinkRequestSchema>;
+
 export const MagicLinkExchangeSchema = z.object({
   token: z.string().min(16).max(200),
 });

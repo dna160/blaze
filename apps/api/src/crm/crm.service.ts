@@ -22,6 +22,26 @@ const LIVE_BOOKING_STATUSES = [
 export class CrmService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Resolve a customer by phone WITHOUT creating one. Same resolution as
+   * getOrCreateByPhone — canonical number, or a VERIFIED additional number —
+   * for callers that must not bring an account into existence.
+   *
+   * Sign-in is the case that needs this: the request is unauthenticated and
+   * keyed only on a phone number, so creating on lookup would let anyone fill
+   * the table with accounts by posting numbers at it. Accounts are created by
+   * booking, or by proving control of the number, not by asking to log in.
+   */
+  async findByPhone(tenantId: string, phone: string) {
+    return this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const byCanonical = await tx.customer.findUnique({ where: { tenantId_phone: { tenantId, phone } } });
+      if (byCanonical) return byCanonical;
+      const additional = await tx.customerPhone
+        .findUnique({ where: { tenantId_phone: { tenantId, phone } }, include: { customer: true } });
+      return additional?.verifiedAt ? additional.customer : null;
+    });
+  }
+
   async getOrCreateByPhone(tenantId: string, phone: string, fullName?: string) {
     return this.prisma.runInTenantContext(tenantId, async (tx) => {
       // #3 — a business account maps multiple WhatsApp numbers to one Customer.

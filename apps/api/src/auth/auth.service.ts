@@ -13,6 +13,17 @@ import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 const OTP_TTL_SECONDS = 5 * 60;
 
 /**
+ * Sign-in links live 15 minutes, not the 30 days a message link gets. A link in
+ * a booking confirmation is meant to be reusable from that message for the life
+ * of the rental; a link that grants a session on demand is a credential, and the
+ * blast radius of a forwarded one should be minutes.
+ */
+const LOGIN_LINK_TTL_DAYS = 15 / (24 * 60);
+
+/** One sign-in link per number per minute. An unauthenticated endpoint that sends WhatsApp messages costs real money to abuse. */
+const LOGIN_LINK_COOLDOWN_SECONDS = 60;
+
+/**
  * DEV-ONLY OTP bypass — for demos/testing before the WhatsApp Cloud API is live.
  * Returns the accepted bypass code only when BOTH are true: we are NOT in
  * production (`NODE_ENV !== "production"`) AND `DEV_OTP_BYPASS_CODE` is explicitly
@@ -127,6 +138,64 @@ export class AuthService {
       templateKey: "otp_code",
       recipient: phone,
       variables: { code },
+    });
+  }
+
+  /**
+   * Passwordless sign-in by magic link (PRD v2 §9), the primary path now that
+   * Meta gates AUTHENTICATION-category templates separately and `otp_code`
+   * cannot be created on a new WABA. A link is also simply better: the customer
+   * taps once instead of copying a code between two apps.
+   *
+   * Deliberately says nothing about whether the number is known. The caller
+   * always sees the same answer, so this cannot be used to discover who rents
+   * from this branch — which an unauthenticated endpoint keyed on phone number
+   * otherwise would be.
+   */
+  async requestMagicLink(tenant: ResolvedTenant, phone: string): Promise<void> {
+    const cooldownKey = `login-link:${tenant.id}:${phone}`;
+    const fresh = await this.redis.client.set(cooldownKey, "1", "EX", LOGIN_LINK_COOLDOWN_SECONDS, "NX");
+    if (!fresh) {
+      // Already sent one in the last minute. Silently done, for the same reason
+      // the response never varies: a rate-limit message is itself a signal.
+      this.logger.log(`Sign-in link for ${phone} suppressed by cooldown.`);
+      return;
+    }
+
+    // Looked up, never created. The OTP path only calls getOrCreateByPhone after
+    // the code is verified — i.e. after control of the number is proven — and
+    // this endpoint is unauthenticated, so creating here would let anyone fill
+    // the customer table by posting phone numbers at it. An unknown number is
+    // silently a no-op; accounts come from booking.
+    const customer = await this.crm.findByPhone(tenant.id, phone);
+    if (!customer) {
+      this.logger.log(`Sign-in link requested for an unknown number on ${tenant.slug}; nothing sent.`);
+      return;
+    }
+    if (customer.isBlocklisted) {
+      this.logger.warn(`Sign-in link requested for blocklisted customer ${customer.id}.`);
+      return;
+    }
+
+    const link = await this.notifications.mintMagicLink(
+      tenant.id,
+      tenant.slug,
+      customer.id,
+      "LOGIN",
+      "/portal",
+      LOGIN_LINK_TTL_DAYS,
+    );
+
+    // Sent to the number that asked, on WhatsApp, rather than through
+    // notifyCustomer's preferred-channel routing: someone signing in by phone
+    // expects the link on that phone, not in an inbox they may not have open.
+    await this.notifications.notify({
+      tenantId: tenant.id,
+      customerId: customer.id,
+      channel: "WHATSAPP",
+      templateKey: "login_link",
+      recipient: phone,
+      variables: { customerName: customer.fullName ?? "Pelanggan", link },
     });
   }
 

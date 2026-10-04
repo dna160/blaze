@@ -151,6 +151,15 @@ describe("whatsapp template registry", () => {
     });
   });
 
+  it("keeps sign-in on a category this account can actually create", () => {
+    // Meta gates AUTHENTICATION separately, and a new WABA is refused it — which
+    // is why login_link exists at all. If it ever drifts into that category the
+    // whole sign-in path silently becomes unavailable again.
+    const login = allWhatsAppTemplates().find((t) => t.metaName === "login_link");
+    expect(login?.category).toBe("UTILITY");
+    expect(login?.params).toEqual(["customerName", "link"]);
+  });
+
   it("gives each Meta name exactly one spec", () => {
     const names = allWhatsAppTemplates().map((t) => t.metaName);
     expect(new Set(names).size).toBe(names.length);
