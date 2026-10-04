@@ -60,14 +60,33 @@ async function list(argv: string[]): Promise<void> {
   if (debug.ok) {
     const d = (debug.json as { data?: Record<string, unknown> }).data ?? {};
     const scopes = (d.granular_scopes ?? []) as Array<{ scope: string; target_ids?: string[] }>;
-    console.log(`Token type: ${d.type ?? "?"}   valid: ${d.is_valid}   expires: ${d.expires_at === 0 ? "never" : d.expires_at}`);
+    const expiry =
+      d.expires_at === 0 ? "never" : new Date(Number(d.expires_at) * 1000).toISOString().replace("T", " ").slice(0, 16);
+    console.log(`Token type: ${d.type ?? "?"}   valid: ${d.is_valid}   expires: ${expiry}`);
+
+    // Print what the token actually holds. Inferring a missing scope from a
+    // (#200) is exactly the guessing this tool exists to end.
+    const held = new Set((d.scopes ?? []) as string[]);
+    console.log(`Scopes: ${[...held].join(", ") || "(none)"}`);
+    const needed = ["business_management", "whatsapp_business_management", "whatsapp_business_messaging"];
+    const missing = needed.filter((n) => !held.has(n));
+    if (missing.length > 0) {
+      console.log(`  MISSING: ${missing.join(", ")}`);
+      if (missing.includes("business_management")) {
+        console.log("  Without business_management the WABA enumeration below cannot run at all —");
+        console.log("  it is easy to miss, because the WhatsApp scopes are the ones you go looking for.");
+      }
+    }
+
+    // Only a system user has assets assigned to it; a user token inherits the
+    // person's own access, so the absence of target_ids means nothing there.
     const assets = scopes.flatMap((s) => s.target_ids ?? []);
-    if (scopes.length > 0 && assets.length === 0) {
+    if (d.type === "SYSTEM_USER" && scopes.length > 0 && assets.length === 0) {
       console.log(
-        "  NOTE: the scopes carry no target_ids, so this token has permissions but no assets\n" +
-          "  assigned. A system user needs the WABA added under Business Settings -> Users ->\n" +
-          "  System Users -> Add Assets -> WhatsApp Accounts -> Full control, or every read below\n" +
-          "  fails as though the account did not exist.",
+        "  NOTE: the scopes carry no target_ids, so this system user has permissions but no\n" +
+          "  assets assigned. Add the WABA under Business Settings -> Users -> System Users ->\n" +
+          "  Add Assets -> WhatsApp Accounts -> Full control, or every read below fails as\n" +
+          "  though the account did not exist.",
       );
     }
   }
