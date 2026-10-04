@@ -1080,9 +1080,14 @@ model Notification {
   providerRef   String?   @map("provider_ref")
   error         String?
   sentAt        DateTime? @map("sent_at")
+  /// Messaging inbox — when staff opened the thread after this inbound arrived.
+  /// Null means unread. Only meaningful on inbound rows.
+  readAt        DateTime? @map("read_at")
   createdAt     DateTime  @default(now()) @map("created_at")
 
   @@index([tenantId])
+  /// The inbox groups by (tenant, counterpart phone) and orders by time.
+  @@index([tenantId, recipient, createdAt])
   @@map("notifications")
 }
 

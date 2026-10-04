@@ -44,6 +44,6 @@ import { WhatsAppWebhookService } from "./whatsapp-webhook.service.js";
     },
     NotificationsService,
   ],
-  exports: [NotificationsService],
+  exports: [NotificationsService, MESSAGING_PROVIDERS],
 })
 export class NotificationsModule {}

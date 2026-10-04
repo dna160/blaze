@@ -28,6 +28,11 @@ interface MetaStatus {
   errors?: Array<{ code?: number; title?: string; message?: string; error_data?: { details?: string } }>;
 }
 
+interface MetaMedia {
+  id?: string;
+  caption?: string;
+}
+
 interface MetaMessage {
   id: string;
   from: string;
@@ -35,12 +40,24 @@ interface MetaMessage {
   text?: { body: string };
   button?: { text?: string };
   interactive?: unknown;
+  image?: MetaMedia;
+  document?: MetaMedia;
+  audio?: MetaMedia;
+  video?: MetaMedia;
+  sticker?: MetaMedia;
+}
+
+/** Meta sends the sender's WhatsApp profile name alongside every inbound message. */
+interface MetaContact {
+  wa_id?: string;
+  profile?: { name?: string };
 }
 
 interface MetaChangeValue {
   metadata?: { phone_number_id?: string; display_phone_number?: string };
   statuses?: MetaStatus[];
   messages?: MetaMessage[];
+  contacts?: MetaContact[];
 }
 
 export interface WhatsAppWebhookPayload {
@@ -108,7 +125,7 @@ export class WhatsAppWebhookService {
         }
 
         for (const status of value.statuses ?? []) await this.applyStatus(tenantIds, status);
-        for (const message of value.messages ?? []) await this.recordInbound(tenantIds, message);
+        for (const message of value.messages ?? []) await this.recordInbound(tenantIds, message, value.contacts ?? []);
       }
     }
   }
@@ -182,8 +199,9 @@ export class WhatsAppWebhookService {
    * needs to read. Surfacing it in the console is a separate piece of work —
    * this only guarantees the message is not lost.
    */
-  private async recordInbound(tenantIds: string[], message: MetaMessage): Promise<void> {
+  private async recordInbound(tenantIds: string[], message: MetaMessage, contacts: MetaContact[]): Promise<void> {
     const text = message.text?.body ?? message.button?.text ?? `(${message.type})`;
+    const profileName = contacts.find((c) => c.wa_id === message.from)?.profile?.name;
 
     // One organization is many branches; the reply belongs to whichever branch
     // knows this phone number. Meta strips the leading +, and customers are
@@ -194,7 +212,7 @@ export class WhatsAppWebhookService {
         tx.customer.findFirst({ where: { phone: { in: candidates } }, select: { id: true } }),
       );
       if (!customer) continue;
-      const saved = await this.saveInbound(tenantId, customer.id, message, text);
+      const saved = await this.saveInbound(tenantId, customer.id, message, text, profileName);
       if (saved) await this.autoReply(tenantId, message.from);
       return;
     }
@@ -203,7 +221,7 @@ export class WhatsAppWebhookService {
     // branch, rather than being dropped.
     const fallback = tenantIds[0];
     if (fallback) {
-      const saved = await this.saveInbound(fallback, null, message, text);
+      const saved = await this.saveInbound(fallback, null, message, text, profileName);
       if (saved) await this.autoReply(fallback, message.from);
     }
   }
@@ -249,8 +267,21 @@ export class WhatsAppWebhookService {
     }
   }
 
+  /** The attachment id and caption for a media message, so the inbox can label it. Downloading is out of scope. */
+  private mediaOf(message: MetaMessage): { mediaId?: string; caption?: string } {
+    const media = message.image ?? message.document ?? message.audio ?? message.video ?? message.sticker;
+    if (!media) return {};
+    return { ...(media.id ? { mediaId: media.id } : {}), ...(media.caption ? { caption: media.caption } : {}) };
+  }
+
   /** Returns false when this message was already recorded, so callers can skip re-acting to a redelivery. */
-  private async saveInbound(tenantId: string, customerId: string | null, message: MetaMessage, text: string): Promise<boolean> {
+  private async saveInbound(
+    tenantId: string,
+    customerId: string | null,
+    message: MetaMessage,
+    text: string,
+    profileName?: string,
+  ): Promise<boolean> {
     return this.prisma.runInTenantContext(tenantId, async (tx) => {
       // Meta retries a delivery it thinks failed, so the same message id can
       // arrive more than once.
@@ -264,7 +295,12 @@ export class WhatsAppWebhookService {
           templateKey: "inbound_message",
           recipientRole: "CUSTOMER",
           recipient: message.from,
-          payload: { text, waMessageType: message.type },
+          payload: {
+            text,
+            waMessageType: message.type,
+            ...(profileName ? { profileName } : {}),
+            ...this.mediaOf(message),
+          },
           status: "RECEIVED",
           providerRef: message.id,
           sentAt: new Date(),

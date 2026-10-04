@@ -17,6 +17,7 @@ import { ExternalApiModule } from "./external-api/external-api.module.js";
 import { FinanceModule } from "./finance/finance.module.js";
 import { HealthController } from "./health/health.controller.js";
 import { KycModule } from "./kyc/kyc.module.js";
+import { MessagingModule } from "./messaging/messaging.module.js";
 import { NotificationsModule } from "./notifications/notifications.module.js";
 import { OrganizationModule } from "./organization/organization.module.js";
 import { OtaSyncModule } from "./ota-sync/ota-sync.module.js";
@@ -49,6 +50,7 @@ import { WebhookDispatchModule } from "./webhook-dispatch/webhook-dispatch.modul
     DepositsModule,
     KycModule,
     NotificationsModule,
+    MessagingModule,
     OrganizationModule,
     RentalOrderModule,
     WaitlistModule,

@@ -40,6 +40,12 @@ export interface MessagingProvider {
    * an approved template.
    */
   sendText(params: SendTextMessageParams, config: ResolvedMessagingConfig): Promise<SendTemplateMessageResult>;
+  /**
+   * Tell WhatsApp the customer's message has been read, so they see the blue
+   * ticks. Cosmetic: callers log and carry on if it fails, because failing to
+   * render a tick must never cost the staff member the thread they opened.
+   */
+  markRead(providerRef: string, config: ResolvedMessagingConfig): Promise<void>;
 }
 
 /** Every adapter, keyed by the provider name stored on the organization. */

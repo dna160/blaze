@@ -23,4 +23,8 @@ export class ConsoleLogMessagingProvider implements MessagingProvider {
     this.logger.log(`[WA text -> ${params.to}] ${params.text}`);
     return { providerRef: `console-${randomUUID()}` };
   }
+
+  async markRead(providerRef: string): Promise<void> {
+    this.logger.log(`[WA read] ${providerRef}`);
+  }
 }

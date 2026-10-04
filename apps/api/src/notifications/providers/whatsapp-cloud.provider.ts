@@ -93,4 +93,26 @@ export class WhatsAppCloudMessagingProvider implements MessagingProvider {
     const json = (await response.json()) as { messages?: Array<{ id: string }> };
     return { providerRef: json.messages?.[0]?.id ?? "unknown" };
   }
+
+  /**
+   * Blue ticks on the customer's side. Deliberately swallows its own failure:
+   * this is called when staff open a thread, and a read receipt Meta refused is
+   * never worth failing that request over.
+   */
+  async markRead(providerRef: string, config: ResolvedMessagingConfig): Promise<void> {
+    const creds = config.whatsapp;
+    if (!creds?.accessToken || !creds.phoneNumberId) return;
+    try {
+      const response = await fetch(`${this.apiBase}/${creds.phoneNumberId}/messages`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${creds.accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ messaging_product: "whatsapp", status: "read", message_id: providerRef }),
+      });
+      if (!response.ok) {
+        this.logger.warn(`Read receipt for ${providerRef} refused: ${response.status} ${(await response.text()).slice(0, 200)}`);
+      }
+    } catch (err) {
+      this.logger.warn(`Read receipt for ${providerRef} failed: ${(err as Error).message}`);
+    }
+  }
 }
