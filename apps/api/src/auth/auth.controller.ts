@@ -5,8 +5,6 @@ import {
   ConsoleLoginRequestSchema,
   MagicLinkExchangeSchema,
   MagicLinkRequestSchema,
-  OtpRequestSchema,
-  OtpVerifySchema,
   PlatformLoginRequestSchema,
 } from "@rentos/contracts";
 
@@ -35,23 +33,6 @@ export class AuthController {
     @Body(new ZodValidationPipe(PlatformLoginRequestSchema)) body: ReturnType<typeof PlatformLoginRequestSchema.parse>,
   ) {
     return this.auth.platformLogin(body.email, body.password);
-  }
-
-  @Post("otp/request")
-  async requestOtp(
-    @CurrentTenant() tenant: ResolvedTenant,
-    @Body(new ZodValidationPipe(OtpRequestSchema)) body: ReturnType<typeof OtpRequestSchema.parse>,
-  ) {
-    await this.auth.requestOtp(tenant, body.phone);
-    return { status: "sent" };
-  }
-
-  @Post("otp/verify")
-  verifyOtp(
-    @CurrentTenant() tenant: ResolvedTenant,
-    @Body(new ZodValidationPipe(OtpVerifySchema)) body: ReturnType<typeof OtpVerifySchema.parse>,
-  ) {
-    return this.auth.verifyOtp(tenant, body.phone, body.code);
   }
 
   /**

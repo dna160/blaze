@@ -1,7 +1,6 @@
 import { Injectable, Logger, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { compare } from "bcryptjs";
-import { randomInt } from "node:crypto";
 import { exchangeCustomerAccessToken } from "@rentos/database";
 
 import { RedisService } from "../common/redis/redis.service.js";
@@ -9,8 +8,6 @@ import { CrmService } from "../crm/crm.service.js";
 import { NotificationsService } from "../notifications/notifications.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
-
-const OTP_TTL_SECONDS = 5 * 60;
 
 /**
  * Sign-in links live 15 minutes, not the 30 days a message link gets. A link in
@@ -22,19 +19,6 @@ const LOGIN_LINK_TTL_DAYS = 15 / (24 * 60);
 
 /** One sign-in link per number per minute. An unauthenticated endpoint that sends WhatsApp messages costs real money to abuse. */
 const LOGIN_LINK_COOLDOWN_SECONDS = 60;
-
-/**
- * DEV-ONLY OTP bypass — for demos/testing before the WhatsApp Cloud API is live.
- * Returns the accepted bypass code only when BOTH are true: we are NOT in
- * production (`NODE_ENV !== "production"`) AND `DEV_OTP_BYPASS_CODE` is explicitly
- * set. Both gates must hold, so the bypass can never authenticate anyone in a
- * production build even if the env var leaks into it. Returns null when disabled.
- */
-function devOtpBypassCode(): string | null {
-  if (process.env.NODE_ENV === "production") return null;
-  const code = process.env.DEV_OTP_BYPASS_CODE;
-  return code && code.length > 0 ? code : null;
-}
 
 interface CustomerLike {
   id: string;
@@ -128,24 +112,12 @@ export class AuthService {
     };
   }
 
-  /** Customer OTP request — "phone number + WhatsApp OTP (primary)... No passwords in v1" (PRD §7.1.2). */
-  async requestOtp(tenant: ResolvedTenant, phone: string): Promise<void> {
-    const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
-    await this.redis.client.set(this.otpKey(tenant.id, phone), code, "EX", OTP_TTL_SECONDS);
-    await this.notifications.notify({
-      tenantId: tenant.id,
-      channel: "WHATSAPP",
-      templateKey: "otp_code",
-      recipient: phone,
-      variables: { code },
-    });
-  }
-
   /**
-   * Passwordless sign-in by magic link (PRD v2 §9), the primary path now that
-   * Meta gates AUTHENTICATION-category templates separately and `otp_code`
-   * cannot be created on a new WABA. A link is also simply better: the customer
-   * taps once instead of copying a code between two apps.
+   * Passwordless sign-in by magic link (PRD v2 §9) — now the only path. Meta
+   * gates AUTHENTICATION-category templates separately and refuses to create
+   * one on this account, so a passcode cannot be delivered at all; the OTP
+   * endpoints were removed rather than left to fail. A link is also simply
+   * better: the customer taps once instead of copying a code between two apps.
    *
    * Deliberately says nothing about whether the number is known. The caller
    * always sees the same answer, so this cannot be used to discover who rents
@@ -153,6 +125,23 @@ export class AuthService {
    * otherwise would be.
    */
   async requestMagicLink(tenant: ResolvedTenant, phone: string): Promise<void> {
+    // Checked before the cooldown and before the number is looked up, so the
+    // answer is identical for a registered and an unregistered number. Doing it
+    // after the lookup would make a 503 mean "this number rents here" and turn
+    // the endpoint into exactly the enumeration oracle the uniform response
+    // exists to prevent — the failure would be honest and the privacy gone.
+    //
+    // This is the one case where the customer is told something went wrong,
+    // because a sign-in link that cannot be delivered is a sign-in that cannot
+    // happen. Leaving them on a "check WhatsApp" screen for a message Meta
+    // already refused is the behaviour this replaces.
+    if (await this.notifications.isChannelDegraded(tenant.id)) {
+      throw new ServiceUnavailableException(
+        "Sign-in by WhatsApp is temporarily unavailable. Please try again in a few minutes, " +
+          "or use a sign-in link from one of our earlier messages.",
+      );
+    }
+
     const cooldownKey = `login-link:${tenant.id}:${phone}`;
     const fresh = await this.redis.client.set(cooldownKey, "1", "EX", LOGIN_LINK_COOLDOWN_SECONDS, "NX");
     if (!fresh) {
@@ -197,29 +186,6 @@ export class AuthService {
       recipient: phone,
       variables: { customerName: customer.fullName ?? "Pelanggan", link },
     });
-  }
-
-  async verifyOtp(tenant: ResolvedTenant, phone: string, code: string) {
-    const bypass = devOtpBypassCode();
-    if (bypass && code === bypass) {
-      // Dev/demo only — accept the fixed code without a real WhatsApp round-trip.
-      // Cannot run in production (see devOtpBypassCode). Loud so it never hides.
-      this.logger.warn(
-        `DEV OTP BYPASS accepted for ${phone} on tenant ${tenant.slug} — disable by unsetting DEV_OTP_BYPASS_CODE / running with NODE_ENV=production.`,
-      );
-      // Clear any real pending code so a subsequent real login isn't confused.
-      await this.redis.client.del(this.otpKey(tenant.id, phone));
-    } else {
-      const key = this.otpKey(tenant.id, phone);
-      const stored = await this.redis.client.get(key);
-      if (!stored || stored !== code) {
-        throw new UnauthorizedException("Invalid or expired code.");
-      }
-      await this.redis.client.del(key);
-    }
-
-    const customer = await this.crm.getOrCreateByPhone(tenant.id, phone);
-    return this.issueCustomerSession(tenant, customer);
   }
 
   /**
@@ -286,7 +252,4 @@ export class AuthService {
     };
   }
 
-  private otpKey(tenantId: string, phone: string): string {
-    return `otp:${tenantId}:${phone}`;
-  }
 }

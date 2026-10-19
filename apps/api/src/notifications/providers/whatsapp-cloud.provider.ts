@@ -8,6 +8,7 @@ import type {
   SendTextMessageParams,
   SendTemplateMessageResult,
 } from "../messaging-provider.interface.js";
+import { WhatsAppSendError } from "./whatsapp-send-error.js";
 
 /**
  * Meta WhatsApp Cloud API adapter (PRD §7.1.5, §11 MessagingProvider port).
@@ -52,7 +53,7 @@ export class WhatsAppCloudMessagingProvider implements MessagingProvider {
       const body = await response.text();
       // Meta echoes the request back on some errors; never log the auth header.
       this.logger.error(`WhatsApp Cloud API error ${response.status}: ${body}`);
-      throw new Error(`WhatsApp Cloud API error ${response.status}: ${body.slice(0, 300)}`);
+      throw WhatsAppSendError.fromResponse(response.status, body);
     }
 
     const json = (await response.json()) as { messages?: Array<{ id: string }> };
@@ -87,7 +88,7 @@ export class WhatsAppCloudMessagingProvider implements MessagingProvider {
     if (!response.ok) {
       const body = await response.text();
       this.logger.error(`WhatsApp Cloud text send failed ${response.status}: ${body}`);
-      throw new Error(`WhatsApp Cloud API error ${response.status}: ${body.slice(0, 300)}`);
+      throw WhatsAppSendError.fromResponse(response.status, body);
     }
 
     const json = (await response.json()) as { messages?: Array<{ id: string }> };

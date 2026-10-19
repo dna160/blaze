@@ -185,7 +185,12 @@ export class OrganizationService {
     }
 
     try {
-      const result = await this.notifications.sendTestMessage(config, body.to, "otp_code", { code: "123456" });
+      // connection_test takes no parameters, so the only things that can make
+      // this fail are the credentials and the number — which is the entire
+      // point of the button. It used to send otp_code, a template Meta will
+      // not create on this account, so the test always failed and told the
+      // admin their credentials were wrong when they were fine.
+      const result = await this.notifications.sendTestMessage(config, body.to, "connection_test", {});
       return { ok: true, provider: config.provider, providerRef: result.providerRef, error: null };
     } catch (err) {
       return { ok: false, provider: config.provider, providerRef: null, error: (err as Error).message };

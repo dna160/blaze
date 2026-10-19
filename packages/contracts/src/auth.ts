@@ -57,22 +57,12 @@ export const UpdateStaffRoleRequestSchema = z.object({
 export type UpdateStaffRoleRequest = z.infer<typeof UpdateStaffRoleRequestSchema>;
 
 /**
- * Customer auth — "phone number + WhatsApp OTP (primary)... No passwords
- * in v1 for customers; OTP-only" (PRD §7.1.2). v1 ships the request/verify
- * contract with a ConsoleLogProvider OTP adapter (see docs/HANDOFF.md) —
- * the WhatsApp OTP delivery itself is the same MessagingProvider seam
- * notifications use.
+ * Customer auth is passwordless and link-only (PRD §7.1.2 "no passwords in
+ * v1"). The OTP request/verify contract was removed with the endpoints: Meta
+ * will not create an AUTHENTICATION-category template on this account, so a
+ * passcode cannot be delivered, and a contract for an undeliverable flow is
+ * worse than no contract. See MagicLinkRequestSchema below.
  */
-export const OtpRequestSchema = z.object({
-  phone: z.string().min(8).max(20),
-});
-export type OtpRequest = z.infer<typeof OtpRequestSchema>;
-
-export const OtpVerifySchema = z.object({
-  phone: z.string().min(8).max(20),
-  code: z.string().length(6),
-});
-export type OtpVerify = z.infer<typeof OtpVerifySchema>;
 
 export const CustomerSessionSchema = z.object({
   id: z.string().uuid(),

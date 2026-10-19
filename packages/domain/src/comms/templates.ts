@@ -122,10 +122,6 @@ const TEMPLATES: Record<string, (vars: Vars) => RenderedMessage> = {
     subject: `Akses ditangguhkan / Access suspended — ${v(vars, "invoiceNumber", "")}`,
     text: `Invoice ${v(vars, "invoiceNumber", "")} belum dibayar; akses ke unit ditangguhkan sampai pembayaran diterima.\nInvoice ${v(vars, "invoiceNumber", "")} is unpaid; unit access is suspended until payment lands.\n\n${v(vars, "link")}`,
   }),
-  otp_code: (vars) => ({
-    subject: "Kode masuk / Your sign-in code",
-    text: `Kode Anda: ${v(vars, "code", "")}. Berlaku 5 menit.\nYour code: ${v(vars, "code", "")}. Valid for 5 minutes.`,
-  }),
 };
 
 export function renderMessage(templateKey: string, variables: Vars): RenderedMessage {

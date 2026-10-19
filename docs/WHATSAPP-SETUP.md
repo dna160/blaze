@@ -380,3 +380,100 @@ from notifications order by created_at desc limit 10;
   `MESSAGING_CONFIG_KEY` orphans the sealed token — messages fall back to the
   environment or to `console_log` rather than failing, so re-save the credentials
   in the console after any key change.
+
+---
+
+## The two templates sign-in depends on
+
+Create both on WABA `895129193550372`, either with `pnpm wa:templates push` or by
+hand in [WhatsApp Manager → Message templates](https://business.facebook.com/wa/manage/message-templates/).
+Both are **UTILITY**, which this account can create; neither is AUTHENTICATION,
+which it cannot.
+
+**Submitting is not approving.** Creation puts the template in `PENDING` and
+*Meta* reviews it, usually within minutes. It cannot be sent until Meta flips it
+to `APPROVED`. Check with `pnpm wa:templates status`.
+
+The body text must match the registry **exactly**, because parameters are
+positional: the code fills `{{1}}` and `{{2}}` from
+`packages/domain/src/comms/whatsapp-templates.ts`, so a template whose
+placeholders sit in a different order sends a link where a name belongs.
+
+### 1. `login_link` — required for customer sign-in
+
+Without this approved, nobody can log in: the magic link is the only sign-in
+path. Category **UTILITY**, language **Indonesian (id)**, two parameters.
+
+```
+Halo {{1}}, berikut tautan untuk masuk ke akun sewa Anda. Tautan ini hanya berlaku 15 menit dan hanya untuk Anda — mohon jangan dibagikan.
+Hi {{1}}, here is your link to sign in to your rental account. It is valid for 15 minutes and is just for you — please don't share it.
+
+Masuk / Sign in: {{2}}
+Terima kasih. / Thank you.
+```
+
+Sample values, which WhatsApp Manager asks for and reviewers judge:
+
+| | |
+|---|---|
+| `{{1}}` customerName | `Budi Santoso` |
+| `{{2}}` link | `https://sewa.example.co.id/m/8f2c1a` |
+
+### 2. `connection_test` — used by Settings → Messaging
+
+Category **UTILITY**, language **Indonesian (id)**, **no parameters**.
+
+```
+Ini pesan percobaan dari RentOS. Jika Anda menerimanya, koneksi WhatsApp cabang Anda sudah aktif.
+This is a test message from RentOS. If you received it, your branch's WhatsApp connection is working.
+
+Terima kasih. / Thank you.
+```
+
+It takes no parameters deliberately. The button exists to tell an admin whether
+their token and phone number ID are right, so nothing else should be able to
+make it fail — a parameterised template can be refused for a bad example value
+or an arity mismatch, and the admin would read that as bad credentials.
+
+## Why there is no OTP
+
+`otp_code` was removed, along with `/auth/otp/request`, `/auth/otp/verify` and
+the dev bypass. One-time passcodes must use Meta's AUTHENTICATION category, and
+this account is refused it:
+
+```
+code 10 / subcode 2388185 — "This WhatsApp Business account does not
+have permission to create message template"   (is_transient: false)
+```
+
+Retried a week apart with the same result, and Meta's own `is_transient: false`
+says waiting will not help. If the category is ever opened, the registry entry
+and the AUTHENTICATION branch in `buildWhatsAppTemplatePayload` are what to
+restore — that payload shape (fixed body, copy-code button) is the fiddly part
+and it was deliberately kept.
+
+## When sends start failing
+
+`notify()` records a failed send and returns: a booking must not fail because
+WhatsApp is down. But a sign-in link that cannot be delivered is a sign-in that
+cannot happen, so failures that affect **every** recipient now set a flag
+(`wa-degraded:{tenantId}` in Redis, 5-minute TTL) and `/auth/magic/request`
+answers **503** while it is set, instead of telling the customer to check
+WhatsApp for a message Meta already refused.
+
+Which failures count is an allow-list in
+`apps/api/src/notifications/providers/whatsapp-send-error.ts` — bad credentials,
+a missing/paused/disabled template, a locked or unpaid account, an unregistered
+number, rate limits. A recipient-specific refusal (131030 not in the allow-list,
+131047 outside the window) never trips it, and an **unrecognised code does not
+either**: misreading a one-off as channel-wide would lock every customer out for
+the whole TTL, which is worse than the silence this replaced.
+
+The flag is checked *before* the number is looked up, so the 503 is identical
+for a registered and an unregistered number. Checking after the lookup would
+make it mean "this number rents here" and hand back the enumeration oracle the
+uniform `{"status":"sent"}` exists to prevent.
+
+Useful consequence: the first casualty is usually a booking notification, so by
+the time a customer tries to sign in, the lifecycle send has already set the
+flag.

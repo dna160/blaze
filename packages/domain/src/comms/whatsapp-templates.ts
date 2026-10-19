@@ -324,20 +324,26 @@ const TEMPLATES: Record<string, WhatsAppTemplateSpec> = {
       `Lihat detail / View details: {{3}}\n${THANKS}`,
   },
 
-  /* ------------------------------------------------------------------ auth */
+  /* --------------------------------------------------------- diagnostics */
 
   /**
-   * Meta requires one-time passcodes to use the AUTHENTICATION category, whose
-   * body copy is fixed by Meta and whose send payload echoes the code into a
-   * copy-code button. Sending an OTP through a UTILITY template gets the
-   * template rejected at review or the number flagged in production.
+   * Console → Settings → Messaging sends this to prove a tenant's credentials
+   * work. It takes no parameters on purpose: the button exists to tell an admin
+   * whether their token and phone number ID are right, so it must not be able
+   * to fail for any other reason. A parameterised template can be refused for a
+   * bad example value or an arity mismatch, and the admin would read that as
+   * "my credentials are wrong" — which is exactly the false negative this
+   * replaced. (It previously sent otp_code, a template Meta will not create on
+   * this account, so the test could only ever fail.)
    */
-  otp_code: {
-    metaName: "otp_code",
-    category: "AUTHENTICATION",
-    authentication: true,
-    params: ["code"],
-    body: "{{1}} is your verification code. For your security, do not share this code.",
+  connection_test: {
+    metaName: "connection_test",
+    category: "UTILITY",
+    params: [],
+    body:
+      "Ini pesan percobaan dari RentOS. Jika Anda menerimanya, koneksi WhatsApp cabang Anda sudah aktif.\n" +
+      "This is a test message from RentOS. If you received it, your branch's WhatsApp connection is working.\n\n" +
+      THANKS,
   },
 };
 
@@ -451,6 +457,11 @@ export function buildWhatsAppTemplatePayload(
     };
   }
 
+  // A template with no parameters must carry no components at all. Sending
+  // `components: [{ type: "body", parameters: [] }]` is a 132000 "number of
+  // parameters does not match" — Meta counts an empty body component as a
+  // mismatch against a body that takes none, so the send fails for a reason
+  // that has nothing to do with the caller.
   return {
     messaging_product: "whatsapp",
     to,
@@ -458,7 +469,9 @@ export function buildWhatsAppTemplatePayload(
     template: {
       name: spec.metaName,
       language: { code: LANGUAGE },
-      components: [{ type: "body", parameters: values.map((text) => ({ type: "text", text })) }],
+      ...(values.length > 0
+        ? { components: [{ type: "body", parameters: values.map((text) => ({ type: "text", text })) }] }
+        : {}),
     },
   };
 }
