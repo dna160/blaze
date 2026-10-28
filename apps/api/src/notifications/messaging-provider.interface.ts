@@ -31,6 +31,12 @@ export interface SendTextMessageParams {
 
 export interface MessagingProvider {
   readonly name: string;
+  /**
+   * Whether free-form text is limited to WhatsApp's 24-hour customer service
+   * window. True for the Cloud API; false for a linked device, which sends as
+   * the phone itself does.
+   */
+  readonly enforcesReplyWindow: boolean;
   send(params: SendTemplateMessageParams, config: ResolvedMessagingConfig): Promise<SendTemplateMessageResult>;
   /**
    * Free-form text, which WhatsApp permits only inside the 24-hour customer

@@ -7,6 +7,8 @@ x-api-env: &api-env
   REDIS_URL: redis://redis:6379
   JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-in-production-please-0123456789}
   MESSAGING_PROVIDER: ${MESSAGING_PROVIDER:-console_log}
+  WA_BRIDGE_URL: http://wa-bridge:4200
+  WA_BRIDGE_TOKEN: ${WA_BRIDGE_TOKEN:-dev-only-bridge-token-change-in-production-0123}
   PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-mock}
   CORS_ORIGINS: http://localhost:3000,http://localhost:3001
 
@@ -86,6 +88,20 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+
+  # WhatsApp linked-device bridge (apps/wa-bridge). Pair a number from
+  # Console → Settings → Messaging; sessions live in Postgres schema `wa`.
+  wa-bridge:
+    build:
+      context: .
+      dockerfile: infra/docker/wa-bridge.Dockerfile
+    environment:
+      WA_BRIDGE_TOKEN: ${WA_BRIDGE_TOKEN:-dev-only-bridge-token-change-in-production-0123}
+      WA_BRIDGE_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/rentos?sslmode=disable
+      WA_BRIDGE_WEBHOOK_URL: http://api:4000/api/notifications/wa-bridge/webhook
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   storefront:
     build:

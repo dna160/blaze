@@ -1,0 +1,23 @@
+# Railway service config for apps/wa-bridge. Config File Path in the
+# dashboard: apps/wa-bridge/railway.toml. Root directory stays the repo root.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "infra/docker/wa-bridge.Dockerfile"
+watchPatterns = ["/apps/wa-bridge/**", "/infra/docker/wa-bridge.Dockerfile"]
+
+[deploy]
+healthcheckPath = "/healthz"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+# Exactly one. Each linked device is one WhatsApp session; two replicas would
+# connect the same device twice and WhatsApp answers with StreamReplaced,
+# knocking both offline.
+numReplicas = 1
+
+# Required runtime variables:
+#   WA_BRIDGE_TOKEN        shared with apps/api and apps/worker (openssl rand -hex 32)
+#   WA_BRIDGE_DATABASE_URL Postgres OWNER role (creates schema `wa`); ${{Postgres.DATABASE_URL}}
+#   WA_BRIDGE_WEBHOOK_URL  http://<api private domain>:<port>/api/notifications/wa-bridge/webhook
+# Keep this service on Railway's private network only: no public domain.

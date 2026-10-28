@@ -18,6 +18,13 @@ type Vars = Record<string, string>;
 const v = (vars: Vars, key: string, fallback = "") => vars[key] ?? fallback;
 
 const TEMPLATES: Record<string, (vars: Vars) => RenderedMessage> = {
+  /** Console → Settings → Messaging "send a test". Takes no variables, so only the connection can make it fail. */
+  connection_test: () => ({
+    subject: "Pesan percobaan RentOS / RentOS test message",
+    text:
+      "Ini pesan percobaan dari RentOS. Jika Anda menerimanya, koneksi WhatsApp cabang Anda sudah aktif.\n" +
+      "This is a test message from RentOS. If you received it, your branch's WhatsApp connection is working.",
+  }),
   booking_received: (vars) => ({
     subject: "Permintaan booking diterima / Booking request received",
     text:

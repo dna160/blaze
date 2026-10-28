@@ -1,18 +1,28 @@
-import { BadRequestException, ForbiddenException, Injectable } from "@nestjs/common";
+import { BadGatewayException, BadRequestException, ConflictException, ForbiddenException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import {
   getMessagingConfigView,
   messagingConfigKey,
   resolveMessagingConfig,
   saveMessagingConfig,
+  waBridgeFromEnv,
+  waBridgeLogout,
+  waBridgePair,
+  waBridgeStatus,
+  WaBridgeError,
   withOrgReadContext,
   type ResolvedMessagingConfig,
+  type WaBridgeConnection,
+  type WaBridgeStatus,
 } from "@rentos/database";
 import { can, hasOrganizationScope } from "@rentos/domain";
 
 import { NotificationsService } from "../notifications/notifications.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import type {
+  LinkedDeviceStatusResponse,
   MessagingConfigResponse,
+  PairLinkedDeviceRequest,
+  PairLinkedDeviceResponse,
   TestMessagingRequest,
   TestMessagingResponse,
   UpdateMessagingConfigRequest,
@@ -155,6 +165,11 @@ export class OrganizationService {
       );
     }
     const current = await getMessagingConfigView(this.prisma.raw, orgId);
+    if (body.provider === "whatsapp_linked" && !current.linkedBridgeConfigured) {
+      throw new BadRequestException(
+        "The WhatsApp bridge is not configured on this deployment: set WA_BRIDGE_URL and WA_BRIDGE_TOKEN on the API and worker, then restart.",
+      );
+    }
     if (body.provider === "whatsapp_cloud" && !body.accessToken && !current.hasAccessToken) {
       throw new BadRequestException("An access token is required the first time WhatsApp Cloud is enabled.");
     }
@@ -174,7 +189,11 @@ export class OrganizationService {
     if (!user.tenantId) throw new ForbiddenException("A branch session is required to send a test.");
 
     let config: ResolvedMessagingConfig;
-    if (body.accessToken && body.phoneNumberId) {
+    const bridge = waBridgeFromEnv();
+    if (body.provider === "whatsapp_linked" && bridge && user.organizationId) {
+      // Test the paired number before switching the organization over to it.
+      config = { provider: "whatsapp_linked", linked: { ...bridge, instanceId: user.organizationId }, source: "organization" };
+    } else if (body.accessToken && body.phoneNumberId) {
       config = {
         provider: "whatsapp_cloud",
         whatsapp: { accessToken: body.accessToken, phoneNumberId: body.phoneNumberId },
@@ -196,4 +215,76 @@ export class OrganizationService {
       return { ok: false, provider: config.provider, providerRef: null, error: (err as Error).message };
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // WhatsApp linked device (apps/wa-bridge) — Project Smile's pairing flow.
+  // The instance on the bridge is the organization id, so pairing from any
+  // branch links the one number the whole organization sends from.
+  // ---------------------------------------------------------------------------
+
+  private bridgeFor(user: AuthenticatedUser): WaBridgeConnection | null {
+    const bridge = waBridgeFromEnv();
+    return bridge ? { ...bridge, instanceId: this.assertOrgId(user) } : null;
+  }
+
+  async linkedDeviceStatus(user: AuthenticatedUser): Promise<LinkedDeviceStatusResponse> {
+    const conn = this.bridgeFor(user);
+    if (!conn) return linkedView(null, false);
+    try {
+      return linkedView(await waBridgeStatus(conn), true);
+    } catch (err) {
+      return { ...linkedView(null, true), state: "unreachable", detail: (err as Error).message };
+    }
+  }
+
+  async pairLinkedDevice(user: AuthenticatedUser, body: PairLinkedDeviceRequest): Promise<PairLinkedDeviceResponse> {
+    const conn = this.requireBridge(user);
+    try {
+      return await waBridgePair(conn, body.phone);
+    } catch (err) {
+      throw bridgeHttpError(err);
+    }
+  }
+
+  async logoutLinkedDevice(user: AuthenticatedUser): Promise<LinkedDeviceStatusResponse> {
+    const conn = this.requireBridge(user);
+    try {
+      return linkedView(await waBridgeLogout(conn), true);
+    } catch (err) {
+      throw bridgeHttpError(err);
+    }
+  }
+
+  private requireBridge(user: AuthenticatedUser): WaBridgeConnection {
+    const conn = this.bridgeFor(user);
+    if (!conn) {
+      throw new ServiceUnavailableException("The WhatsApp bridge is not configured on this deployment (WA_BRIDGE_URL / WA_BRIDGE_TOKEN).");
+    }
+    return conn;
+  }
+}
+
+function linkedView(status: WaBridgeStatus | null, configured: boolean): LinkedDeviceStatusResponse {
+  return {
+    configured,
+    state: status?.state ?? "unpaired",
+    detail: status?.detail ?? null,
+    phone: status?.phone ?? null,
+    pushName: status?.pushName ?? null,
+    pairCode: status?.pairCode ?? null,
+    pairExpiresAt: status?.pairExpiresAt ?? null,
+    sentToday: status?.sentToday ?? 0,
+    dailyCap: status?.dailyCap ?? 0,
+  };
+}
+
+/** The bridge's refusal, as the HTTP error the console can show verbatim. */
+function bridgeHttpError(err: unknown): Error {
+  const message = (err as Error).message;
+  if (err instanceof WaBridgeError) {
+    if (err.status === 400) return new BadRequestException(message);
+    if (err.status === 409) return new ConflictException(message);
+    if (err.status === 0) return new ServiceUnavailableException(message);
+  }
+  return new BadGatewayException(message);
 }

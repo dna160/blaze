@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Post, Put, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
-import { TestMessagingRequestSchema, UpdateMessagingConfigRequestSchema } from "@rentos/contracts";
+import { PairLinkedDeviceRequestSchema, TestMessagingRequestSchema, UpdateMessagingConfigRequestSchema } from "@rentos/contracts";
 
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
@@ -68,5 +68,32 @@ export class OrganizationController {
     @Body(new ZodValidationPipe(TestMessagingRequestSchema)) body: ReturnType<typeof TestMessagingRequestSchema.parse>,
   ) {
     return this.organization.testMessaging(user, body);
+  }
+
+  /**
+   * The organization's WhatsApp linked device. Status is staff-wide like the
+   * config read; pairing and unlinking change which number every branch sends
+   * from, so they sit behind manage_users with the rest of this screen.
+   */
+  @Get("messaging/linked")
+  linkedDeviceStatus(@CurrentUser() user: AuthenticatedUser) {
+    return this.organization.linkedDeviceStatus(user);
+  }
+
+  @Post("messaging/linked/pair")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("manage_users")
+  pairLinkedDevice(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body(new ZodValidationPipe(PairLinkedDeviceRequestSchema)) body: ReturnType<typeof PairLinkedDeviceRequestSchema.parse>,
+  ) {
+    return this.organization.pairLinkedDevice(user, body);
+  }
+
+  @Post("messaging/linked/logout")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("manage_users")
+  logoutLinkedDevice(@CurrentUser() user: AuthenticatedUser) {
+    return this.organization.logoutLinkedDevice(user);
   }
 }

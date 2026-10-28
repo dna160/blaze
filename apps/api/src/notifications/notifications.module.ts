@@ -10,6 +10,7 @@ import { ConsoleLogEmailProvider } from "./providers/console-log-email.provider.
 import { ConsoleLogMessagingProvider } from "./providers/console-log.provider.js";
 import { ResendEmailProvider } from "./providers/resend-email.provider.js";
 import { WhatsAppCloudMessagingProvider } from "./providers/whatsapp-cloud.provider.js";
+import { WhatsAppLinkedMessagingProvider } from "./providers/whatsapp-linked.provider.js";
 import { WhatsAppWebhookService } from "./whatsapp-webhook.service.js";
 
 /**
@@ -26,15 +27,21 @@ import { WhatsAppWebhookService } from "./whatsapp-webhook.service.js";
     WhatsAppWebhookService,
     ConsoleLogMessagingProvider,
     WhatsAppCloudMessagingProvider,
+    WhatsAppLinkedMessagingProvider,
     ConsoleLogEmailProvider,
     ResendEmailProvider,
     {
       provide: MESSAGING_PROVIDERS,
-      useFactory: (consoleLog: ConsoleLogMessagingProvider, whatsapp: WhatsAppCloudMessagingProvider): MessagingProviderRegistry => ({
+      useFactory: (
+        consoleLog: ConsoleLogMessagingProvider,
+        whatsapp: WhatsAppCloudMessagingProvider,
+        linked: WhatsAppLinkedMessagingProvider,
+      ): MessagingProviderRegistry => ({
         console_log: consoleLog,
         whatsapp_cloud: whatsapp,
+        whatsapp_linked: linked,
       }),
-      inject: [ConsoleLogMessagingProvider, WhatsAppCloudMessagingProvider],
+      inject: [ConsoleLogMessagingProvider, WhatsAppCloudMessagingProvider, WhatsAppLinkedMessagingProvider],
     },
     {
       provide: EMAIL_PROVIDER,

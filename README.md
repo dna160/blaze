@@ -42,6 +42,8 @@ rentos/
 │   │                    customer portal
 │   └── console/           Next.js — staff login, approval workbench,
 │                          inventory, invoices, reports
+│   └── wa-bridge/         Go (whatsmeow) — WhatsApp linked-device sessions,
+│                          paired from the console; see its README
 ├── packages/
 │   ├── database/        Prisma schema (PRD Appendix A), RLS migrations,
 │   │                    seed script, shared invoicing orchestration

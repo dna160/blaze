@@ -12,6 +12,7 @@ import type {
 @Injectable()
 export class ConsoleLogMessagingProvider implements MessagingProvider {
   readonly name = "CONSOLE_LOG";
+  readonly enforcesReplyWindow = true;
   private readonly logger = new Logger("MessagingProvider");
 
   async send(params: SendTemplateMessageParams): Promise<SendTemplateMessageResult> {

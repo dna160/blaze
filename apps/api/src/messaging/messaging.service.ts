@@ -278,6 +278,16 @@ export class MessagingService {
         payload: r.payload ?? {},
       }));
 
+    // A linked device has no customer service window — it sends as the
+    // phone does — so the thread is always answerable there.
+    if (!(await this.enforcesReplyWindow(tenantId))) {
+      return {
+        messages,
+        customer: customer ? { id: customer.id, fullName: customer.fullName, phone: customer.phone } : null,
+        windowOpenUntil: null,
+        canReply: true,
+      };
+    }
     const closesAt = replyWindowClosesAt(lastInboundAt);
     return {
       messages,
@@ -285,6 +295,11 @@ export class MessagingService {
       windowOpenUntil: closesAt ? closesAt.toISOString() : null,
       canReply: isReplyWindowOpen(lastInboundAt),
     };
+  }
+
+  private async enforcesReplyWindow(tenantId: string): Promise<boolean> {
+    const config = await resolveMessagingConfig(this.prisma.raw, tenantId);
+    return this.providers[config.provider].enforcesReplyWindow;
   }
 
   private async sendReadReceipt(tenantId: string, providerRef: string): Promise<void> {
@@ -317,7 +332,25 @@ export class MessagingService {
       return rows[0]?.last_inbound_at ?? null;
     });
 
-    if (!isReplyWindowOpen(lastInboundAt)) {
+    const config = await resolveMessagingConfig(this.prisma.raw, tenantId);
+    if (!this.providers[config.provider].enforcesReplyWindow) {
+      // No window on a linked device, but still no cold messages: a reply
+      // goes only to a number this branch already has a conversation with
+      // (Smile's never-inbound rule). Anything else is how a number gets banned.
+      const known = await this.prisma.runInTenantContext(tenantId, (tx) =>
+        tx.notification.findFirst({
+          where: { ...CONVERSATION_SCOPE, recipient: { in: [phone, `+${phone}`] } },
+          select: { id: true },
+        }),
+      );
+      if (!known) {
+        throw new ConflictException({
+          code: "NO_CONVERSATION",
+          windowOpenUntil: null,
+          message: "There is no conversation with this number yet, so a reply cannot be sent.",
+        });
+      }
+    } else if (!isReplyWindowOpen(lastInboundAt)) {
       const closesAt = replyWindowClosesAt(lastInboundAt);
       throw new ConflictException({
         code: "WINDOW_CLOSED",
@@ -328,7 +361,6 @@ export class MessagingService {
       });
     }
 
-    const config = await resolveMessagingConfig(this.prisma.raw, tenantId);
     let providerRef: string;
     try {
       const result = await this.providers[config.provider].sendText({ to: phone, text }, config);

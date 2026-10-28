@@ -1,5 +1,22 @@
 # WhatsApp Business setup — plug and play
 
+> **Recommended route now: the linked device (no Meta).** RentOS can send from
+> the organization's own WhatsApp number as a linked device, the way Project
+> Smile does: deploy [`apps/wa-bridge`](../apps/wa-bridge/README.md), set
+> `WA_BRIDGE_URL` and `WA_BRIDGE_TOKEN` on the API and worker, then in **Console →
+> Settings → Messaging**:
+>
+> 1. Enter the number and press **Get pairing code**.
+> 2. On that phone, open WhatsApp → Linked devices → Link with phone number, and
+>    type the code.
+> 3. Choose **Send from the linked WhatsApp number** and save.
+>
+> Every trigger then sends straight away: booking received, approved, rejected
+> or waitlisted, KYC request, contract and proforma, invoice issued or paid,
+> reminders, overdue, suspension, renewal offers, term end, and sign‑in links.
+> There are no templates, no approval and no 24‑hour reply window. The rest of
+> this document is the Meta Cloud API route, kept as the alternative.
+
 Everything needed to take RentOS from `console_log` to real WhatsApp, in order.
 Meta business verification is the long-lead item and is assumed done.
 

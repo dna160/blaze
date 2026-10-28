@@ -2,6 +2,8 @@ import { createCipheriv, createDecipheriv, randomBytes, timingSafeEqual } from "
 
 import type { Prisma, PrismaClient } from "../generated/client/index.js";
 
+import { waBridgeFromEnv, type WaBridgeConnection } from "./wa-bridge.js";
+
 /**
  * Per-organization messaging credentials (#40 — one WhatsApp number for all
  * branches, configured in the console rather than baked into a deployment).
@@ -24,9 +26,16 @@ import type { Prisma, PrismaClient } from "../generated/client/index.js";
  *      configured credentials before this screen existed;
  *   3. console_log — never a hard failure, so a tenant that has not finished
  *      onboarding still gets an auditable Notification row.
+ *
+ * `whatsapp_linked` is the WhatsApp linked-device route (apps/wa-bridge,
+ * Project Smile's whatsmeow approach): the organization's own number, paired
+ * with an 8-character code, sending plain text. No Meta app and no template
+ * approval. It holds no secret per organization — the bridge URL and token are
+ * the deployment's — so there is nothing to seal; the instance is the
+ * organization id.
  */
 
-export type MessagingProviderName = "console_log" | "whatsapp_cloud";
+export type MessagingProviderName = "console_log" | "whatsapp_cloud" | "whatsapp_linked";
 
 export interface WhatsAppCloudCredentials {
   phoneNumberId: string;
@@ -38,6 +47,8 @@ export interface ResolvedMessagingConfig {
   provider: MessagingProviderName;
   /** Present only when provider === "whatsapp_cloud". */
   whatsapp?: WhatsAppCloudCredentials;
+  /** Present only when provider === "whatsapp_linked". */
+  linked?: WaBridgeConnection;
   /** Where the credentials came from — surfaced in the console so "why is this still logging to console?" is answerable. */
   source: "organization" | "environment" | "default";
 }
@@ -55,6 +66,8 @@ export interface MessagingConfigView {
   updatedAt: string | null;
   updatedByUserId: string | null;
   source: ResolvedMessagingConfig["source"];
+  /** Whether WA_BRIDGE_URL / WA_BRIDGE_TOKEN are set, i.e. whether whatsapp_linked can work at all. */
+  linkedBridgeConfigured: boolean;
 }
 
 interface StoredConfig {
@@ -121,7 +134,14 @@ export function secretsMatch(a: string, b: string): boolean {
   return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
-function envConfig(): ResolvedMessagingConfig | null {
+function linkedConfig(organizationId: string | null, source: ResolvedMessagingConfig["source"]): ResolvedMessagingConfig | null {
+  const bridge = waBridgeFromEnv();
+  if (!bridge || !organizationId) return null;
+  return { provider: "whatsapp_linked", linked: { ...bridge, instanceId: organizationId }, source };
+}
+
+function envConfig(organizationId: string | null): ResolvedMessagingConfig | null {
+  if (process.env.MESSAGING_PROVIDER === "whatsapp_linked") return linkedConfig(organizationId, "environment");
   if (process.env.MESSAGING_PROVIDER !== "whatsapp_cloud") return null;
   const accessToken = process.env.WHATSAPP_CLOUD_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -129,7 +149,8 @@ function envConfig(): ResolvedMessagingConfig | null {
   return { provider: "whatsapp_cloud", whatsapp: { phoneNumberId, accessToken }, source: "environment" };
 }
 
-function fromStored(stored: StoredConfig): ResolvedMessagingConfig | null {
+function fromStored(stored: StoredConfig, organizationId: string): ResolvedMessagingConfig | null {
+  if (stored.provider === "whatsapp_linked") return linkedConfig(organizationId, "organization");
   if (stored.provider !== "whatsapp_cloud") return null;
   if (!stored.phoneNumberId || !stored.accessTokenSealed) return null;
   const accessToken = openSecret(stored.accessTokenSealed);
@@ -191,15 +212,15 @@ export async function resolveAutoReply(
 export async function resolveMessagingConfig(prisma: PrismaClient, tenantId: string): Promise<ResolvedMessagingConfig> {
   const organizationId = await organizationIdForTenant(prisma, tenantId);
   if (organizationId) {
-    const resolved = fromStored(await readStoredConfig(prisma, organizationId));
+    const resolved = fromStored(await readStoredConfig(prisma, organizationId), organizationId);
     if (resolved) return resolved;
   }
-  return envConfig() ?? { provider: "console_log", source: "default" };
+  return envConfig(organizationId) ?? { provider: "console_log", source: "default" };
 }
 
 export async function getMessagingConfigView(prisma: PrismaClient, organizationId: string): Promise<MessagingConfigView> {
   const stored = await readStoredConfig(prisma, organizationId);
-  const resolved = fromStored(stored) ?? envConfig() ?? { provider: "console_log" as const, source: "default" as const };
+  const resolved = fromStored(stored, organizationId) ?? envConfig(organizationId) ?? { provider: "console_log" as const, source: "default" as const };
   return {
     provider: (stored.provider as MessagingProviderName) ?? resolved.provider,
     phoneNumberId: stored.phoneNumberId ?? null,
@@ -211,6 +232,7 @@ export async function getMessagingConfigView(prisma: PrismaClient, organizationI
     updatedAt: stored.updatedAt ?? null,
     updatedByUserId: stored.updatedByUserId ?? null,
     source: resolved.source,
+    linkedBridgeConfigured: waBridgeFromEnv() !== null,
   };
 }
 

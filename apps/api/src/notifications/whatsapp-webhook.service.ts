@@ -18,6 +18,9 @@ import { PrismaService } from "../prisma/prisma.service.js";
  * customer answering "Waiting on customer reply" is not shouting into a void.
  */
 
+/** The bridge's media kinds that map onto Meta's media message fields. */
+const BRIDGE_MEDIA_TYPES = new Set(["image", "video", "document", "audio", "sticker"]);
+
 /** Meta's status values, lowest to highest — a later webhook never downgrades an earlier one. */
 const STATUS_RANK: Record<string, number> = { QUEUED: 0, SENT: 1, DELIVERED: 2, READ: 3 };
 
@@ -59,6 +62,26 @@ interface MetaChangeValue {
   messages?: MetaMessage[];
   contacts?: MetaContact[];
 }
+
+/**
+ * What apps/wa-bridge POSTs (the linked-device route). Same two facts as Meta's
+ * payload — an inbound message or a delivery receipt — addressed by instance,
+ * which is the organization id, instead of by phone_number_id.
+ */
+export type WaBridgeEvent =
+  | {
+      type: "message";
+      instanceId: string;
+      id: string;
+      from: string;
+      fromLid?: boolean;
+      pushName?: string;
+      timestamp: string;
+      kind: string;
+      text: string;
+    }
+  | { type: "receipt"; instanceId: string; ids: string[]; status: "DELIVERED" | "READ" }
+  | { type: "connection"; instanceId: string; state: string; detail?: string };
 
 export interface WhatsAppWebhookPayload {
   object?: string;
@@ -102,6 +125,63 @@ export class WhatsAppWebhookService {
     if (!rawBody || !header?.startsWith("sha256=")) return false;
     const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
     return secretsMatch(header.slice("sha256=".length), expected);
+  }
+
+  /**
+   * The bridge signs with the shared WA_BRIDGE_TOKEN, HMAC-SHA256 over the raw
+   * body, as `X-Bridge-Signature: sha256=<hex>` — the same shape as Meta's.
+   */
+  verifyBridgeSignature(rawBody: Buffer | undefined, header: string | undefined): boolean {
+    const secret = process.env.WA_BRIDGE_TOKEN;
+    if (!secret) {
+      this.logger.error("WA_BRIDGE_TOKEN is unset — rejecting the bridge delivery.");
+      return false;
+    }
+    if (!rawBody || !header?.startsWith("sha256=")) return false;
+    const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
+    return secretsMatch(header.slice("sha256=".length), expected);
+  }
+
+  /**
+   * Linked-device events, fed into the same status and inbound paths as Meta's
+   * webhook so the inbox, receipts and auto-reply behave identically on both.
+   * A database failure throws, so the bridge withholds WhatsApp's ack and the
+   * message is redelivered; an unknown organization is logged and dropped,
+   * because retrying cannot fix it.
+   */
+  async handleBridgeEvent(event: WaBridgeEvent): Promise<void> {
+    if (event.type === "connection") {
+      const line = `WhatsApp linked device for organization ${event.instanceId} is now ${event.state}${event.detail ? `: ${event.detail}` : ""}`;
+      if (["logged_out", "replaced", "banned"].includes(event.state)) this.logger.error(line);
+      else this.logger.log(line);
+      return;
+    }
+
+    const tenants = await this.prisma.raw.tenant.findMany({ where: { organizationId: event.instanceId }, select: { id: true } });
+    const tenantIds = tenants.map((t) => t.id);
+    if (tenantIds.length === 0) {
+      this.logger.warn(`Bridge event for unknown organization ${event.instanceId} — dropped.`);
+      return;
+    }
+
+    if (event.type === "receipt") {
+      for (const id of event.ids) await this.applyStatus(tenantIds, { id, status: event.status.toLowerCase() });
+      return;
+    }
+
+    // Shaped like Meta's message so recordInbound and the inbox need no second
+    // code path: media carries its caption, everything else is text.
+    const type = event.kind === "voice" ? "audio" : event.kind;
+    const message: MetaMessage = {
+      id: event.id,
+      from: event.from,
+      type,
+      ...(BRIDGE_MEDIA_TYPES.has(type)
+        ? { [type]: event.text ? { caption: event.text } : {} }
+        : { text: { body: event.text || `(${event.kind})` } }),
+    };
+    const contacts: MetaContact[] = event.pushName ? [{ wa_id: event.from, profile: { name: event.pushName } }] : [];
+    await this.recordInbound(tenantIds, message, contacts);
   }
 
   async handle(payload: WhatsAppWebhookPayload): Promise<void> {

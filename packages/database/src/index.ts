@@ -65,3 +65,15 @@ export {
   type MessagingConfigUpdate,
   type WhatsAppCloudCredentials,
 } from "./messaging-config.js";
+export {
+  waBridgeFromEnv,
+  waBridgeSendText,
+  waBridgeMarkRead,
+  waBridgeStatus,
+  waBridgePair,
+  waBridgeLogout,
+  WaBridgeError,
+  type WaBridgeConnection,
+  type WaBridgeState,
+  type WaBridgeStatus,
+} from "./wa-bridge.js";

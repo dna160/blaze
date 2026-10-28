@@ -2,7 +2,7 @@ import { BadRequestException, Controller, ForbiddenException, Get, Headers, Http
 import { ApiTags } from "@nestjs/swagger";
 import type { Request } from "express";
 
-import { WhatsAppWebhookService, type WhatsAppWebhookPayload } from "./whatsapp-webhook.service.js";
+import { WhatsAppWebhookService, type WaBridgeEvent, type WhatsAppWebhookPayload } from "./whatsapp-webhook.service.js";
 
 /**
  * Meta's WhatsApp callback. Unauthenticated by design — it is called by Meta,
@@ -46,6 +46,23 @@ export class NotificationsController {
     const body = req.body as WhatsAppWebhookPayload | undefined;
     if (!body || typeof body !== "object") throw new BadRequestException("Malformed payload.");
     await this.webhook.handle(body);
+    return { received: true };
+  }
+
+  /**
+   * apps/wa-bridge's callback for the linked-device route. A non-2xx answer
+   * makes the bridge withhold WhatsApp's ack, so WhatsApp redelivers — which is
+   * the point: a message is acknowledged only once it is in `notifications`.
+   */
+  @Post("wa-bridge/webhook")
+  @HttpCode(200)
+  async receiveBridge(@Req() req: Request & { rawBody?: Buffer }, @Headers("x-bridge-signature") signature?: string) {
+    if (!this.webhook.verifyBridgeSignature(req.rawBody, signature)) {
+      throw new ForbiddenException("Invalid signature.");
+    }
+    const body = req.body as WaBridgeEvent | undefined;
+    if (!body || typeof body !== "object" || typeof body.instanceId !== "string") throw new BadRequestException("Malformed payload.");
+    await this.webhook.handleBridgeEvent(body);
     return { received: true };
   }
 }

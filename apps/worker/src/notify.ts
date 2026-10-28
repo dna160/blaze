@@ -1,4 +1,4 @@
-import { findOrCreateCustomerAccessToken, getPrismaClient, resolveMessagingConfig, withTenantContext } from "@rentos/database";
+import { findOrCreateCustomerAccessToken, getPrismaClient, resolveMessagingConfig, waBridgeSendText, withTenantContext } from "@rentos/database";
 import { buildMagicLinkUrl, buildWhatsAppTemplatePayload, renderMessage } from "@rentos/domain";
 
 /**
@@ -107,6 +107,13 @@ async function storefrontBaseUrl(tenantId: string, tenantSlug: string): Promise<
  */
 async function sendWhatsApp(tenantId: string, templateKey: string, to: string, variables: Record<string, string>): Promise<string> {
   const config = await resolveMessagingConfig(getPrismaClient(), tenantId);
+  if (config.provider === "whatsapp_linked" && config.linked) {
+    // Linked device (apps/wa-bridge): the rendered copy as plain text, exactly
+    // as apps/api's WhatsAppLinkedMessagingProvider sends it. The bridge paces
+    // sends per number, so a batch job's loop simply waits its turn here.
+    const { id } = await waBridgeSendText(config.linked, to, renderMessage(templateKey, variables).text);
+    return id;
+  }
   if (config.provider !== "whatsapp_cloud" || !config.whatsapp) {
     console.log(`[WA -> ${to}] ${templateKey} ${JSON.stringify(variables)}`);
     return `console-${Date.now()}`;

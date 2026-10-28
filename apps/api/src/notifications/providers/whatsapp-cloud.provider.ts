@@ -21,6 +21,7 @@ import { WhatsAppSendError } from "./whatsapp-send-error.js";
 @Injectable()
 export class WhatsAppCloudMessagingProvider implements MessagingProvider {
   readonly name = "WHATSAPP_CLOUD";
+  readonly enforcesReplyWindow = true;
   private readonly logger = new Logger("MessagingProvider");
   /**
    * Overridable so a sandbox or an integration test can point at a stub, and so

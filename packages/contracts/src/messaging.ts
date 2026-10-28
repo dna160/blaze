@@ -5,7 +5,7 @@ import { z } from "zod";
  * deployment's environment. One WhatsApp number serves every branch in the
  * organization.
  */
-export const MessagingProviderSchema = z.enum(["console_log", "whatsapp_cloud"]);
+export const MessagingProviderSchema = z.enum(["console_log", "whatsapp_cloud", "whatsapp_linked"]);
 export type MessagingProviderName = z.infer<typeof MessagingProviderSchema>;
 
 export const MessagingConfigResponseSchema = z.object({
@@ -24,6 +24,8 @@ export const MessagingConfigResponseSchema = z.object({
   source: z.enum(["organization", "environment", "default"]),
   /** False when MESSAGING_CONFIG_KEY is unset — the screen can then explain why saving a token is refused. */
   canStoreSecrets: z.boolean(),
+  /** False when WA_BRIDGE_URL / WA_BRIDGE_TOKEN are unset, so the linked-device option cannot work on this deployment. */
+  linkedBridgeConfigured: z.boolean(),
 });
 export type MessagingConfigResponse = z.infer<typeof MessagingConfigResponseSchema>;
 
@@ -50,6 +52,8 @@ export type UpdateMessagingConfigRequest = z.infer<typeof UpdateMessagingConfigR
  */
 export const TestMessagingRequestSchema = z.object({
   to: z.string().trim().min(8).max(20),
+  /** "whatsapp_linked" tests the paired linked device even before the organization is switched to it. */
+  provider: MessagingProviderSchema.optional(),
   phoneNumberId: z.string().trim().min(1).max(64).optional(),
   accessToken: z.string().trim().min(20).max(1024).optional(),
 });
@@ -62,6 +66,52 @@ export const TestMessagingResponseSchema = z.object({
   error: z.string().nullable(),
 });
 export type TestMessagingResponse = z.infer<typeof TestMessagingResponseSchema>;
+
+/* ------------------------------------------------------- linked device */
+
+/**
+ * The organization's WhatsApp linked device (apps/wa-bridge). Pairing is the
+ * Project Smile flow: the console asks for a code, the number's owner types it
+ * into WhatsApp → Linked devices → Link with phone number, and the state moves
+ * pairing → connected on its own.
+ */
+export const LinkedDeviceStateSchema = z.enum([
+  "unpaired",
+  "pairing",
+  "connecting",
+  "connected",
+  "disconnected",
+  "logged_out",
+  "replaced",
+  "banned",
+  "unreachable",
+]);
+export type LinkedDeviceState = z.infer<typeof LinkedDeviceStateSchema>;
+
+export const LinkedDeviceStatusResponseSchema = z.object({
+  configured: z.boolean(),
+  state: LinkedDeviceStateSchema,
+  detail: z.string().nullable(),
+  phone: z.string().nullable(),
+  pushName: z.string().nullable(),
+  pairCode: z.string().nullable(),
+  pairExpiresAt: z.string().nullable(),
+  sentToday: z.number().int().nonnegative(),
+  dailyCap: z.number().int().nonnegative(),
+});
+export type LinkedDeviceStatusResponse = z.infer<typeof LinkedDeviceStatusResponseSchema>;
+
+export const PairLinkedDeviceRequestSchema = z.object({
+  /** The number being linked, international or 0-prefixed national. */
+  phone: z.string().trim().min(8).max(20),
+});
+export type PairLinkedDeviceRequest = z.infer<typeof PairLinkedDeviceRequestSchema>;
+
+export const PairLinkedDeviceResponseSchema = z.object({
+  code: z.string(),
+  expiresAt: z.string(),
+});
+export type PairLinkedDeviceResponse = z.infer<typeof PairLinkedDeviceResponseSchema>;
 
 /* ------------------------------------------------------------------ inbox */
 

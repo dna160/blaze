@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { ConsoleShell } from "@/components/ConsoleShell";
+import { LinkedDevicePanel } from "@/components/LinkedDevicePanel";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient, isAdmin } from "@/lib/auth-client";
 
-type ProviderName = "console_log" | "whatsapp_cloud";
+type ProviderName = "console_log" | "whatsapp_cloud" | "whatsapp_linked";
 
 interface MessagingConfig {
   provider: ProviderName;
@@ -21,6 +22,7 @@ interface MessagingConfig {
   updatedByUserId: string | null;
   source: "organization" | "environment" | "default";
   canStoreSecrets: boolean;
+  linkedBridgeConfigured: boolean;
 }
 
 interface TestResult {
@@ -131,6 +133,8 @@ export default function MessagingSettingsPage() {
         method: "POST",
         body: {
           to: testTo.trim(),
+          // The linked device can be tested before the organization switches to it.
+          ...(provider === "whatsapp_linked" ? { provider } : {}),
           // Unsaved values in the form are used for the test, so a credential
           // can be proven before it's committed.
           ...(phoneNumberId.trim() && accessToken.trim()
@@ -174,7 +178,9 @@ export default function MessagingSettingsPage() {
           </div>
         )}
 
-        {config && !config.canStoreSecrets && (
+        <LinkedDevicePanel canEdit={canEdit} />
+
+        {config && !config.canStoreSecrets && provider === "whatsapp_cloud" && (
           <div className="rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             The API has no <code>MESSAGING_CONFIG_KEY</code> set, so an access token can&apos;t be stored securely and saving one
             will be refused. Generate a key with <code>openssl rand -hex 32</code>, set it on the API and restart.
@@ -182,7 +188,7 @@ export default function MessagingSettingsPage() {
         )}
 
         <form onSubmit={save} className="space-y-4 rounded border border-slate-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-slate-800">WhatsApp Business (Meta Cloud API)</h2>
+          <h2 className="text-sm font-semibold text-slate-800">How RentOS sends</h2>
 
           <label className="block text-sm">
             <span className="text-slate-700">Sending</span>
@@ -193,48 +199,55 @@ export default function MessagingSettingsPage() {
               className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
             >
               <option value="console_log">Off — log messages only</option>
-              <option value="whatsapp_cloud">On — send via WhatsApp Cloud API</option>
+              <option value="whatsapp_linked" disabled={!config?.linkedBridgeConfigured}>
+                On — send from the linked WhatsApp number above
+              </option>
+              <option value="whatsapp_cloud">On — send via WhatsApp Cloud API (Meta, needs approved templates)</option>
             </select>
           </label>
 
-          <label className="block text-sm">
-            <span className="text-slate-700">Phone number ID</span>
-            <input
-              value={phoneNumberId}
-              onChange={(e) => setPhoneNumberId(e.target.value)}
-              disabled={!canEdit}
-              placeholder="From Meta Business Suite → WhatsApp → API Setup"
-              className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
-            />
-          </label>
+          {provider === "whatsapp_cloud" && (
+            <>
+              <label className="block text-sm">
+                <span className="text-slate-700">Phone number ID</span>
+                <input
+                  value={phoneNumberId}
+                  onChange={(e) => setPhoneNumberId(e.target.value)}
+                  disabled={!canEdit}
+                  placeholder="From Meta Business Suite → WhatsApp → API Setup"
+                  className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
+                />
+              </label>
 
-          <label className="block text-sm">
-            <span className="text-slate-700">
-              WhatsApp Business account ID <span className="text-slate-400">(optional)</span>
-            </span>
-            <input
-              value={businessAccountId}
-              onChange={(e) => setBusinessAccountId(e.target.value)}
-              disabled={!canEdit}
-              className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
-            />
-          </label>
+              <label className="block text-sm">
+                <span className="text-slate-700">
+                  WhatsApp Business account ID <span className="text-slate-400">(optional)</span>
+                </span>
+                <input
+                  value={businessAccountId}
+                  onChange={(e) => setBusinessAccountId(e.target.value)}
+                  disabled={!canEdit}
+                  className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
+                />
+              </label>
 
-          <label className="block text-sm">
-            <span className="text-slate-700">Permanent access token</span>
-            <input
-              type="password"
-              autoComplete="off"
-              value={accessToken}
-              onChange={(e) => setAccessToken(e.target.value)}
-              disabled={!canEdit}
-              placeholder={config?.hasAccessToken ? "Saved — leave blank to keep it" : "Paste the system user token"}
-              className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
-            />
-            <span className="mt-1 block text-xs text-slate-500">
-              Stored encrypted and never shown again. Leave blank to keep the current one.
-            </span>
-          </label>
+              <label className="block text-sm">
+                <span className="text-slate-700">Permanent access token</span>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={accessToken}
+                  onChange={(e) => setAccessToken(e.target.value)}
+                  disabled={!canEdit}
+                  placeholder={config?.hasAccessToken ? "Saved — leave blank to keep it" : "Paste the system user token"}
+                  className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
+                />
+                <span className="mt-1 block text-xs text-slate-500">
+                  Stored encrypted and never shown again. Leave blank to keep the current one.
+                </span>
+              </label>
+            </>
+          )}
 
           {canEdit && (
             <div className="flex items-center gap-3">
@@ -254,9 +267,8 @@ export default function MessagingSettingsPage() {
           <form onSubmit={save} className="space-y-4 rounded border border-slate-200 bg-white p-4">
             <h2 className="text-sm font-semibold text-slate-800">Reply automatically to incoming messages</h2>
             <p className="text-xs text-slate-500">
-              When a customer messages your WhatsApp number, send this back. Unlike the messages RentOS sends on its own,
-              a reply needs no approved template — WhatsApp allows free text for 24 hours after the customer writes to
-              you. That also makes it the one thing you can test before templates are approved.
+              When a customer messages your WhatsApp number, send this back once per message. Their message and the
+              reply both appear in the inbox.
             </p>
 
             <label className="flex items-center gap-2 text-sm">
@@ -292,9 +304,9 @@ export default function MessagingSettingsPage() {
           <div className="space-y-3 rounded border border-slate-200 bg-white p-4">
             <h2 className="text-sm font-semibold text-slate-800">Send a test message</h2>
             <p className="text-xs text-slate-500">
-              Sends the OTP template to one number so you can confirm the credentials work. If you&apos;ve typed a new number
-              and token above, the test uses those — you can check before saving. Test sends aren&apos;t recorded against any
-              customer.
+              Sends a short test message to one number so you can confirm the connection works. With the linked number
+              selected above, the test goes through it even before you save; for the Cloud API, a number and token typed
+              above are used instead of the saved ones. Test sends aren&apos;t recorded against any customer.
             </p>
             <div className="flex gap-2">
               <input
@@ -321,7 +333,7 @@ export default function MessagingSettingsPage() {
                 {testResult.ok
                   ? testResult.provider === "console_log"
                     ? "Sending is off, so the message was written to the log instead of delivered."
-                    : `Delivered. Meta message id ${testResult.providerRef}.`
+                    : `Sent. Message id ${testResult.providerRef}.`
                   : testResult.error}
               </div>
             )}

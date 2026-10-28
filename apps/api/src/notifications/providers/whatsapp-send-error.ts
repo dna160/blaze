@@ -14,6 +14,12 @@ export class WhatsAppSendError extends Error {
     readonly code: number | null,
     readonly subcode: number | null,
     readonly detail: string | null,
+    /**
+     * Set when the sender already knows the answer — the linked-device bridge
+     * reports it per refusal (not paired, disconnected, banned), so there is
+     * no Meta code to classify.
+     */
+    private readonly channelWideOverride?: boolean,
   ) {
     super(message);
     this.name = "WhatsAppSendError";
@@ -63,6 +69,7 @@ export class WhatsAppSendError extends Error {
    * is worse than the silence this classification exists to end.
    */
   get isChannelWide(): boolean {
+    if (this.channelWideOverride !== undefined) return this.channelWideOverride;
     // An auth failure is about our credentials, never about who we messaged.
     if (this.status === 401 || this.status === 403) return true;
     if (this.code === null) return false;
