@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { canDo } from "@/lib/capabilities";
 
 interface DepositWithBooking {
   id: string;
@@ -39,8 +40,6 @@ function remainingOf(d: DepositWithBooking): number {
   return Number(d.amount) - Number(d.appliedAmount);
 }
 
-const REQUEST_ROLES = ["SUPER_ADMIN", "OPS_ADMIN", "FINANCE_ADMIN"];
-const APPROVE_ROLES = ["SUPER_ADMIN", "FINANCE_ADMIN"];
 
 /** PRD §7.2.4: deposits are applied against damages (Super Admin/Finance Admin) and/or refunded (request by ops as part of move-out -> approve by finance/owner -> payout) — the remaining, unapplied balance is what's ever refunded. */
 export default function DepositsPage() {
@@ -119,8 +118,10 @@ export default function DepositsPage() {
     }
   }
 
-  const canRequest = user && REQUEST_ROLES.some((r) => user.roles.includes(r));
-  const canApprove = user && APPROVE_ROLES.some((r) => user.roles.includes(r));
+  // Requesting a refund is open to any staff member (StaffGuard on the API);
+  // applying a deposit and approving a refund both need approve_deposit_refund.
+  const canRequest = Boolean(user);
+  const canApprove = canDo(user, "approve_deposit_refund");
 
   return (
     <ConsoleShell>

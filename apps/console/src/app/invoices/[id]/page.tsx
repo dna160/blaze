@@ -9,6 +9,7 @@ import Link from "next/link";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { apiFetch, apiFetchBlob, apiUpload, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { canDo } from "@/lib/capabilities";
 
 type InvoiceWithPayments = InvoiceDto & { payments: PaymentDto[] };
 interface CreditNote {
@@ -31,8 +32,6 @@ function formatIDR(amount: string | number): string {
   );
 }
 
-const FINANCE_ROLES = ["SUPER_ADMIN", "FINANCE_ADMIN"];
-const RECORDER_ROLES = ["SUPER_ADMIN", "OPS_ADMIN"];
 
 export default function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -144,8 +143,10 @@ export default function InvoiceDetailPage() {
     );
   }
 
-  const canRecord = user && RECORDER_ROLES.some((r) => user.roles.includes(r));
-  const canVerify = user && FINANCE_ROLES.some((r) => user.roles.includes(r));
+  const canRecord = canDo(user, "record_payment");
+  const canVerify = canDo(user, "verify_payment");
+  // POST /invoices/:id/credit-notes is gated on approve_deposit_refund, not verify_payment.
+  const canIssueCredit = canDo(user, "approve_deposit_refund");
   const payable = invoice.status === "ISSUED" || invoice.status === "OVERDUE";
 
   return (
@@ -273,7 +274,7 @@ export default function InvoiceDetailPage() {
           ))}
         </ul>
 
-        {payable && canVerify && (
+        {payable && canIssueCredit && (
           <form onSubmit={issueCreditNote} className="mt-4 flex gap-2 border-t border-brand-600/10 pt-4">
             <input
               required

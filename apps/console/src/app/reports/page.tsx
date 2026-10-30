@@ -9,6 +9,7 @@ import { ClientList } from "@/components/ClientList";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { apiDownload, apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { canDo } from "@/lib/capabilities";
 
 interface Occupancy {
   totalAssets: number;
@@ -36,7 +37,6 @@ interface MonthEndClose {
   taxPayable: string;
 }
 
-const FINANCE_ROLES = ["SUPER_ADMIN", "FINANCE_ADMIN", "VIEWER"];
 
 function formatIDR(amount: number | string): string {
   return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(
@@ -60,7 +60,7 @@ function currentYearMonth(): string {
 export default function ReportsPage() {
   const router = useRouter();
   const user = authClient.getUser();
-  const canSeeFinance = user && FINANCE_ROLES.some((r) => user.roles.includes(r));
+  const canSeeFinance = canDo(user, "run_reports");
 
   const [occupancy, setOccupancy] = useState<Occupancy | null>(null);
   const [arAging, setArAging] = useState<ArAging | null>(null);

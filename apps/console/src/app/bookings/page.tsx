@@ -8,6 +8,7 @@ import type { PipelineBookingDto, PipelineStageValue } from "@rentos/contracts";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { canDo } from "@/lib/capabilities";
 import { notifyPendingApprovalsChanged } from "@/lib/pending-approvals";
 
 const COLUMNS: Array<{ stage: PipelineStageValue; title: string; hint: string }> = [
@@ -37,8 +38,10 @@ function fmtDate(value: string): string {
 export default function BookingsPage() {
   const router = useRouter();
   const user = authClient.getUser();
-  const canAct = user ? user.roles.some((r) => r === "SUPER_ADMIN" || r === "OPS_ADMIN") : false;
-  const canFinance = user ? user.roles.some((r) => r === "SUPER_ADMIN" || r === "OPS_ADMIN" || r === "FINANCE_ADMIN") : false;
+  // Each matches the capability the API checks on that action.
+  const canApprove = canDo(user, "approve_booking"); // approve, reject, request KYC
+  const canOfferUnit = canDo(user, "fire_waitlist");
+  const canGenerateContract = canDo(user, "create_booking");
   const [bookings, setBookings] = useState<PipelineBookingDto[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -165,17 +168,21 @@ export default function BookingsPage() {
                       )}
 
                       <div className="mt-3 flex flex-wrap gap-1.5">
-                        {col.stage === "WAITLIST" && canAct && (
+                        {col.stage === "WAITLIST" && (
                           <>
-                            <button onClick={() => act(b.id, "offer-unit", {}, "Unit offered — the customer has been told and the request is back in approval.")} disabled={busyId === b.id} className="rounded bg-brand-700 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">
-                              Offer unit
-                            </button>
-                            <button onClick={() => reject(b.id)} disabled={busyId === b.id} className="rounded border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 disabled:opacity-50">
-                              Close
-                            </button>
+                            {canOfferUnit && (
+                              <button onClick={() => act(b.id, "offer-unit", {}, "Unit offered — the customer has been told and the request is back in approval.")} disabled={busyId === b.id} className="rounded bg-brand-700 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">
+                                Offer unit
+                              </button>
+                            )}
+                            {canApprove && (
+                              <button onClick={() => reject(b.id)} disabled={busyId === b.id} className="rounded border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 disabled:opacity-50">
+                                Close
+                              </button>
+                            )}
                           </>
                         )}
-                        {col.stage === "APPROVAL" && canAct && (
+                        {col.stage === "APPROVAL" && canApprove && (
                           <>
                             <button onClick={() => act(b.id, "approve", {}, "Approved — the customer has been asked to verify their identity.")} disabled={busyId === b.id} className="rounded bg-brand-700 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">
                               Approve
@@ -185,12 +192,12 @@ export default function BookingsPage() {
                             </button>
                           </>
                         )}
-                        {col.stage === "KYC" && canAct && (
+                        {col.stage === "KYC" && canApprove && (
                           <button onClick={() => act(b.id, "request-kyc", {}, "KYC request sent with a sign-in link.")} disabled={busyId === b.id} className="rounded bg-brand-700 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">
                             {b.kycRequestedAt ? "Re-send KYC request" : "Request KYC"}
                           </button>
                         )}
-                        {col.stage === "CONTRACT" && canFinance && (
+                        {col.stage === "CONTRACT" && canGenerateContract && (
                           <button onClick={() => act(b.id, "generate-contract", {}, "Contract + proforma generated and sent with a pay link.")} disabled={busyId === b.id} className="rounded bg-brand-700 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">
                             Generate contract + proforma
                           </button>
