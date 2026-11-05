@@ -5,6 +5,13 @@
  *   pnpm wa:templates push      # create every missing template via the Graph API
  *   pnpm wa:templates status    # what Meta currently holds, and what's missing
  *   pnpm wa:templates diagnose  # is this the right WABA, and may this token manage it?
+ *   pnpm wa:templates demo      # send one of every APPROVED template to one number
+ *
+ * `demo` exists to show someone what the system says to a customer. `--name`
+ * addresses the messages to them rather than to the sample customer. It needs
+ * `--to` and WHATSAPP_PHONE_NUMBER_ID (or `--phone`), sends only what Meta has
+ * approved, and paces the sends. `--dry-run` prints the filled-in message
+ * bodies without sending or needing any credentials.
  *
  * `push` and `status` need, either as env vars or as `--waba`/`--token`:
  *   WHATSAPP_BUSINESS_ACCOUNT_ID   the WABA id (Meta Business Settings -> WhatsApp Accounts)
@@ -17,11 +24,12 @@
  */
 import {
   allWhatsAppTemplates,
+  buildWhatsAppTemplatePayload,
   WHATSAPP_TEMPLATE_LANGUAGE,
   type WhatsAppTemplateSpec,
 } from "../src/comms/whatsapp-templates.js";
 
-import { checkCredential, describeGraphError, graphJson, GRAPH } from "./graph.js";
+import { checkCredential, describeGraphError, graphJson, graphPost, GRAPH } from "./graph.js";
 
 /**
  * Meta requires a sample value per `{{n}}` at submission — a template with
@@ -361,6 +369,124 @@ async function push(argv: string[]): Promise<void> {
   if (failed) process.exitCode = 1;
 }
 
+
+/**
+ * Send one of every approved template to a single number, so someone can see
+ * what the system actually says to a customer.
+ *
+ * Three things this does on purpose:
+ *
+ * It asks Meta what is approved and sends only those. Firing all 23 blind would
+ * produce a wall of 132001s for anything still pending and bury the ones that
+ * did arrive; the point of a demo is a readable result.
+ *
+ * It paces the sends. Twenty-odd template messages arriving in the same second
+ * to one number looks like exactly the pattern WhatsApp penalises, and the
+ * recipient cannot read them in order anyway.
+ *
+ * It reuses the sample values Meta already accepted as the templates' examples,
+ * so the demo reads like a real message rather than "contoh customerName".
+ */
+async function demo(argv: string[]): Promise<void> {
+  const flag = (name: string): string | undefined => {
+    const i = argv.indexOf(name);
+    return i >= 0 ? argv[i + 1] : undefined;
+  };
+
+  const to = flag("--to") ?? process.env.WHATSAPP_DEMO_TO;
+  const phoneNumberId = flag("--phone") ?? process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const dryRun = argv.includes("--dry-run");
+  const only = flag("--only")?.split(",").map((n) => n.trim()).filter(Boolean);
+  const delayMs = Number(flag("--delay") ?? 2000);
+  // Overrides the sample customer name only. A demo addressed to the person
+  // holding the phone reads as the product; "Budi Santoso" reads as a fixture.
+  const name = flag("--name");
+
+  if (!to) {
+    console.error("Need a recipient: --to +6281234567890 (or WHATSAPP_DEMO_TO).");
+    process.exitCode = 1;
+    return;
+  }
+  if (!dryRun && !phoneNumberId) {
+    console.error("Need the sending number: --phone <phone-number-id> (or WHATSAPP_PHONE_NUMBER_ID).");
+    process.exitCode = 1;
+    return;
+  }
+  checkCredential("recipient", to);
+
+  let candidates = allWhatsAppTemplates();
+  if (only) {
+    candidates = candidates.filter((s) => only.includes(s.metaName));
+    const unknown = only.filter((n) => !allWhatsAppTemplates().some((s) => s.metaName === n));
+    if (unknown.length) console.log(`Not in the registry, skipping: ${unknown.join(", ")}`);
+  }
+
+  // connection_test is plumbing, not something a customer is ever sent. It is
+  // excluded unless asked for by name, so a demo of "what we say to customers"
+  // does not include a diagnostic.
+  if (!only) candidates = candidates.filter((s) => s.metaName !== "connection_test");
+
+  if (!dryRun) {
+    // Resolved here, not at the top: --dry-run renders the message bodies
+    // offline and must not demand a token it never uses.
+    const { waba, token } = credentials(argv);
+    const remote = await fetchRemote(waba, token);
+    const approved = new Set(
+      remote.filter((t) => t.status === "APPROVED" && t.language === WHATSAPP_TEMPLATE_LANGUAGE).map((t) => t.name),
+    );
+    const held = new Map(remote.map((t) => [t.name, t.status]));
+    const blocked = candidates.filter((s) => !approved.has(s.metaName));
+    candidates = candidates.filter((s) => approved.has(s.metaName));
+    for (const spec of blocked) {
+      console.log(`skipped   ${spec.metaName} — ${held.get(spec.metaName) ?? "not created on this WABA"}`);
+    }
+  }
+
+  const sendToken = dryRun ? null : credentials(argv).token;
+
+  console.log(`\n${dryRun ? "Would send" : "Sending"} ${candidates.length} template(s) to ${to}\n`);
+
+  let sent = 0;
+  let failed = 0;
+  for (const [index, spec] of candidates.entries()) {
+    const variables: Record<string, string> = {};
+    for (const param of spec.params) variables[param] = exampleFor(param);
+    if (name && spec.params.includes("customerName")) variables.customerName = name;
+
+    let payload: ReturnType<typeof buildWhatsAppTemplatePayload>;
+    try {
+      payload = buildWhatsAppTemplatePayload(spec.metaName, to, variables);
+    } catch (err) {
+      console.error(`FAILED    ${spec.metaName}: ${(err as Error).message}`);
+      failed += 1;
+      continue;
+    }
+
+    if (dryRun) {
+      console.log(`would send  ${spec.metaName}`);
+      console.log(`${spec.body.replace(/\{\{(\d+)\}\}/g, (_m, n) => variables[spec.params[Number(n) - 1]!] ?? _m)}\n`);
+      sent += 1;
+      continue;
+    }
+
+    const res = await graphPost(`${phoneNumberId}/messages`, sendToken!, payload as unknown as Record<string, unknown>);
+    if (!res.ok) {
+      console.error(`FAILED    ${spec.metaName}: ${describeGraphError(res.json, res.status)}`);
+      failed += 1;
+    } else {
+      const id = (res.json.messages as Array<{ id?: string }> | undefined)?.[0]?.id ?? "no id";
+      console.log(`sent      ${spec.metaName}  (${id})`);
+      sent += 1;
+    }
+
+    // No sleep after the last one — it only delays the summary.
+    if (index < candidates.length - 1) await new Promise((r) => setTimeout(r, delayMs));
+  }
+
+  console.log(`\n${sent} ${dryRun ? "previewed" : "sent"} · ${failed} failed`);
+  if (failed) process.exitCode = 1;
+}
+
 // Wrapped rather than top-level await: @rentos/domain is CommonJS, so tsx
 // transforms this file to CJS where top-level await is a syntax error.
 async function main(): Promise<void> {
@@ -368,6 +494,7 @@ async function main(): Promise<void> {
   if (mode === "push") return push(rest);
   if (mode === "status") return status(rest);
   if (mode === "diagnose") return diagnose(rest);
+  if (mode === "demo") return demo(rest);
   if (mode === "payload") {
     // Offline: the exact JSON each creation POST would carry.
     for (const spec of allWhatsAppTemplates()) {
