@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Param, Patch, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, ForbiddenException, Get, Param, Patch, Query, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
-import { ClientListQuerySchema } from "@rentos/contracts";
+import { ClientListQuerySchema, UpdateTaxProfileRequestSchema } from "@rentos/contracts";
 
 import { CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
@@ -23,6 +23,22 @@ export class CrmController {
   @Get("me")
   getMe(@CurrentTenantId() tenantId: string, @CurrentUser() user: AuthenticatedUser) {
     return this.crm.getById(tenantId, user.id);
+  }
+
+  /**
+   * The customer's own answer to "Apakah dibebankan PPh?" (plus NPWP/NIB if
+   * typed). Customer-session only and scoped to themselves — there is no id in
+   * the path, so one customer cannot set another's tax profile. Declared before
+   * ":id" for the same reason "me" is.
+   */
+  @Patch("me/tax-profile")
+  setMyTaxProfile(
+    @CurrentTenantId() tenantId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body(new ZodValidationPipe(UpdateTaxProfileRequestSchema)) body: ReturnType<typeof UpdateTaxProfileRequestSchema.parse>,
+  ) {
+    if (user.kind !== "CUSTOMER") throw new ForbiddenException("Customer session required.");
+    return this.crm.setTaxProfile(tenantId, user.id, body);
   }
 
   /** PRD v2 §5.2 client list — search/filter/status. Declared before :id for the same reason as "me". */

@@ -5,12 +5,21 @@ export const KycStatusSchema = z.enum(["NOT_SUBMITTED", "PENDING_REVIEW", "VERIF
 export const CustomerChannelSchema = z.enum(["WHATSAPP", "EMAIL"]);
 export type CustomerChannelValue = z.infer<typeof CustomerChannelSchema>;
 
+export const CustomerTypeSchema = z.enum(["INDIVIDUAL", "BUSINESS"]);
+export type CustomerTypeValue = z.infer<typeof CustomerTypeSchema>;
+
 export const CustomerDtoSchema = z.object({
   id: z.string().uuid(),
   /** Nullable since PRD v2 D3 (Google-signed-in customers are keyed by email). */
   phone: z.string().nullable(),
   email: z.string().email().nullable(),
   fullName: z.string().nullable(),
+  type: CustomerTypeSchema,
+  companyName: z.string().nullable(),
+  taxId: z.string().nullable(),
+  nib: z.string().nullable(),
+  /** null = the customer has not answered "Apakah dibebankan PPh?" yet. */
+  pphWithheld: z.boolean().nullable(),
   kycStatus: KycStatusSchema,
   preferredChannel: CustomerChannelSchema,
   isBlocklisted: z.boolean(),
@@ -64,7 +73,32 @@ export const ClientListResponseSchema = z.object({
 });
 export type ClientListResponse = z.infer<typeof ClientListResponseSchema>;
 
-export const KycDocumentTypeSchema = z.enum(["KTP", "SELFIE"]);
+/**
+ * KTP and SELFIE identify the person signing, for every customer — a company
+ * still has a PIC, and the liveness check is what stops a stolen KTP being
+ * used. NIB and NPWP are the company's registration and tax numbers and are
+ * asked for only from a BUSINESS customer.
+ *
+ * PPH_SUPPORT is the odd one out: it backs the customer's answer to "Apakah
+ * dibebankan PPh?" and is always optional, so it never gates verification. See
+ * KYC_REQUIRED_DOCUMENTS.
+ */
+export const KycDocumentTypeSchema = z.enum(["KTP", "SELFIE", "NIB", "NPWP", "PPH_SUPPORT"]);
+export type KycDocumentTypeValue = z.infer<typeof KycDocumentTypeSchema>;
+
+/**
+ * What has to be VERIFIED before a customer counts as verified, by customer
+ * type. The single source of truth for both the API's recompute and the
+ * portal's checklist, so the page cannot promise a different bar from the one
+ * the server enforces.
+ */
+export const KYC_REQUIRED_DOCUMENTS: Record<CustomerTypeValue, readonly KycDocumentTypeValue[]> = {
+  INDIVIDUAL: ["KTP", "SELFIE"],
+  BUSINESS: ["KTP", "SELFIE", "NIB", "NPWP"],
+};
+
+/** Only these are sent to an automated identity check; the rest are read by a human. */
+export const AUTO_VERIFIABLE_DOCUMENTS: readonly KycDocumentTypeValue[] = ["KTP", "SELFIE"];
 
 /**
  * v1 upload is a single proxied multipart POST (not a presigned-URL
@@ -95,3 +129,17 @@ export const ReviewKycDocumentRequestSchema = z.object({
   reason: z.string().optional(),
 });
 export type ReviewKycDocumentRequest = z.infer<typeof ReviewKycDocumentRequestSchema>;
+
+/**
+ * The customer's own answer to "Apakah dibebankan PPh?", set from the portal.
+ * Separate from the document upload because the answer is the thing invoicing
+ * needs; the supporting file is optional evidence for staff.
+ */
+export const UpdateTaxProfileRequestSchema = z.object({
+  pphWithheld: z.boolean(),
+  /** NPWP number, typed rather than read off the uploaded document. */
+  taxId: z.string().max(40).optional(),
+  /** NIB number, same. */
+  nib: z.string().max(40).optional(),
+});
+export type UpdateTaxProfileRequest = z.infer<typeof UpdateTaxProfileRequestSchema>;

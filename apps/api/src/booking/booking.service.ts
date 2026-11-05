@@ -57,7 +57,11 @@ export interface CreateBookingInput {
   extendsBookingId?: string;
   customerPhone: string;
   customerFullName: string;
-  /** Set when the storefront sent a customer session (OTP or Google) — the booking is attached to that customer. */
+  /** Individual or company — drives the KYC set and the PPh question later. */
+  customerType?: "INDIVIDUAL" | "BUSINESS";
+  /** Required by the contract when customerType is BUSINESS. */
+  companyName?: string;
+  /** Set when the storefront sent a customer session (Google or a magic link) — the booking is attached to that customer. */
   authenticatedCustomerId?: string;
 }
 
@@ -84,9 +88,14 @@ export class BookingService {
    * a waitlist; NIGHTLY/DURATION_ORDER keep their pre-v2 path unchanged.
    */
   async createBooking(tenant: ResolvedTenant, input: CreateBookingInput): Promise<CreateBookingResponse> {
+    const business = { type: input.customerType, companyName: input.companyName };
     const customer = input.authenticatedCustomerId
-      ? await this.crm.fillProfile(tenant.id, input.authenticatedCustomerId, { phone: input.customerPhone, fullName: input.customerFullName })
-      : await this.crm.getOrCreateByPhone(tenant.id, input.customerPhone, input.customerFullName);
+      ? await this.crm.fillProfile(tenant.id, input.authenticatedCustomerId, {
+          phone: input.customerPhone,
+          fullName: input.customerFullName,
+          business,
+        })
+      : await this.crm.getOrCreateByPhone(tenant.id, input.customerPhone, input.customerFullName, business);
 
     const assetTypeProbe = await this.prisma.runInTenantContext(tenant.id, (tx) => tx.assetType.findUnique({ where: { id: input.assetTypeId } }));
     if (!assetTypeProbe || !assetTypeProbe.isPublished) throw new NotFoundException("AssetType not found.");

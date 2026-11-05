@@ -426,9 +426,17 @@ model Customer {
   phone            String?
   email            String?
   fullName         String?         @map("full_name")
-  /// #4 — business fields (null for INDIVIDUAL): company name, NPWP, PIC.
+  /// #4 — business fields (null for INDIVIDUAL): company name, NPWP, NIB, PIC.
   companyName      String?         @map("company_name")
   taxId            String?         @map("tax_id")
+  /// Nomor Induk Berusaha — the business registration number. BUSINESS only.
+  nib              String?         @map("nib")
+  /// Whether this customer withholds PPh on rent ("Apakah dibebankan PPh?").
+  /// Three-state on purpose: null means not yet answered, which is different
+  /// from an answered "no" — the first blocks nothing but is still outstanding,
+  /// and invoicing needs to tell them apart before it can treat withholding as
+  /// settled. Supporting documents are optional and uploaded as PPH_SUPPORT.
+  pphWithheld      Boolean?        @map("pph_withheld")
   kycStatus        KycStatus       @default(NOT_SUBMITTED) @map("kyc_status")
   /// PRD v2 D3 — routes every outbound message. See CustomerChannel.
   preferredChannel CustomerChannel @default(WHATSAPP) @map("preferred_channel")

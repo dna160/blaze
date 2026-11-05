@@ -1,6 +1,11 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@rentos/database";
+import {
+  AUTO_VERIFIABLE_DOCUMENTS,
+  KYC_REQUIRED_DOCUMENTS,
+  type KycDocumentTypeValue,
+} from "@rentos/contracts";
 
 import { PrismaService } from "../prisma/prisma.service.js";
 import { STORAGE_PROVIDER, type StorageProvider } from "../storage/storage-provider.interface.js";
@@ -39,7 +44,7 @@ export class KycService {
   async upload(
     tenant: ResolvedTenant,
     customerId: string,
-    documentType: "KTP" | "SELFIE",
+    documentType: KycDocumentTypeValue,
     file: { buffer: Buffer; mimetype: string; size: number },
   ) {
     if (!ALLOWED_CONTENT_TYPES.has(file.mimetype)) {
@@ -52,9 +57,19 @@ export class KycService {
     const key = `kyc/${tenant.id}/${customerId}/${randomUUID()}-${documentType}`;
     const { storageKey } = await this.storage.save({ key, buffer: file.buffer, contentType: file.mimetype });
 
-    const autoVerifyEnabled = Boolean(tenant.featureFlags.kyc_auto_verification_enabled);
+    // Only the identity documents can be machine-checked. A NIB, an NPWP or a
+    // PPh slip is a company record the provider has no check for, so sending
+    // one would at best waste a call and at worst get an AUTO rejection on a
+    // perfectly good document. Those go straight to the manual queue.
+    const autoVerifyEnabled =
+      Boolean(tenant.featureFlags.kyc_auto_verification_enabled) &&
+      AUTO_VERIFIABLE_DOCUMENTS.includes(documentType);
     const autoResult = autoVerifyEnabled
-      ? await this.verificationProvider.verify({ documentType, buffer: file.buffer, contentType: file.mimetype })
+      ? await this.verificationProvider.verify({
+          documentType: documentType as "KTP" | "SELFIE",
+          buffer: file.buffer,
+          contentType: file.mimetype,
+        })
       : null;
 
     return this.prisma.runInTenantContext(tenant.id, async (tx) => {
@@ -125,11 +140,22 @@ export class KycService {
 
   /** Shared by upload() (an AUTO decision can settle a document immediately) and review() (a staff decision). */
   private async recomputeCustomerStatus(tx: Prisma.TransactionClient, customerId: string) {
-    const allDocs = await tx.kycDocument.findMany({ where: { customerId } });
-    const hasKtp = allDocs.some((d) => d.documentType === "KTP");
-    const hasSelfie = allDocs.some((d) => d.documentType === "SELFIE");
+    const [customer, allDocs] = await Promise.all([
+      tx.customer.findUniqueOrThrow({ where: { id: customerId }, select: { type: true } }),
+      tx.kycDocument.findMany({ where: { customerId } }),
+    ]);
+
+    // A company has more to prove than an individual: the PIC's KTP and selfie
+    // plus the company's NIB and NPWP. Read from the shared contract so the
+    // portal's checklist cannot drift from the bar enforced here.
+    const required = KYC_REQUIRED_DOCUMENTS[customer.type];
+    const hasAllRequired = required.every((type) => allDocs.some((d) => d.documentType === type));
+
     const anyRejected = allDocs.some((d) => d.status === "REJECTED");
-    const allVerified = hasKtp && hasSelfie && allDocs.every((d) => d.status === "VERIFIED");
+    // Every uploaded document must be verified, not just the required ones — a
+    // rejected PPh slip should not read as verified — but an absent optional
+    // document never holds the customer back.
+    const allVerified = hasAllRequired && allDocs.every((d) => d.status === "VERIFIED");
 
     const customerStatus = anyRejected ? "REJECTED" : allVerified ? "VERIFIED" : "PENDING_REVIEW";
     await tx.customer.update({ where: { id: customerId }, data: { kycStatus: customerStatus } });

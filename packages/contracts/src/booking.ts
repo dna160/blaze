@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { BookingModelSchema, RateTierSchema, TermMonthsSchema } from "./catalog.js";
 import { MoneyStringSchema } from "./common.js";
+import { CustomerTypeSchema } from "./customer.js";
 
 export const BookingStatusSchema = z.enum([
   "DRAFT",
@@ -51,7 +52,27 @@ export const CreateBookingRequestSchema = z.object({
   extendsBookingId: z.string().uuid().optional(),
   customerPhone: z.string().min(8).max(20),
   customerFullName: z.string().min(1).max(200),
+  /**
+   * Individual or company, asked at the top of the booking form because it
+   * changes what happens later: a company goes through a different KYC set
+   * (NIB and NPWP on top of the PIC's KTP) and is asked whether it withholds
+   * PPh. Optional and defaulted so existing callers — and the storefront's
+   * other booking form — keep working unchanged.
+   */
+  customerType: CustomerTypeSchema.optional(),
+  /** Required when customerType is BUSINESS; ignored otherwise. */
+  companyName: z.string().min(1).max(200).optional(),
   promoCode: z.string().optional(),
+}).superRefine((value, ctx) => {
+  // Enforced here rather than in the service so the storefront and any API
+  // client get the same rejection, on the field that is actually wrong.
+  if (value.customerType === "BUSINESS" && !value.companyName?.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["companyName"],
+      message: "Company name is required for a company booking.",
+    });
+  }
 });
 export type CreateBookingRequest = z.infer<typeof CreateBookingRequestSchema>;
 

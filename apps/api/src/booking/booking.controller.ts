@@ -46,6 +46,8 @@ export class BookingController {
       extendsBookingId: body.extendsBookingId,
       customerPhone: body.customerPhone,
       customerFullName: body.customerFullName,
+      customerType: body.customerType,
+      companyName: body.companyName,
       authenticatedCustomerId: session,
     });
   }

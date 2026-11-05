@@ -9,13 +9,29 @@ import { authClient } from "@/lib/auth-client";
 
 interface KycDocumentWithCustomer {
   id: string;
-  documentType: "KTP" | "SELFIE";
+  documentType: "KTP" | "SELFIE" | "NIB" | "NPWP" | "PPH_SUPPORT";
   status: "PENDING_REVIEW" | "VERIFIED" | "REJECTED";
   createdAt: string;
-  customer: { id: string; fullName: string | null; phone: string };
+  customer: {
+    id: string;
+    fullName: string | null;
+    phone: string;
+    type: "INDIVIDUAL" | "BUSINESS";
+    companyName: string | null;
+    pphWithheld: boolean | null;
+  };
   verificationSource: "MANUAL" | "AUTO";
   providerReason: string | null;
 }
+
+/** A company document says little without the company it belongs to. */
+const DOCUMENT_LABEL: Record<KycDocumentWithCustomer["documentType"], string> = {
+  KTP: "KTP",
+  SELFIE: "Selfie",
+  NIB: "NIB (business registration)",
+  NPWP: "NPWP (tax registration)",
+  PPH_SUPPORT: "PPh supporting document",
+};
 
 /** PRD §7.2.1 / §8.4 automation A9: manual KYC review queue. */
 export default function KycReviewPage() {
@@ -82,10 +98,36 @@ export default function KycReviewPage() {
           {documents.map((doc) => (
             <div key={doc.id} className="flex items-center justify-between rounded-lg border border-brand-600/10 bg-white p-5">
               <div>
-                <p className="font-medium">{doc.customer.fullName ?? doc.customer.phone}</p>
-                <p className="text-sm text-brand-700/60">
-                  {doc.documentType} · submitted {new Date(doc.createdAt).toLocaleDateString("id-ID")}
+                <p className="font-medium">
+                  {doc.customer.type === "BUSINESS" && doc.customer.companyName
+                    ? doc.customer.companyName
+                    : (doc.customer.fullName ?? doc.customer.phone)}
+                  {doc.customer.type === "BUSINESS" && (
+                    <span className="ml-2 rounded-full bg-brand-700/10 px-2 py-0.5 text-xs font-medium">Company</span>
+                  )}
                 </p>
+                {doc.customer.type === "BUSINESS" && doc.customer.companyName && doc.customer.fullName && (
+                  <p className="text-xs text-brand-700/50">Signatory: {doc.customer.fullName}</p>
+                )}
+                <p className="text-sm text-brand-700/60">
+                  {DOCUMENT_LABEL[doc.documentType]} · submitted {new Date(doc.createdAt).toLocaleDateString("id-ID")}
+                </p>
+                {doc.documentType === "PPH_SUPPORT" && (
+                  <p className="mt-1 text-xs text-brand-700/60">
+                    Optional document — rejecting it does not block the customer, but it does mark them REJECTED
+                    overall, so prefer leaving it pending if you only want more information.
+                  </p>
+                )}
+                {doc.customer.type === "BUSINESS" && (
+                  <p className="mt-1 text-xs text-brand-700/60">
+                    PPh:{" "}
+                    {doc.customer.pphWithheld === null
+                      ? "not answered yet"
+                      : doc.customer.pphWithheld
+                        ? "withheld (dibebankan)"
+                        : "not withheld"}
+                  </p>
+                )}
                 {doc.providerReason && (
                   <p className="mt-1 text-xs text-amber-700">
                     Automated check inconclusive — needs manual review: {doc.providerReason}

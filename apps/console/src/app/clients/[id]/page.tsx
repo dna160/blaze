@@ -16,6 +16,11 @@ interface ClientDetail {
     fullName: string | null;
     phone: string | null;
     email: string | null;
+    type: "INDIVIDUAL" | "BUSINESS";
+    companyName: string | null;
+    taxId: string | null;
+    nib: string | null;
+    pphWithheld: boolean | null;
     preferredChannel: "WHATSAPP" | "EMAIL";
     kycStatus: string;
     isBlocklisted: boolean;
@@ -103,7 +108,27 @@ export default function ClientDetailPage() {
       </Link>
       <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">{customer.fullName ?? customer.phone ?? customer.email}</h1>
+          <h1 className="text-2xl font-semibold">
+            {customer.type === "BUSINESS" && customer.companyName
+              ? customer.companyName
+              : (customer.fullName ?? customer.phone ?? customer.email)}
+          </h1>
+          {customer.type === "BUSINESS" && (
+            // Surfaced beside the name because it changes how this client is
+            // invoiced, not just how they were verified.
+            <p className="text-sm text-brand-700/70">
+              Company
+              {customer.fullName ? ` · signatory ${customer.fullName}` : ""}
+              {customer.nib ? ` · NIB ${customer.nib}` : ""}
+              {customer.taxId ? ` · NPWP ${customer.taxId}` : ""}
+              {" · PPh "}
+              {customer.pphWithheld === null
+                ? "not answered"
+                : customer.pphWithheld
+                  ? "withheld"
+                  : "not withheld"}
+            </p>
+          )}
           <p className="text-sm text-brand-700/60">
             {customer.phone ?? "no phone"} · {customer.email ?? "no email"} · messages via {customer.preferredChannel === "EMAIL" ? "email" : "WhatsApp"} · KYC {customer.kycStatus}
             {customer.isBlocklisted ? ` · BLOCKLISTED${customer.blocklistReason ? ` (${customer.blocklistReason})` : ""}` : ""}

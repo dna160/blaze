@@ -14,7 +14,7 @@ import {
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { ApiTags } from "@nestjs/swagger";
-import { ReviewKycDocumentRequestSchema } from "@rentos/contracts";
+import { KycDocumentTypeSchema, ReviewKycDocumentRequestSchema } from "@rentos/contracts";
 import type { Response } from "express";
 
 import { CurrentTenant, CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
@@ -45,10 +45,15 @@ export class KycController {
   ) {
     if (user.kind !== "CUSTOMER") throw new ForbiddenException("Customer session required.");
     if (!file) throw new BadRequestException("No file uploaded.");
-    if (documentType !== "KTP" && documentType !== "SELFIE") {
-      throw new BadRequestException('documentType must be "KTP" or "SELFIE".');
+    // Validated against the shared enum rather than a hardcoded pair, so adding
+    // a document type in one place cannot leave this endpoint rejecting it.
+    const parsed = KycDocumentTypeSchema.safeParse(documentType);
+    if (!parsed.success) {
+      throw new BadRequestException(
+        `documentType must be one of: ${KycDocumentTypeSchema.options.join(", ")}.`,
+      );
     }
-    return this.kyc.upload(tenant, user.id, documentType, {
+    return this.kyc.upload(tenant, user.id, parsed.data, {
       buffer: file.buffer,
       mimetype: file.mimetype,
       size: file.size,

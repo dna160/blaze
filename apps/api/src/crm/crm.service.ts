@@ -18,6 +18,12 @@ const LIVE_BOOKING_STATUSES = [
   "DEFAULT",
 ] as const;
 
+/** The individual/company choice a booking carries, and the company name with it. */
+export interface BusinessDetails {
+  type?: "INDIVIDUAL" | "BUSINESS";
+  companyName?: string;
+}
+
 @Injectable()
 export class CrmService {
   constructor(private readonly prisma: PrismaService) {}
@@ -42,7 +48,7 @@ export class CrmService {
     });
   }
 
-  async getOrCreateByPhone(tenantId: string, phone: string, fullName?: string) {
+  async getOrCreateByPhone(tenantId: string, phone: string, fullName?: string, business?: BusinessDetails) {
     return this.prisma.runInTenantContext(tenantId, async (tx) => {
       // #3 — a business account maps multiple WhatsApp numbers to one Customer.
       // Resolve by the canonical phone OR any VERIFIED additional number first.
@@ -54,17 +60,25 @@ export class CrmService {
 
       if (existing) {
         this.assertNotBlocklisted(existing);
+        const data: Prisma.CustomerUpdateInput = {};
         // A name given at booking time fills a blank profile but never overwrites one.
-        if (!existing.fullName && fullName) {
-          return tx.customer.update({ where: { id: existing.id }, data: { fullName } });
-        }
-        return existing;
+        if (!existing.fullName && fullName) data.fullName = fullName;
+        Object.assign(data, this.businessUpgrade(existing, business));
+        return Object.keys(data).length ? tx.customer.update({ where: { id: existing.id }, data }) : existing;
       }
 
       // New customer — record the canonical phone also as a verified CustomerPhone
       // (the number they just OTP-verified to log in), so future add-number logic
       // has a consistent set to work against.
-      const customer = await tx.customer.create({ data: { tenantId, phone, fullName } });
+      const customer = await tx.customer.create({
+        data: {
+          tenantId,
+          phone,
+          fullName,
+          type: business?.type ?? "INDIVIDUAL",
+          companyName: business?.type === "BUSINESS" ? (business.companyName ?? null) : null,
+        },
+      });
       await tx.customerPhone.create({
         data: { tenantId, customerId: customer.id, phone, isPrimary: true, verifiedAt: new Date() },
       });
@@ -149,7 +163,11 @@ export class CrmService {
   }
 
   /** Booking-time details from a logged-in customer: fill a missing phone/name, never overwrite. */
-  async fillProfile(tenantId: string, customerId: string, details: { phone?: string; fullName?: string }) {
+  async fillProfile(
+    tenantId: string,
+    customerId: string,
+    details: { phone?: string; fullName?: string; business?: BusinessDetails },
+  ) {
     return this.prisma.runInTenantContext(tenantId, async (tx) => {
       const existing = await tx.customer.findUniqueOrThrow({ where: { id: customerId } });
       this.assertNotBlocklisted(existing);
@@ -159,7 +177,65 @@ export class CrmService {
         if (!taken) data.phone = details.phone;
       }
       if (!existing.fullName && details.fullName) data.fullName = details.fullName;
+      Object.assign(data, this.businessUpgrade(existing, details.business));
       return Object.keys(data).length ? tx.customer.update({ where: { id: customerId }, data }) : existing;
+    });
+  }
+
+  /**
+   * What a booking may change about an existing customer's type.
+   *
+   * INDIVIDUAL to BUSINESS, never the reverse. Someone who has already given us
+   * a NIB and an NPWP should not have that bar quietly lowered because they
+   * made one booking in a personal capacity — and relaxing a KYC requirement is
+   * the direction where a mistake costs something. Going the other way is a
+   * staff decision, not a side effect of a form.
+   *
+   * The upgrade also reopens verification. A customer verified as an individual
+   * has not shown us a NIB or an NPWP, so leaving them VERIFIED would report a
+   * company as fully checked on the strength of a KTP alone. Their next upload
+   * recomputes it properly; this just stops the stale VERIFIED standing.
+   */
+  private businessUpgrade(
+    existing: { type: "INDIVIDUAL" | "BUSINESS"; companyName: string | null; kycStatus: string },
+    business?: BusinessDetails,
+  ): Prisma.CustomerUpdateInput {
+    if (business?.type !== "BUSINESS") return {};
+
+    const data: Prisma.CustomerUpdateInput = {};
+    if (existing.type !== "BUSINESS") {
+      data.type = "BUSINESS";
+      if (existing.kycStatus === "VERIFIED") data.kycStatus = "PENDING_REVIEW";
+    }
+    // Fills a blank company name; never overwrites one already on file.
+    if (!existing.companyName && business.companyName) data.companyName = business.companyName;
+    return data;
+  }
+
+  /**
+   * The customer's answer to "Apakah dibebankan PPh?", plus the NPWP and NIB
+   * numbers if they typed them. Set from the portal, by the customer, about
+   * themselves — so no capability check beyond owning the session.
+   *
+   * Does not touch kycStatus: the answer is a tax fact, not a document, and an
+   * optional PPh slip must never be what holds verification open.
+   */
+  async setTaxProfile(
+    tenantId: string,
+    customerId: string,
+    input: { pphWithheld: boolean; taxId?: string; nib?: string },
+  ) {
+    return this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const existing = await tx.customer.findUniqueOrThrow({ where: { id: customerId } });
+      this.assertNotBlocklisted(existing);
+      return tx.customer.update({
+        where: { id: customerId },
+        data: {
+          pphWithheld: input.pphWithheld,
+          ...(input.taxId?.trim() ? { taxId: input.taxId.trim() } : {}),
+          ...(input.nib?.trim() ? { nib: input.nib.trim() } : {}),
+        },
+      });
     });
   }
 
