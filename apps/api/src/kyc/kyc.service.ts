@@ -109,11 +109,26 @@ export class KycService {
     );
   }
 
-  async getFile(tenantId: string, documentId: string) {
+  async getFile(tenantId: string, documentId: string, viewer?: { actorUserId: string; ipAddress: string | null }) {
     const doc = await this.prisma.runInTenantContext(tenantId, (tx) =>
       tx.kycDocument.findUnique({ where: { id: documentId } }),
     );
     if (!doc) throw new NotFoundException("Document not found.");
+    if (viewer) {
+      await this.prisma.runInTenantContext(tenantId, (tx) =>
+        tx.auditLog.create({
+          data: {
+            tenantId,
+            actorUserId: viewer.actorUserId,
+            action: "KYC_FILE_OPENED",
+            entityType: "KycDocument",
+            entityId: doc.id,
+            metadata: { customerId: doc.customerId, documentType: doc.documentType, status: doc.status },
+            ipAddress: viewer.ipAddress,
+          },
+        }),
+      );
+    }
     return this.storage.read(doc.storageKey);
   }
 

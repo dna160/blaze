@@ -7,6 +7,7 @@ import {
   Param,
   Post,
   Query,
+  Req,
   Res,
   UploadedFile,
   UseGuards,
@@ -15,7 +16,7 @@ import {
 import { FileInterceptor } from "@nestjs/platform-express";
 import { ApiTags } from "@nestjs/swagger";
 import { KycDocumentTypeSchema, ReviewKycDocumentRequestSchema } from "@rentos/contracts";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 
 import { CurrentTenant, CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
@@ -77,8 +78,9 @@ export class KycController {
   @Get("documents/:id/file")
   @UseGuards(CapabilityGuard)
   @RequireCapability("approve_booking", "approve_deposit_refund")
-  async getFile(@CurrentTenantId() tenantId: string, @Param("id") id: string, @Res() res: Response) {
-    const result = await this.kyc.getFile(tenantId, id);
+  async getFile(@CurrentTenantId() tenantId: string, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string, @Req() req: Request, @Res() res: Response) {
+    // PRD go-live §7.4 — any status opens (approved files included), and every open is audited.
+    const result = await this.kyc.getFile(tenantId, id, { actorUserId: user.id, ipAddress: req.ip ?? null });
     if (result.kind === "redirect") {
       res.redirect(result.url);
       return;

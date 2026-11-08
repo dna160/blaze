@@ -4,6 +4,7 @@ import { classifyCustomerHealth, money, roundMoney, type CustomerHealth } from "
 import type { ClientListItem, ClientListQuery, ClientListResponse } from "@rentos/contracts";
 import { isKycVerified } from "@rentos/contracts";
 
+import { AuditService } from "../audit/audit.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 /** Bookings that count as "still with us" for the client list (PRD v2 §5.2 — INACTIVE means none of these). Ended leases (MOVED_OUT/CLOSED) are not live even though they still hold their blackout window. */
@@ -27,7 +28,10 @@ export interface BusinessDetails {
 
 @Injectable()
 export class CrmService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   /**
    * Resolve a customer by phone WITHOUT creating one. Same resolution as
@@ -237,6 +241,91 @@ export class CrmService {
           ...(input.nib?.trim() ? { nib: input.nib.trim() } : {}),
         },
       });
+    });
+  }
+
+  /**
+   * PRD go-live §8.2 — staff set or correct the PPh answer (and the PPh type)
+   * on the client page. Audited, since it changes what the customer transfers.
+   */
+  async setTaxProfileByStaff(
+    tenantId: string,
+    customerId: string,
+    actorUserId: string,
+    input: { pphWithheld?: boolean | null; pphType?: "PPH_4_2_FINAL" | "PPH_23" | null; taxId?: string | null; address?: string | null },
+  ) {
+    const { before, after } = await this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const before = await tx.customer.findUniqueOrThrow({ where: { id: customerId } });
+      const after = await tx.customer.update({
+        where: { id: customerId },
+        data: {
+          ...(input.pphWithheld !== undefined ? { pphWithheld: input.pphWithheld } : {}),
+          ...(input.pphType !== undefined ? { pphType: input.pphType } : {}),
+          ...(input.taxId !== undefined ? { taxId: input.taxId?.trim() || null } : {}),
+          ...(input.address !== undefined ? { address: input.address?.trim() || null } : {}),
+        },
+      });
+      return { before, after };
+    });
+    const changes: Record<string, { from: unknown; to: unknown }> = {};
+    for (const k of ["pphWithheld", "pphType", "taxId", "address"] as const) {
+      if (before[k] !== after[k]) changes[k] = { from: before[k], to: after[k] };
+    }
+    if (Object.keys(changes).length) {
+      await this.audit.record({ tenantId, actorUserId, action: "CUSTOMER_TAX_PROFILE_UPDATED", entityType: "Customer", entityId: customerId, metadata: { changes } });
+    }
+    return after;
+  }
+
+  /**
+   * PRD go-live §7.4 — every document on file for a client, newest first,
+   * each with the URL the console opens in a new tab. KYC files are listed
+   * only for roles that may review KYC; contracts, invoices and payment
+   * proofs for any staff role in scope (the RLS tenant context is the scope).
+   */
+  async listDocuments(tenantId: string, customerId: string, opts: { includeKyc: boolean }) {
+    return this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const customer = await tx.customer.findUnique({ where: { id: customerId }, select: { id: true } });
+      if (!customer) throw new NotFoundException("Customer not found.");
+      const [contracts, invoices, payments, kyc] = await Promise.all([
+        tx.contract.findMany({
+          where: { OR: [{ booking: { customerId } }, { rentalOrder: { customerId } }] },
+          orderBy: { createdAt: "desc" },
+          include: { booking: { select: { asset: { select: { code: true } } } }, rentalOrder: { select: { asset: { select: { code: true } } } } },
+        }),
+        tx.invoice.findMany({ where: { customerId, status: { not: "SCHEDULED" } }, orderBy: { issueDate: "desc" } }),
+        tx.payment.findMany({ where: { invoice: { customerId }, proofUrl: { not: null } }, orderBy: { createdAt: "desc" }, include: { invoice: { select: { invoiceNumber: true } } } }),
+        opts.includeKyc ? tx.kycDocument.findMany({ where: { customerId }, orderBy: { createdAt: "desc" } }) : Promise.resolve([]),
+      ]);
+      type Doc = { kind: string; label: string; detail: string | null; status: string | null; date: string; href: string };
+      const docs: Doc[] = [];
+      for (const c of contracts) {
+        const unit = c.booking?.asset?.code ?? c.rentalOrder?.asset?.code ?? null;
+        const num = c.contractNumber ?? c.id.slice(0, 8).toUpperCase();
+        if (c.unsignedDocumentUrl) {
+          docs.push({ kind: "CONTRACT", label: `Contract #${num}`, detail: unit, status: "GENERATED", date: c.createdAt.toISOString(), href: `/contracts/${c.id}/document` });
+        }
+        if (c.documentUrl) {
+          docs.push({
+            kind: "SIGNED_CONTRACT",
+            label: `Signed contract #${num}`,
+            detail: [unit, c.signedByName, c.esignProvider].filter(Boolean).join(" · ") || null,
+            status: c.confirmedAt ? "CONFIRMED" : (c.esignStatus ?? null),
+            date: (c.signedAt ?? c.createdAt).toISOString(),
+            href: `/contracts/${c.id}/file`,
+          });
+        }
+      }
+      for (const i of invoices) {
+        docs.push({ kind: "INVOICE", label: `Invoice #${i.invoiceNumber}`, detail: i.totalAmount.toString(), status: i.status, date: i.issueDate.toISOString(), href: `/invoices/${i.id}/pdf` });
+      }
+      for (const p of payments) {
+        docs.push({ kind: "PAYMENT_PROOF", label: `Payment proof — Invoice #${p.invoice.invoiceNumber}`, detail: p.amount.toString(), status: p.status, date: p.createdAt.toISOString(), href: `/payments/${p.id}/file` });
+      }
+      for (const k of kyc) {
+        docs.push({ kind: "KYC", label: `KYC — ${k.documentType}`, detail: k.verificationSource, status: k.status, date: k.createdAt.toISOString(), href: `/kyc/documents/${k.id}/file` });
+      }
+      return docs.sort((a, b) => b.date.localeCompare(a.date));
     });
   }
 

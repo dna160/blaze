@@ -153,3 +153,13 @@ export const UpdateTaxProfileRequestSchema = z.object({
   nib: z.string().max(40).optional(),
 });
 export type UpdateTaxProfileRequest = z.infer<typeof UpdateTaxProfileRequestSchema>;
+
+/** PRD go-live §8.2 — staff correct a client's tax answers from the client page. */
+export const PphTypeSchema = z.enum(["PPH_4_2_FINAL", "PPH_23"]);
+export const StaffTaxProfileRequestSchema = z.object({
+  pphWithheld: z.boolean().nullable().optional(),
+  pphType: PphTypeSchema.nullable().optional(),
+  taxId: z.string().trim().max(40).nullable().optional(),
+  address: z.string().trim().max(300).nullable().optional(),
+});
+export type StaffTaxProfileRequest = z.infer<typeof StaffTaxProfileRequestSchema>;

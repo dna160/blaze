@@ -1,6 +1,7 @@
 import { Body, Controller, ForbiddenException, Get, Param, Patch, Query, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
-import { ClientListQuerySchema, UpdateTaxProfileRequestSchema } from "@rentos/contracts";
+import { ClientListQuerySchema, StaffTaxProfileRequestSchema, UpdateTaxProfileRequestSchema } from "@rentos/contracts";
+import { can } from "@rentos/domain";
 
 import { CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
@@ -67,6 +68,27 @@ export class CrmController {
   @UseGuards(StaffGuard)
   get(@CurrentTenantId() tenantId: string, @Param("id") id: string) {
     return this.crm.getById(tenantId, id);
+  }
+
+  /** PRD go-live §7.4 — the client page's document vault. KYC files only for roles that review KYC. */
+  @Get(":id/documents")
+  @UseGuards(StaffGuard)
+  documents(@CurrentTenantId() tenantId: string, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
+    const includeKyc = can(user.roleAssignments, "approve_booking", tenantId) || can(user.roleAssignments, "approve_deposit_refund", tenantId);
+    return this.crm.listDocuments(tenantId, id, { includeKyc });
+  }
+
+  /** PRD go-live §8.2 — staff set/correct the PPh answer and type (and NPWP/address), audited. */
+  @Patch(":id/tax-profile")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("approve_booking", "record_payment")
+  setTaxProfileByStaff(
+    @CurrentTenantId() tenantId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(StaffTaxProfileRequestSchema)) body: ReturnType<typeof StaffTaxProfileRequestSchema.parse>,
+  ) {
+    return this.crm.setTaxProfileByStaff(tenantId, id, user.id, body);
   }
 
   @Patch(":id/blocklist")

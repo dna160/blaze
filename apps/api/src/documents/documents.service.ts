@@ -177,7 +177,8 @@ export class DocumentsService {
       date: contract.createdAt,
       bookingRef: contract.booking?.legacyBookingNumber ?? owner.id.slice(0, 8).toUpperCase(),
       from: contract.booking?.startDate ?? contract.rentalOrder!.periodStart,
-      until: contract.booking?.endDate ?? contract.rentalOrder?.periodEnd ?? null,
+      // The last billed day (inclusive), as on the payment schedule — Booking.endDate is exclusive.
+      until: invoices.filter((i) => i.periodEnd).at(-1)?.periodEnd ?? contract.booking?.endDate ?? contract.rentalOrder?.periodEnd ?? null,
       lines,
       totals: {
         currency,
