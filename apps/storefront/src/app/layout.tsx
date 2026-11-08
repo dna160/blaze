@@ -1,24 +1,50 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import type { BranchPublicProfile } from "@rentos/contracts";
 
 import { Providers } from "@/components/Providers";
+import { apiFetch } from "@/lib/api";
+import { resolveTenantSlug } from "@/lib/tenant";
 
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: "Gudang Aman Storage — RentOS",
-  description: "Book self-storage units online — choose your branch, pick a size, confirmation on WhatsApp.",
-};
+/**
+ * The storefront's name comes from the tenant it is serving (PRD go-live G1:
+ * production showed a hardcoded demo brand). Falls back to a neutral name when
+ * the tenant or the API cannot be resolved, rather than failing the page.
+ */
+async function brand(): Promise<{ name: string; logo: string | null }> {
+  try {
+    const tenantSlug = await resolveTenantSlug();
+    const profile = await apiFetch<BranchPublicProfile>("/branch/profile", { tenantSlug });
+    return { name: profile.name, logo: profile.logoDataUrl ?? null };
+  } catch {
+    return { name: "Self Storage", logo: null };
+  }
+}
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export async function generateMetadata(): Promise<Metadata> {
+  const { name } = await brand();
+  return {
+    title: name,
+    description: "Book self-storage units online — choose your branch, pick a size, confirmation on WhatsApp.",
+  };
+}
+
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const { name, logo } = await brand();
   return (
     <html lang="id">
       <body>
         <Providers>
           <header className="border-b border-brand-600/10 bg-white">
             <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-              <a href="/" className="text-lg font-semibold text-brand-700">
-                Gudang Aman Storage
+              <a href="/" className="flex items-center gap-3 text-lg font-semibold text-brand-700">
+                {logo ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- a small inline data: URL, nothing to optimize
+                  <img src={logo} alt={name} className="h-9 w-auto" />
+                ) : null}
+                <span className={logo ? "sr-only sm:not-sr-only sm:text-base" : undefined}>{name}</span>
               </a>
               <nav className="flex gap-4 text-sm">
                 <a href="/portal" className="hover:text-accent-500">

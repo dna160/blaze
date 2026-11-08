@@ -53,6 +53,8 @@ export const BranchPublicProfileSchema = z.object({
   bankAccounts: z.array(BankAccountSchema),
   /** PRD go-live §4.3 — false means: hide Pay, show the bank transfer details. */
   onlinePaymentsEnabled: z.boolean(),
+  /** The branch logo as a data: URL (PNG), or null — for the storefront header. */
+  logoDataUrl: z.string().nullable(),
 });
 export type BranchPublicProfile = z.infer<typeof BranchPublicProfileSchema>;
 

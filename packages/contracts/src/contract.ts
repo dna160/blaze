@@ -18,6 +18,10 @@ export const ContractDtoSchema = z.object({
   esignStatus: z.enum(["PENDING", "SIGNED", "DECLINED", "EXPIRED"]).nullable(),
   /** PRD v2 P9 — set once the rental agreement PDF has been generated (GET /contracts/:id/document). */
   unsignedDocumentUrl: z.string().nullable().optional(),
+  /** PRD go-live §6.2 — printed as "Contract #". */
+  contractNumber: z.string().nullable().optional(),
+  /** PRD go-live §7.2 — staff confirmed the signed contract (CONFIRMED stamp). */
+  confirmedAt: z.string().datetime().nullable().optional(),
   createdAt: z.string().datetime(),
 });
 export type ContractDto = z.infer<typeof ContractDtoSchema>;

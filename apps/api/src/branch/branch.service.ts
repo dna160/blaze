@@ -57,6 +57,10 @@ export class BranchService {
       facilities: asStringArray(t.facilities),
       bankAccounts: ((t.bankAccounts ?? []) as BankAccount[]).filter((b) => b.showOnInvoice),
       onlinePaymentsEnabled: onlinePaymentsStatus(flags).enabled,
+      logoDataUrl: (() => {
+        const b64 = ((t.branding ?? {}) as { logoPngBase64?: string }).logoPngBase64;
+        return b64 ? `data:image/png;base64,${b64}` : null;
+      })(),
     };
   }
 
