@@ -6,6 +6,21 @@ export { generateMonthlyPlatformInvoices } from "./platform-billing.js";
 export { withOrgReadContext, InvalidOrganizationIdError } from "./org-context.js";
 export { nextInvoiceNumber } from "./invoice-number.js";
 export {
+  nextDocumentNumber,
+  formatDocumentNumber,
+  resolveNumbering,
+  zonedYearMonth,
+  counterScope,
+  takeCounter,
+  raiseCounter,
+  newContractFields,
+  LEGACY_NUMBERING,
+  CITY_STORAGE_NUMBERING,
+  type NumberingConfig,
+  type DocumentKindValue,
+  type SeqReset,
+} from "./document-number.js";
+export {
   generateInitialInvoice,
   generateNextCycleInvoice,
   generateFinalSettlement,

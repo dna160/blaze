@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { AssetTypeDto, BookingDto, ContractDto, InvoiceDto, SwapRequestDto } from "@rentos/contracts";
+import { isKycVerified } from "@rentos/contracts";
 
 import { apiFetch, apiUpload, ApiError, openPdf } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
@@ -163,7 +164,7 @@ export default function BookingDetailPage() {
   const canSignContract = booking.status === "APPROVED" && contract && !contract.signedAt && !esignPending;
   const hasPendingSwap = swapRequests.some((s) => s.status === "PENDING");
   const canRequestSwap = ["ACTIVE", "RENEWING"].includes(booking.status) && assetTypes && assetTypes.length > 0 && !hasPendingSwap;
-  const needsKyc = booking.status === "APPROVED" && kycStatus !== "VERIFIED";
+  const needsKyc = booking.status === "APPROVED" && !isKycVerified(kycStatus);
   const proforma = invoices.find((i) => i.scheduleIndex === 0) ?? invoices[0];
 
   return (
@@ -192,7 +193,7 @@ export default function BookingDetailPage() {
             {kycStatus === "PENDING_REVIEW" ? "Identity documents under review" : "Verify your identity"}
           </Link>
         )}
-        {booking.status === "APPROVED" && kycStatus === "VERIFIED" && !proforma && (
+        {booking.status === "APPROVED" && isKycVerified(kycStatus) && !proforma && (
           <p className="mt-2 text-sm text-brand-700/70">Identity verified — we&apos;re preparing your contract and proforma invoice.</p>
         )}
       </div>

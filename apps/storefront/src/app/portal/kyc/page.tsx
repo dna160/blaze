@@ -19,6 +19,7 @@ const STATUS_LABEL: Record<string, string> = {
   NOT_SUBMITTED: "Not submitted",
   PENDING_REVIEW: "Under review",
   VERIFIED: "Verified",
+  VERIFIED_LEGACY: "Verified",
   REJECTED: "Rejected — please re-upload",
 };
 

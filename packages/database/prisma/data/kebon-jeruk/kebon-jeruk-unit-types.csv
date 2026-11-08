@@ -1,0 +1,8 @@
+slug,name,size_class,size_m3,size_label,monthly_price_idr,deposit_rule,admin_fee_idr,billing_period,min_term_months,tax_inclusive,notes
+small-storage,Small Storage,SMALL,4,4 m3,1100000,1x monthly rent,0,MONTHLY,1,false,
+medium-storage,Medium Storage,MEDIUM,8,8 m3,2100000,1x monthly rent,0,MONTHLY,1,false,
+large-storage,Large Storage,LARGE,16,16 m3,4100000,1x monthly rent,0,MONTHLY,1,false,
+x-large-storage,X Large Storage,XLARGE,70,70 m3,7200000,1x monthly rent,0,MONTHLY,1,false,
+free-style-1,Free Style 1,FREESTYLE,1,≤1 m3,320000,1x monthly rent,0,MONTHLY,1,false,Volume band; confirm whether Free Style is a shared/pooled area or fixed units
+free-style-2,Free Style 2,FREESTYLE,2,1-2 m3,610000,1x monthly rent,0,MONTHLY,1,false,Volume band; confirm whether Free Style is a shared/pooled area or fixed units
+free-style-3,Free Style 3,FREESTYLE,3,2-3 m3,900000,1x monthly rent,0,MONTHLY,1,false,Volume band; confirm whether Free Style is a shared/pooled area or fixed units

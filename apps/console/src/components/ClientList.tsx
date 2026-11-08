@@ -127,7 +127,7 @@ export function ClientList({ compact = false }: { compact?: boolean }) {
                     </Link>
                     <p className="text-xs text-brand-700/60">
                       {c.preferredChannel === "EMAIL" ? c.email : c.phone}
-                      {c.kycStatus === "VERIFIED" ? " · KYC ✓" : ""}
+                      {c.kycStatus === "VERIFIED" ? " · KYC ✓" : c.kycStatus === "VERIFIED_LEGACY" ? " · KYC ✓ (legacy)" : ""}
                     </p>
                   </td>
                   <td className="p-3">

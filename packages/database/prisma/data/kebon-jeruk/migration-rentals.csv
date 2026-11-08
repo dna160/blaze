@@ -1,0 +1,2 @@
+legacy_booking_number,legacy_contract_number,legacy_customer_number,unit_code,unit_type_slug,start_date,current_period_end,monthly_price_idr,deposit_held_idr,paid_through,status,signed_contract_pdf,notes
+46,5-2026-36-39,36,STORAGE-9,small-storage,2026-05-30,2026-06-30,1100000,980000,2026-06-30,ACTIVE,contracts/5-2026-36-39.pdf,example row - deposit 980000 differs from current 1x rent; keep the held amount as-is

@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/commo
 import type { Prisma } from "@rentos/database";
 import { classifyCustomerHealth, money, roundMoney, type CustomerHealth } from "@rentos/domain";
 import type { ClientListItem, ClientListQuery, ClientListResponse } from "@rentos/contracts";
+import { isKycVerified } from "@rentos/contracts";
 
 import { PrismaService } from "../prisma/prisma.service.js";
 
@@ -205,7 +206,7 @@ export class CrmService {
     const data: Prisma.CustomerUpdateInput = {};
     if (existing.type !== "BUSINESS") {
       data.type = "BUSINESS";
-      if (existing.kycStatus === "VERIFIED") data.kycStatus = "PENDING_REVIEW";
+      if (isKycVerified(existing.kycStatus)) data.kycStatus = "PENDING_REVIEW";
     }
     // Fills a blank company name; never overwrites one already on file.
     if (!existing.companyName && business.companyName) data.companyName = business.companyName;

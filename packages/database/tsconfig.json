@@ -7,5 +7,5 @@
     "baseUrl": "./",
     "noEmit": true
   },
-  "include": ["src", "prisma/seed.ts"]
+  "include": ["src", "prisma/seed.ts", "prisma/city-storage.ts"]
 }

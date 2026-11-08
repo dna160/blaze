@@ -1,3 +1,4 @@
+import { isKycVerified } from "@rentos/contracts";
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { fireNextWaitlistEntry } from "@rentos/database";
 
@@ -31,7 +32,7 @@ export class WaitlistService {
   async arm(tenant: ResolvedTenant, params: { customerId: string; assetTypeId: string }) {
     return this.prisma.runInTenantContext(tenant.id, async (tx) => {
       const customer = await tx.customer.findUniqueOrThrow({ where: { id: params.customerId } });
-      if (customer.kycStatus !== "VERIFIED") {
+      if (!isKycVerified(customer.kycStatus)) {
         throw new BadRequestException("Customer KYC must be VERIFIED before joining the waitlist.");
       }
       const assetType = await tx.assetType.findUniqueOrThrow({ where: { id: params.assetTypeId } });

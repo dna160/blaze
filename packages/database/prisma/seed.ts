@@ -1,6 +1,17 @@
 /**
  * BUILD-SPEC v2.0 seed — City Storage.
  *
+ * Two modes (PRD go-live §4.1):
+ *   SEED_MODE=production — bootstraps the organization and the Kebon Jeruk
+ *     tenant from prisma/data/kebon-jeruk/ (city-storage.ts) and NOTHING else:
+ *     no users, no customers, no units, no demo password. Staff come from the
+ *     user CSV import; units from the unit CSV import; customers and rentals
+ *     from the legacy migration.
+ *   demo (default) — the same bootstrap plus everything below, for local dev
+ *     and the staging database. Refuses to run when NODE_ENV=production unless
+ *     SEED_MODE is set explicitly, so a production deploy cannot pick up the
+ *     shared demo password by accident.
+ *
  * Per blocking-decision B8 (location count not yet confirmed) this seeds ONE
  * mockup branch under one Organization, enough to render the console/storefront
  * and to demonstrate the renewed schema: C1 (Organization → Tenant=branch),
@@ -15,7 +26,6 @@
  */
 import {
   PrismaClient,
-  BookingModel,
   AssetStatus,
   BaseRole,
   RoleScope,
@@ -23,6 +33,8 @@ import {
   MasterAgreementStatus,
   RentalOrderStatus,
 } from "../generated/client/index.js";
+
+import { bootstrapCityStorage } from "./city-storage.js";
 
 const prisma = new PrismaClient();
 const DEMO_PASSWORD_HASH = "$2a$10$EvHMo0YpEy8LGcSzJL3DaOr26EZsqN/PuPBclcDWdyDU/b2eD1I.K";
@@ -80,76 +92,33 @@ async function seedPlatformAdmin() {
 }
 
 async function main() {
-  // C1 — the Organization (City Storage). Name is a placeholder until B8 confirms.
-  const org = await prisma.organization.upsert({
-    where: { slug: "city-storage" },
-    update: {},
-    create: {
-      slug: "city-storage",
-      name: "City Storage",
-      legalName: "PT City Storage Indonesia",
-      // #40 — org-level messaging config (one WA number for all branches). Empty
-      // until the client's Meta business verification completes.
-      messagingConfig: {},
-    },
-  });
+  const mode = process.env.SEED_MODE ?? "demo";
+  if (mode !== "production" && mode !== "demo") {
+    throw new Error(`SEED_MODE must be "production" or "demo" (got "${mode}").`);
+  }
+  if (mode === "demo" && process.env.NODE_ENV === "production" && !process.env.SEED_MODE) {
+    throw new Error(
+      "Refusing to run the DEMO seed with NODE_ENV=production. Set SEED_MODE=production for a real deployment, " +
+        "or SEED_MODE=demo explicitly for a staging database.",
+    );
+  }
 
-  // C1 — Tenant = one branch/location. B8: one mockup branch for now.
-  const tenant = await prisma.tenant.upsert({
-    where: { slug: "city-storage-kebon-jeruk" },
-    update: { organizationId: org.id },
-    create: {
-      organizationId: org.id,
-      slug: "city-storage-kebon-jeruk",
-      name: "City Storage — Kebon Jeruk (mockup)",
-      legalName: "PT City Storage Indonesia",
-      isPkp: true, // B4 — City Storage is PKP; invoices carry PPN.
-      defaultLocale: "id",
-      timezone: "Asia/Jakarta",
-      branding: { primaryColor: "#0F172A", accentColor: "#F59E0B" },
-      // C3 — monthly-only (allowSubMonthly off). #27 — bank transfer + card only.
-      featureFlags: {
-        deposits_enabled: true,
-        kyc_required: true,
-        auto_approve: false,
-        contract_required: true,
-        allowSubMonthly: false,
-        paymentMethods: ["MANUAL_TRANSFER", "CARD"],
-        // Phase 4 — gates GET /external/*, tenant API keys, and outbound
-        // webhooks. On for the mockup branch so the console's API-access page
-        // and the delivery worker are exercisable straight after a seed.
-        api_access_enabled: true,
-        // PRD v2 D2 — the deposit-covered month a vacated unit stays unbookable
-        // by anyone but its previous occupant. 0 disables.
-        blackout_months: 1,
-        // PRD v2 §8.2 — days before a scheduled cycle invoice's due date that it
-        // flips SCHEDULED -> ISSUED.
-        invoice_lead_days: 7,
-      },
-    },
-  });
+  const { org, tenant, assetTypes, locationId } = await bootstrapCityStorage(prisma, { mode });
+
+  if (mode === "production") {
+    // eslint-disable-next-line no-console
+    console.log(
+      `Production bootstrap: org "${org.name}" (${org.legalName}), branch ${tenant.slug} [${tenant.branchCode}], ` +
+        `${assetTypes.length} unit types, contract terms. Messaging is PAUSED. No users, customers or units were created — ` +
+        `see docs/RUNBOOK-GO-LIVE.md for the user, unit and legacy imports.`,
+    );
+    return;
+  }
 
   await prisma.tenantDomain.upsert({
     where: { domain: "kebon-jeruk.citystorage.local" },
     update: {},
     create: { tenantId: tenant.id, domain: "kebon-jeruk.citystorage.local", isPrimary: true },
-  });
-
-  // Location is now an optional descriptive row (C1).
-  await prisma.location.upsert({
-    where: { id: "00000000-0000-0000-0000-000000000101" },
-    update: {},
-    create: {
-      id: "00000000-0000-0000-0000-000000000101",
-      tenantId: tenant.id,
-      name: "Kebon Jeruk",
-      address: "Jl. Kebon Jeruk Raya, Jakarta Barat",
-      timezone: "Asia/Jakarta",
-      // D4 — Leaflet/OSM branch picker sorts by distance from the browser's
-      // geolocation, so a seeded branch needs real coordinates to be placeable.
-      latitude: -6.1944,
-      longitude: 106.7692,
-    },
   });
 
   // C2 — the six client roles as role × scope (docs/RBAC.md §2). ORGANIZATION-
@@ -186,62 +155,18 @@ async function main() {
     { role: BaseRole.STAFF, scope: RoleScope.TENANT, tenantIds: [tenant.id] },
   ]);
 
-  // Catalog — RECURRING_LEASE, monthly billing (C3).
-  const unitSmall = await prisma.assetType.upsert({
-    where: { tenantId_slug: { tenantId: tenant.id, slug: "unit-1-5x2" } },
-    update: {},
-    create: {
-      tenantId: tenant.id,
-      name: "Storage Unit 1.5×2m",
-      slug: "unit-1-5x2",
-      bookingModel: BookingModel.RECURRING_LEASE,
-      attributesSchema: { sizeM2: 3, climateControlled: false, sizeClass: "SMALL" },
-      pricing: {
-        basePrice: 450000,
-        currency: "IDR",
-        billingPeriod: "MONTHLY",
-        // B5 — fixed nominal deposit.
-        depositRule: { type: "FIXED", amount: 500000 },
-        adminFee: 50000,
-        taxInclusive: false,
-        // #30/#31 — discount tiers (client's ~4.5/5/6% then hand-rounded).
-        bundleTiers: [{ minUnits: 2, discountPct: 4.5 }, { minUnits: 3, discountPct: 5 }, { minUnits: 5, discountPct: 6 }],
-        durationTiers: [{ minMonths: 6, discountPct: 5 }, { minMonths: 12, discountPct: 10 }, { minMonths: 24, discountPct: 15 }],
-      },
-      photos: [],
-      isPublished: true,
-    },
-  });
-
-  const unitMedium = await prisma.assetType.upsert({
-    where: { tenantId_slug: { tenantId: tenant.id, slug: "unit-3x3" } },
-    update: {},
-    create: {
-      tenantId: tenant.id,
-      name: "Storage Unit 3×3m",
-      slug: "unit-3x3",
-      bookingModel: BookingModel.RECURRING_LEASE,
-      attributesSchema: { sizeM2: 9, climateControlled: true, sizeClass: "MEDIUM" },
-      pricing: {
-        basePrice: 1200000,
-        currency: "IDR",
-        billingPeriod: "MONTHLY",
-        depositRule: { type: "FIXED", amount: 1200000 },
-        adminFee: 75000,
-        taxInclusive: false,
-      },
-      photos: [],
-      // #16 — starts hidden; the client launches cautiously.
-      isPublished: false,
-    },
-  });
+  // Catalog — the seven real unit types come from the bootstrap. Demo units
+  // reuse them with codes outside the real STORAGE-1..179 range so a later
+  // unit import into staging never collides with them.
+  const unitSmall = assetTypes.find((a) => a.slug === "small-storage")!;
+  const unitMedium = assetTypes.find((a) => a.slug === "medium-storage")!;
 
   const assetSpecs = [
-    { code: "A-01", assetTypeId: unitSmall.id, status: AssetStatus.AVAILABLE },
-    { code: "A-02", assetTypeId: unitSmall.id, status: AssetStatus.OCCUPIED },
-    { code: "A-03", assetTypeId: unitSmall.id, status: AssetStatus.MAINTENANCE },
-    { code: "B-14", assetTypeId: unitMedium.id, status: AssetStatus.AVAILABLE },
-    { code: "B-15", assetTypeId: unitMedium.id, status: AssetStatus.AVAILABLE },
+    { code: "DEMO-901", zone: "A", assetTypeId: unitSmall.id, status: AssetStatus.AVAILABLE },
+    { code: "DEMO-902", zone: "A", assetTypeId: unitSmall.id, status: AssetStatus.OCCUPIED },
+    { code: "DEMO-903", zone: "A", assetTypeId: unitSmall.id, status: AssetStatus.MAINTENANCE },
+    { code: "DEMO-914", zone: "B", assetTypeId: unitMedium.id, status: AssetStatus.AVAILABLE },
+    { code: "DEMO-915", zone: "B", assetTypeId: unitMedium.id, status: AssetStatus.AVAILABLE },
   ];
   const assets = [];
   for (const a of assetSpecs) {
@@ -251,9 +176,10 @@ async function main() {
         update: {},
         create: {
           tenantId: tenant.id,
-          locationId: "00000000-0000-0000-0000-000000000101",
+          locationId,
           assetTypeId: a.assetTypeId,
           code: a.code,
+          zone: a.zone,
           status: a.status,
         },
       }),
@@ -291,7 +217,7 @@ async function main() {
     },
   });
 
-  const occupied = assets.find((a) => a.code === "A-02");
+  const occupied = assets.find((a) => a.code === "DEMO-902");
   await prisma.rentalOrder.upsert({
     where: { id: "00000000-0000-0000-0000-000000000301" },
     update: {},
@@ -305,20 +231,13 @@ async function main() {
       status: RentalOrderStatus.ACTIVE,
       periodStart: new Date("2026-08-01T00:00:00Z"),
       periodEnd: new Date("2026-09-01T00:00:00Z"),
-      priceSnapshot: {
-        basePrice: 450000,
-        currency: "IDR",
-        billingPeriod: "MONTHLY",
-        depositRule: { type: "FIXED", amount: 500000 },
-        adminFee: 50000,
-        taxInclusive: false,
-      },
+      priceSnapshot: unitSmall.pricing as object,
     },
   });
 
   // eslint-disable-next-line no-console
   console.log(
-    `Seeded org "${org.name}" with 1 branch (${tenant.slug}), 6 role×scope users, ` +
+    `Seeded DEMO org "${org.name}" with 1 branch (${tenant.slug}), 6 role×scope users, ` +
       `${assets.length} assets, 1 signed master agreement, 1 active rental order, ` +
       `and the vendor platform admin.`,
   );

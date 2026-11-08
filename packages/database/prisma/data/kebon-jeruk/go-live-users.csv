@@ -1,0 +1,6 @@
+email,display_name,role,scope,branch_slug,notes
+,,ADMIN,ORGANIZATION,,Super Admin
+,,FINANCE,ORGANIZATION,,Super Finance
+,,ADMIN,TENANT,city-storage-kebon-jeruk,Branch admin
+,,SUPERVISOR,TENANT,city-storage-kebon-jeruk,
+,,STAFF,TENANT,city-storage-kebon-jeruk,

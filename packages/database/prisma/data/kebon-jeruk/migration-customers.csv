@@ -1,0 +1,2 @@
+legacy_customer_number,customer_type,full_name,company_name,phone_e164,email,address_line,city,postal_code,ktp_number,npwp,nib,pph_withheld,notes
+36,INDIVIDUAL,CONTOH PELANGGAN,,+6281200000000,contoh@example.com,"Jl. Contoh No. 1",Jakarta Barat,11470,,,,,example row (fictitious) - replace with the Booqable export

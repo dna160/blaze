@@ -2,6 +2,7 @@ import { computeFireExpiry, monthlyPeriodEnd, nextArmedEntry } from "@rentos/dom
 
 import type { Prisma } from "../generated/client/index.js";
 import { generateRentalOrderInvoice } from "./invoicing.js";
+import { newContractFields } from "./document-number.js";
 
 /**
  * BUILD-SPEC C5 — fire the next armed waitlist entry for a released unit, as a
@@ -54,6 +55,7 @@ export async function fireNextWaitlistEntry(
       tenantId,
       rentalOrderId: order.id,
       templateVersion: "v1",
+      ...(await newContractFields(tx, tenantId, entry.customerId)),
       esignProvider: "MOCK",
       esignStatus: "SIGNED",
       signedAt: new Date(),

@@ -1,0 +1,2 @@
+legacy_invoice_number,legacy_booking_number,invoice_date,due_date,period_start,period_end,amount_idr,amount_paid_idr,status,notes
+6-2026-36-122,46,2026-06-05,2026-06-20,2026-05-30,2026-06-30,1100000,,ISSUED,example row - only invoices still unpaid at cut-over

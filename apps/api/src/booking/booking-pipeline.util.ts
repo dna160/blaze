@@ -1,4 +1,5 @@
 import type { PipelineStageValue } from "@rentos/contracts";
+import { isKycVerified } from "@rentos/contracts";
 
 /**
  * PRD v2 §5.1 / P2 — the approval pipeline stage is DERIVED from facts the
@@ -45,7 +46,7 @@ export function pipelineStageFor(facts: PipelineFacts): PipelineStage {
   if (facts.status === "PENDING_APPROVAL") return { stage: "APPROVAL", detail: "Awaiting approval" };
   if (facts.status === "NEEDS_INFO") return { stage: "APPROVAL", detail: "Waiting on customer reply" };
   if (facts.status === "APPROVED") {
-    const kycSatisfied = !facts.kycRequired || facts.customerKycStatus === "VERIFIED";
+    const kycSatisfied = !facts.kycRequired || isKycVerified(facts.customerKycStatus);
     if (!kycSatisfied && !facts.firstInvoice) {
       if (facts.customerKycStatus === "REJECTED") return { stage: "KYC", detail: "KYC rejected — customer must re-upload" };
       if (facts.pendingKycDocuments > 0) return { stage: "KYC", detail: `${facts.pendingKycDocuments} document(s) awaiting review` };

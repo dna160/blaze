@@ -1,6 +1,16 @@
 import { z } from "zod";
 
-export const KycStatusSchema = z.enum(["NOT_SUBMITTED", "PENDING_REVIEW", "VERIFIED", "REJECTED"]);
+export const KycStatusSchema = z.enum(["NOT_SUBMITTED", "PENDING_REVIEW", "VERIFIED", "REJECTED", "VERIFIED_LEGACY"]);
+
+/**
+ * PRD go-live §10 — a customer imported from the legacy system carries
+ * VERIFIED_LEGACY: verified for every gate (they are not asked to redo KYC),
+ * but distinguishable from a RentOS-reviewed VERIFIED. Every "is this customer
+ * verified?" check goes through here so the two can never drift.
+ */
+export function isKycVerified(status: string | null | undefined): boolean {
+  return status === "VERIFIED" || status === "VERIFIED_LEGACY";
+}
 
 export const CustomerChannelSchema = z.enum(["WHATSAPP", "EMAIL"]);
 export type CustomerChannelValue = z.infer<typeof CustomerChannelSchema>;

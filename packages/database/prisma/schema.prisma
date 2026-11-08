@@ -204,6 +204,11 @@ enum KycStatus {
   PENDING_REVIEW
   VERIFIED
   REJECTED
+  /// Kebon Jeruk go-live §10: a customer imported from the legacy system
+  /// (Booqable) whose identity the branch already checked before RentOS.
+  /// Treated as verified everywhere (see isKycVerified in @rentos/contracts)
+  /// but kept distinguishable from a RentOS-reviewed VERIFIED.
+  VERIFIED_LEGACY
 }
 
 /// Who made the VERIFIED/REJECTED call on a KycDocument — AUTO means
@@ -261,6 +266,17 @@ enum LedgerAccount {
   CASH
   TAX_PAYABLE
   REFUND
+  /// PRD go-live §8.4 — PPh the customer withheld and owes us a bukti potong for.
+  PREPAID_TAX_PPH
+  /// PRD go-live §10 — the equity side of balances carried over from the legacy system.
+  OPENING_BALANCE
+}
+
+/// PRD go-live §6.2 — which document sequence a DocumentNumberCounter row counts.
+enum DocumentKind {
+  CONTRACT
+  INVOICE
+  CREDIT_NOTE
 }
 
 // ---------------------------------------------------------------------------
@@ -272,18 +288,28 @@ enum LedgerAccount {
 /// bootstrapping layer HO cross-tenant reads resolve through). Org-level
 /// messaging config (#40 — one WA number for all branches) lives here.
 model Organization {
-  id              String   @id @default(uuid()) @db.Uuid
-  slug            String   @unique
-  name            String
-  legalName       String?  @map("legal_name")
+  id                      String    @id @default(uuid()) @db.Uuid
+  slug                    String    @unique
+  name                    String
+  legalName               String?   @map("legal_name")
   /// #40 — org-level MessagingProvider credentials (one WA number, all branches).
   /// { provider, waPhoneNumberId, ... } — secrets injected at runtime, not stored raw.
-  messagingConfig Json     @default("{}") @map("messaging_config")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  messagingConfig         Json      @default("{}") @map("messaging_config")
+  /// PRD go-live §9.1 — global kill switch for every outbound message. While
+  /// true, every send path records a SUPPRESSED Notification instead of
+  /// reaching a provider; inbound still records. See messaging-pause.ts.
+  messagingPaused         Boolean   @default(false) @map("messaging_paused")
+  messagingPausedReason   String?   @map("messaging_paused_reason")
+  messagingPausedByUserId String?   @map("messaging_paused_by_user_id") @db.Uuid
+  messagingPausedAt       DateTime? @map("messaging_paused_at")
+  /// PRD go-live §8.2 — { pphRates: { PPH_4_2_FINAL: 0.10, PPH_23: 0.02 } }.
+  taxConfig               Json      @default("{}") @map("tax_config")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @updatedAt @map("updated_at")
 
   tenants          Tenant[]
   masterAgreements MasterAgreement[]
+  contractTerms    ContractTerms[]
 
   @@map("organizations")
 }
@@ -311,6 +337,23 @@ model Tenant {
   /// TRIAL rather than leaving it null, so billing generation has a real value to
   /// work from for every tenant unconditionally.
   billingPlan    BillingPlan  @default(TRIAL) @map("billing_plan")
+  /// PRD go-live §5.1 — short code unique per organization (e.g. "KBJ"), the
+  /// {BRANCH} token in document numbers.
+  branchCode     String?      @map("branch_code")
+  /// { whatsapp, phone, email, csDisplayName } — the branch CS contacts printed
+  /// on documents and used by the auto-reply's {branchWhatsapp} placeholders.
+  contact        Json         @default("{}")
+  /// Printed address block; one line per array entry or a single string.
+  address        Json?
+  /// { days, open, close, tz } — free-form, shown on the storefront and PDFs.
+  operatingHours Json         @default("{}") @map("operating_hours")
+  /// [{ bank, accountNumber, accountName, swift, showOnInvoice }]
+  bankAccounts   Json         @default("[]") @map("bank_accounts")
+  /// Storefront branch page bullet list (CCTV, fingerprint access, ...).
+  facilities     Json         @default("[]")
+  /// PRD go-live §6.2 — { contract, invoice, creditNote, seqReset } formats.
+  /// Empty = the pre-go-live defaults (see document-number.ts).
+  numbering      Json         @default("{}")
   createdAt      DateTime     @default(now()) @map("created_at")
   updatedAt      DateTime     @updatedAt @map("updated_at")
 
@@ -334,6 +377,7 @@ model Tenant {
   otaSubscriptions     OtaCalendarSubscription[]
   platformInvoices     PlatformInvoice[]
 
+  @@unique([organizationId, branchCode])
   @@index([organizationId])
   @@map("tenants")
 }
@@ -437,6 +481,13 @@ model Customer {
   /// and invoicing needs to tell them apart before it can treat withholding as
   /// settled. Supporting documents are optional and uploaded as PPH_SUPPORT.
   pphWithheld      Boolean?        @map("pph_withheld")
+  /// PRD go-live §8.2 — PPH_4_2_FINAL (space rental, default) or PPH_23.
+  pphType          String?         @map("pph_type")
+  /// PRD go-live §6.2 — the number customers and accountants recognise. Unique
+  /// per organization: assigned by the `customers_assign_number` trigger from
+  /// customer_number_counters on insert, or carried over from the legacy system
+  /// by the migration importer (the counter then moves above it).
+  customerNumber   Int?            @map("customer_number")
   kycStatus        KycStatus       @default(NOT_SUBMITTED) @map("kyc_status")
   /// PRD v2 D3 — routes every outbound message. See CustomerChannel.
   preferredChannel CustomerChannel @default(WHATSAPP) @map("preferred_channel")
@@ -460,6 +511,7 @@ model Customer {
   @@unique([tenantId, phone])
   @@unique([tenantId, email])
   @@unique([tenantId, clerkUserId])
+  @@unique([tenantId, customerNumber])
   @@index([tenantId])
   @@map("customers")
 }
@@ -572,6 +624,9 @@ model Asset {
   assetTypeId  String      @map("asset_type_id") @db.Uuid
   assetType    AssetType   @relation(fields: [assetTypeId], references: [id], onDelete: Cascade)
   code         String
+  /// PRD go-live §5.3 — floor-plan zone ("A".."D"). The unit map groups by it,
+  /// falling back to the code prefix when null.
+  zone         String?
   status       AssetStatus @default(AVAILABLE)
   statusReason String?     @map("status_reason")
   attributes   Json        @default("{}")
@@ -586,6 +641,7 @@ model Asset {
 
   @@unique([tenantId, code])
   @@index([tenantId])
+  @@index([tenantId, zone])
   @@index([assetTypeId])
   @@map("assets")
 }
@@ -632,6 +688,9 @@ model Booking {
   noticeEffectiveDate DateTime?     @map("notice_effective_date")
   approvedByUserId    String?       @map("approved_by_user_id") @db.Uuid
   rejectionReason     String?       @map("rejection_reason")
+  /// PRD go-live §10 — the legacy system's booking number (Booqable "#46"); the
+  /// migration importer's idempotency key for a rental.
+  legacyBookingNumber String?       @map("legacy_booking_number")
   createdAt           DateTime      @default(now()) @map("created_at")
   updatedAt           DateTime      @updatedAt @map("updated_at")
 
@@ -643,6 +702,7 @@ model Booking {
 
   waitlistEntry WaitlistEntry?
 
+  @@unique([tenantId, legacyBookingNumber])
   @@index([tenantId])
   @@index([tenantId, status])
   @@index([customerId])
@@ -846,6 +906,20 @@ model Contract {
   rentalOrderId       String?      @map("rental_order_id") @db.Uuid
   rentalOrder         RentalOrder? @relation(fields: [rentalOrderId], references: [id], onDelete: Cascade)
   templateVersion     String       @map("template_version")
+  /// PRD go-live §6.2 — the number printed as "Contract #", from the tenant's
+  /// CONTRACT sequence (or carried over from the legacy system).
+  contractNumber      String?      @map("contract_number")
+  /// PRD go-live §7.1 — the ContractTerms.version this contract was rendered
+  /// with, so a signed contract always re-renders with the terms that were signed.
+  termsVersion        Int?         @map("terms_version")
+  /// PRD go-live §7.2 — the portal signature pad's PNG (storage key) and the
+  /// evidence captured with it.
+  signatureImageKey   String?      @map("signature_image_key")
+  signatureIp         String?      @map("signature_ip")
+  signatureUserAgent  String?      @map("signature_user_agent")
+  /// Staff approval of the signed contract — prints the "CONFIRMED" stamp.
+  confirmedAt         DateTime?    @map("confirmed_at")
+  confirmedByUserId   String?      @map("confirmed_by_user_id") @db.Uuid
   /// The uploaded document — under MockESignProvider this is already the
   /// final signed record (v1's wet-sign behavior); under a real ESignProvider
   /// it's the document that was sent out, replaced with the signed version
@@ -862,6 +936,7 @@ model Contract {
   esignStatus         String?      @map("esign_status")
   createdAt           DateTime     @default(now()) @map("created_at")
 
+  @@unique([tenantId, contractNumber])
   @@index([tenantId])
   @@index([bookingId])
   @@index([rentalOrderId])
@@ -919,23 +994,78 @@ model Invoice {
   @@map("invoices")
 }
 
-/// Backing store for `nextInvoiceNumber`'s atomic per-tenant-per-month
-/// sequence (Session 24) — replaces the original `COUNT(*)`-based
-/// derivation, which raced under concurrent invoice creation for the
-/// same tenant (caught by Invoice's own `[tenantId, invoiceNumber]`
-/// unique constraint as a hard failure, never a silent duplicate, but
-/// still a real reliability bug under concurrent load). See
-/// packages/database/src/invoice-number.ts.
-model InvoiceNumberCounter {
-  id       String @id @default(uuid()) @db.Uuid
-  tenantId String @map("tenant_id") @db.Uuid
-  year     Int
-  month    Int
-  counter  Int    @default(0)
+/// PRD go-live §6.2 — one atomic counter per (tenant, document kind, scope).
+/// `scope` is "all" for a running sequence, "YYYY" or "YYYY-MM" for one that
+/// resets; which applies is the tenant's `numbering.seqReset`. Replaces the
+/// per-month InvoiceNumberCounter (its rows were migrated in as INVOICE /
+/// "YYYY-MM"). See packages/database/src/document-number.ts.
+model DocumentNumberCounter {
+  id       String       @id @default(uuid()) @db.Uuid
+  tenantId String       @map("tenant_id") @db.Uuid
+  kind     DocumentKind
+  scope    String
+  value    Int          @default(0)
 
-  @@unique([tenantId, year, month])
+  @@unique([tenantId, kind, scope])
   @@index([tenantId])
-  @@map("invoice_number_counters")
+  @@map("document_number_counters")
+}
+
+/// PRD go-live §6.2 — the organization-wide customer number sequence. Written
+/// only by the `customers_assign_number` trigger (and the importer, through
+/// it). Outside RLS like `organizations`.
+model CustomerNumberCounter {
+  organizationId String @id @map("organization_id") @db.Uuid
+  value          Int    @default(0)
+
+  @@map("customer_number_counters")
+}
+
+/// PRD go-live §7.1 — the organization's contract T&C (bilingual markdown),
+/// versioned. New contracts render with the highest version; each Contract
+/// stores the version it was generated with.
+model ContractTerms {
+  id              String       @id @default(uuid()) @db.Uuid
+  organizationId  String       @map("organization_id") @db.Uuid
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  version         Int
+  body            String
+  createdByUserId String?      @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime     @default(now()) @map("created_at")
+
+  @@unique([organizationId, version])
+  @@map("contract_terms")
+}
+
+/// PRD go-live §9.2 — per (organization, counterpart phone) messaging state,
+/// so the auto-reply fires at most once per cooldown and never right after a
+/// human answered. Outside RLS: the webhook resolves it by organization.
+model MessagingContactState {
+  id               String    @id @default(uuid()) @db.Uuid
+  organizationId   String    @map("organization_id") @db.Uuid
+  /// Digits only, no leading "+".
+  phone            String
+  lastAutoReplyAt  DateTime? @map("last_auto_reply_at")
+  lastHumanReplyAt DateTime? @map("last_human_reply_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, phone])
+  @@map("messaging_contact_state")
+}
+
+/// PRD go-live §4.4 — single-use "set your password" links for imported staff.
+/// Only the SHA-256 of the token is stored. Outside RLS: it is redeemed before
+/// any session exists.
+model UserPasswordToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("user_password_tokens")
 }
 
 model InvoiceLine {

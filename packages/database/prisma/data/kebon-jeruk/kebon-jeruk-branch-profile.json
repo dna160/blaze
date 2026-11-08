@@ -1,0 +1,117 @@
+{
+  "_source": "Booqable contract #5-2026-36-39, invoice #6-2026-36-122, QUOTATION_KEBON_JERUK.pdf, Layout_City_Storage_Kebon_Jeruk.pdf (received 2026-11-08)",
+  "organization": {
+    "legalName": "PT Servis Storej Indonesia",
+    "brandName": "City Storage",
+    "note": "Seed currently says 'PT City Storage Indonesia' - replace with the legal entity above"
+  },
+  "tenant": {
+    "slug": "city-storage-kebon-jeruk",
+    "branchCode": "KBJ",
+    "name": "City Storage Kebon Jeruk",
+    "timezone": "Asia/Jakarta",
+    "defaultLocale": "id",
+    "isPkp": false,
+    "isPkp_note": "Legacy invoices carry no PPN ('Kan kita nggak ada tax ya?' - 11-05 meeting). Seed has true; confirm with finance before go-live.",
+    "location": {
+      "name": "City Storage Kebon Jeruk",
+      "addressLines": [
+        "Kencana Tower Level B",
+        "Jl. Raya Meruya Ilir No. 88",
+        "Business Park Kebon Jeruk",
+        "Jakarta Barat 11620, Indonesia"
+      ],
+      "latitude": null,
+      "longitude": null,
+      "coords_note": "Fill from Google Maps pin before go-live (storefront map)"
+    },
+    "customerService": {
+      "whatsapp": "+628111877838",
+      "phone": "+62 21 3006 7838",
+      "email": "cs@citystorage.co.id"
+    },
+    "operatingHours": {
+      "days": "Mon-Fri excl. national holidays",
+      "open": "09:00",
+      "close": "17:30",
+      "tz": "WIB"
+    },
+    "bankAccounts": [
+      {
+        "bank": "Bank Central Asia (BCA)",
+        "accountNumber": "6560238868",
+        "accountName": "PT Servis Storej Indonesia",
+        "swift": "CENAIDJA",
+        "showOnInvoice": true
+      }
+    ],
+    "facilities": [
+      "24 hour CCTV surveillance",
+      "Security system with finger print access",
+      "Climate-controlled facility with AC",
+      "Regular pest control",
+      "Fire extinguisher",
+      "Flood free area",
+      "Free Insurance*"
+    ],
+    "commercialRules": {
+      "minTermMonths": 1,
+      "securityDeposit": "1x monthly rent",
+      "adminFee": 0,
+      "overtimeFeePerHourIdr": 50000,
+      "overtimeRule": "Access outside working days/hours by appointment, charged afterwards (T&C II.7-8)",
+      "depositRefundWithinDays": 30,
+      "extensionNoticeDays": 14,
+      "lateExtensionFine": {
+        "ratePerDay": 0.01,
+        "base": "bill value",
+        "maxDays": 14,
+        "afterMax": "extension void, Article VI applies (T&C V.3)"
+      },
+      "overstayFine": {
+        "ratePerDay": 0.01,
+        "base": "bill value",
+        "maxDays": 30,
+        "afterMax": "lessor may open unit and remove goods (T&C VI.4-6)"
+      },
+      "accessBlockedWhileInArrears": true,
+      "jurisdiction": "Pengadilan Negeri Jakarta Barat",
+      "prevailingLanguage": "id"
+    },
+    "legacyNumbering": {
+      "system": "Booqable",
+      "contractExample": "5-2026-36-39",
+      "invoiceExample": "6-2026-36-122",
+      "bookingExample": "#46",
+      "inferredPattern": "{month}-{year}-{customerNumber}-{documentSequence}",
+      "note": "36 is shared by the contract and invoice of the same customer, so it is most likely the Booqable customer number; 39 and 122 are separate running counters for contracts and invoices. Confirm with the client."
+    },
+    "invoiceRules": {
+      "legacyDueDays": 15,
+      "legacyExample": "invoice 05-06-2026 due 20-06-2026"
+    }
+  },
+  "units": {
+    "file": "kebon-jeruk-units.csv",
+    "count": 172,
+    "zones": {
+      "A": 34,
+      "B": 52,
+      "C": 61,
+      "D": 25
+    },
+    "skippedNumbers": [
+      4,
+      13,
+      14,
+      44,
+      104,
+      113,
+      114
+    ],
+    "unitTypeMapping": "MISSING - client to fill unit_type_slug per unit (or export from Booqable)"
+  },
+  "unitTypes": {
+    "file": "kebon-jeruk-unit-types.csv"
+  }
+}

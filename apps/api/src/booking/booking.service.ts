@@ -6,6 +6,7 @@ import {
   findAvailablePooledAsset,
   findAvailableStorageAsset,
   generateTermPaymentSchedule,
+  newContractFields,
   recordDepositHeldEntries,
   resolveBlackoutMonths,
   resolveInvoiceLeadDays,
@@ -13,6 +14,7 @@ import {
   type Prisma,
 } from "@rentos/database";
 import type { CreateBookingResponse, PipelineBookingDto } from "@rentos/contracts";
+import { isKycVerified } from "@rentos/contracts";
 
 import { AuditService } from "../audit/audit.service.js";
 import { CrmService } from "../crm/crm.service.js";
@@ -192,7 +194,7 @@ export class BookingService {
             termMonths,
             position,
             status: "ARMED",
-            kycVerified: customer.kycStatus === "VERIFIED",
+            kycVerified: isKycVerified(customer.kycStatus),
             priceSnapshot: assetType.pricing as Prisma.InputJsonValue,
           },
         });
@@ -545,7 +547,7 @@ export class BookingService {
       // gate before ACTIVATE depends on the tenant's contract_required feature flag, checked
       // at activation time, not here. Wet-sign PDF upload is v1 scope (PRD §11 ESignProvider).
       await tx.contract.create({
-        data: { tenantId: tenant.id, bookingId, templateVersion: "v1" },
+        data: { tenantId: tenant.id, bookingId, templateVersion: "v1", ...(await newContractFields(tx, tenant.id, updated.customerId)) },
       });
 
       await tx.bookingEvent.create({
@@ -607,7 +609,7 @@ export class BookingService {
     });
 
     const customer = await this.crm.getById(tenant.id, booking.customerId);
-    const kycRequired = Boolean(tenant.featureFlags.kyc_required) && customer.kycStatus !== "VERIFIED";
+    const kycRequired = Boolean(tenant.featureFlags.kyc_required) && !isKycVerified(customer.kycStatus);
     await this.notifications.notifyCustomer({
       tenantId: tenant.id,
       tenantSlug: tenant.slug,
@@ -626,7 +628,7 @@ export class BookingService {
       const existing = await tx.booking.findUnique({ where: { id: bookingId }, include: { customer: true } });
       if (!existing) throw new NotFoundException("Booking not found.");
       if (existing.status !== "APPROVED") throw new ConflictException(`Booking is ${existing.status} — KYC is requested after approval.`);
-      if (existing.customer.kycStatus === "VERIFIED") throw new ConflictException("This customer is already KYC-verified — generate the contract instead.");
+      if (isKycVerified(existing.customer.kycStatus)) throw new ConflictException("This customer is already KYC-verified — generate the contract instead.");
       await tx.bookingEvent.create({
         data: { tenantId: tenant.id, bookingId, fromStatus: existing.status, toStatus: existing.status, actorType: "USER", actorId: actorUserId, reason: existing.kycRequestedAt ? "KYC request re-sent" : "KYC requested" },
       });
@@ -665,14 +667,16 @@ export class BookingService {
       if (booking.status !== "APPROVED") throw new ConflictException(`Booking is ${booking.status} — the contract is generated after approval.`);
       if (!booking.termMonths) throw new BadRequestException("Only term leases use the contract + proforma step.");
       if (!booking.assetId) throw new BadRequestException("Assign a unit before generating the contract.");
-      if (kycRequired && booking.customer.kycStatus !== "VERIFIED") {
+      if (kycRequired && !isKycVerified(booking.customer.kycStatus)) {
         throw new ConflictException("KYC is not verified yet — the contract can be generated once the customer's documents are approved.");
       }
       if (booking.invoices.length > 0) throw new ConflictException("This booking already has its payment schedule.");
 
       const contract =
         (await tx.contract.findFirst({ where: { bookingId }, orderBy: { createdAt: "desc" } })) ??
-        (await tx.contract.create({ data: { tenantId: tenant.id, bookingId, templateVersion: "v2-term" } }));
+        (await tx.contract.create({
+          data: { tenantId: tenant.id, bookingId, templateVersion: "v2-term", ...(await newContractFields(tx, tenant.id, booking.customerId)) },
+        }));
 
       const { proforma, cycles } = await generateTermPaymentSchedule(
         tx,

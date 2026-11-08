@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { generateRentalOrderInvoice, markInvoicePaid } from "@rentos/database";
+import { generateRentalOrderInvoice, markInvoicePaid, newContractFields } from "@rentos/database";
 import { monthlyPeriodEnd, rentalOrderFsm } from "@rentos/domain";
 
 import { NotificationsService } from "../notifications/notifications.service.js";
@@ -110,6 +110,7 @@ export class RentalOrderService {
         tenantId: tenant.id,
         rentalOrderId: order.id,
         templateVersion: "v1",
+        ...(await newContractFields(tx, tenant.id, order.customerId)),
         esignProvider: "MOCK",
         esignStatus: "SIGNED",
         signedAt: new Date(),
