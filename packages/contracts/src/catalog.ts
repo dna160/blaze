@@ -22,9 +22,27 @@ export const TERM_OPTIONS_MONTHS = [1, 3, 6, 12] as const;
 export const TermMonthsSchema = z.union([z.literal(1), z.literal(3), z.literal(6), z.literal(12)]);
 export type TermMonthsValue = z.infer<typeof TermMonthsSchema>;
 
-/** Storefront size grouping (PRD v2 §4.1) — stored in AssetType.attributesSchema.sizeClass. */
-export const SizeClassSchema = z.enum(["SMALL", "MEDIUM", "LARGE"]);
+/**
+ * Storefront size grouping (PRD v2 §4.1) — stored in AssetType.attributesSchema.sizeClass.
+ * PRD go-live §5.2 adds XLARGE and FREESTYLE (City Storage's volume bands).
+ * The storefront shows them in this order, Free Style as its own group.
+ */
+export const SizeClassSchema = z.enum(["SMALL", "MEDIUM", "LARGE", "XLARGE", "FREESTYLE"]);
 export type SizeClassValue = z.infer<typeof SizeClassSchema>;
+export const SIZE_CLASS_ORDER: readonly SizeClassValue[] = ["SMALL", "MEDIUM", "LARGE", "XLARGE", "FREESTYLE"];
+
+/**
+ * PRD go-live §5.2 — how a unit type's size is printed. City Storage sells by
+ * VOLUME: attributesSchema.sizeLabel ("4 m³", "1–2 m³") wins, then sizeM3,
+ * then the older sizeM2 (area) for tenants still on it.
+ */
+export function unitSizeLabel(attributes: unknown): string | null {
+  const a = (attributes ?? {}) as { sizeLabel?: unknown; sizeM3?: unknown; sizeM2?: unknown };
+  if (typeof a.sizeLabel === "string" && a.sizeLabel.trim()) return a.sizeLabel;
+  if (typeof a.sizeM3 === "number") return `${a.sizeM3} m³`;
+  if (typeof a.sizeM2 === "number") return `${a.sizeM2} m²`;
+  return null;
+}
 
 export const PricingConfigSchema = z.object({
   basePrice: MoneyStringSchema,

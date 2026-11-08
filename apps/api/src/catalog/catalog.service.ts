@@ -21,16 +21,15 @@ import type {
   UpdateAssetTypeRequest,
   UpsertLocationRequest,
 } from "@rentos/contracts";
+import { SIZE_CLASS_ORDER, type SizeClassValue } from "@rentos/contracts";
 
 import { AuditService } from "../audit/audit.service.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
-const SIZE_CLASSES = new Set(["SMALL", "MEDIUM", "LARGE"]);
-
-function sizeClassOf(attributesSchema: unknown): "SMALL" | "MEDIUM" | "LARGE" | null {
+function sizeClassOf(attributesSchema: unknown): SizeClassValue | null {
   const raw = (attributesSchema as { sizeClass?: unknown } | null)?.sizeClass;
-  return typeof raw === "string" && SIZE_CLASSES.has(raw) ? (raw as "SMALL" | "MEDIUM" | "LARGE") : null;
+  return typeof raw === "string" && (SIZE_CLASS_ORDER as readonly string[]).includes(raw) ? (raw as SizeClassValue) : null;
 }
 
 @Injectable()
@@ -205,8 +204,10 @@ export class CatalogService {
           availableNow,
         });
       }
-      const order = { SMALL: 0, MEDIUM: 1, LARGE: 2 } as const;
-      return summaries.sort((a, b) => (a.sizeClass ? order[a.sizeClass] : 3) - (b.sizeClass ? order[b.sizeClass] : 3));
+      // S, M, L, XL, then Free Style (PRD go-live §5.2); within a class, smallest volume first.
+      const rank = (s: LocationAssetTypeSummary) => (s.sizeClass ? SIZE_CLASS_ORDER.indexOf(s.sizeClass) : SIZE_CLASS_ORDER.length);
+      const vol = (s: LocationAssetTypeSummary) => Number((s.assetType.attributesSchema as { sizeM3?: number } | null)?.sizeM3 ?? 0);
+      return summaries.sort((a, b) => rank(a) - rank(b) || vol(a) - vol(b));
     });
   }
 
