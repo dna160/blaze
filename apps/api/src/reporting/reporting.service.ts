@@ -227,14 +227,17 @@ export class ReportingService {
       const contracts = await tx.contract.findMany({
         where: this.dateRangeWhere("createdAt", from, to),
         include: {
-          booking: { select: { id: true, customer: { select: { fullName: true, phone: true } } } },
-          rentalOrder: { select: { id: true, periodStart: true, periodEnd: true, customer: { select: { fullName: true, phone: true } } } },
+          booking: { select: { id: true, startDate: true, asset: { select: { code: true } }, customer: { select: { fullName: true, phone: true, customerNumber: true } } } },
+          rentalOrder: { select: { id: true, periodStart: true, periodEnd: true, asset: { select: { code: true } }, customer: { select: { fullName: true, phone: true, customerNumber: true } } } },
         },
         orderBy: { createdAt: "asc" },
       });
       return contracts.map((c) => {
         const cust = c.rentalOrder?.customer ?? c.booking?.customer;
         return {
+          contractNumber: c.contractNumber,
+          customerNumber: cust?.customerNumber ?? null,
+          unit: c.rentalOrder?.asset?.code ?? c.booking?.asset?.code ?? null,
           contractId: c.id,
           rentalOrderId: c.rentalOrderId,
           bookingId: c.bookingId,

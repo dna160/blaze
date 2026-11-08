@@ -132,3 +132,25 @@ Two invariants that must survive the R0 refactor intact:
 - [ ] Existing maker-checker 403 still fires after the refactor.
 - [ ] `capability.matrix.ts` matches this table exactly (mechanical diff, not
       eyeballed).
+
+---
+
+## 6. Organization-wide settings need an organization-scoped Admin (go-live, 2026-11-08)
+
+Some screens change something every branch shares. Holding `manage_users` is not
+enough for them: a branch Admin holds it too, and could repoint the whole
+organization's WhatsApp number from one branch (PRD go-live G8). These check
+`hasOrganizationScope` **and** `manage_users`, in the API, not just the console:
+
+| Surface | Read | Change |
+|---|---|---|
+| Settings → Messaging (provider, auto-reply, pairing/unlinking, test send) | any staff | Super Admin only |
+| Messaging pause (`/organization/messaging/pause`) | any staff (the red banner) | Super Admin only |
+| Settings → Branch (legal entity, contacts, bank accounts, PKP, numbering, online payment) | any staff in scope | Super Admin only |
+| Inventory → Import units (CSV) | — | Super Admin only |
+| Settings → Users → Import CSV | — | `manage_users`; a branch Admin only into their own branch and never organization-wide roles |
+
+Document access (client page vault, PRD go-live §7.4): KYC files need
+`approve_booking` or `approve_deposit_refund` (as before) and every open is
+audited (`KYC_FILE_OPENED`); contracts, invoices and payment proofs are open to any
+staff role in the branch.

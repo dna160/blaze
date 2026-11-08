@@ -14,7 +14,7 @@ const CSV_COLUMNS = {
   invoices: ["invoiceNumber", "status", "customer", "issueDate", "dueDate", "subtotal", "taxAmount", "totalAmount", "supersededByInvoiceId"],
   payments: ["invoiceNumber", "provider", "method", "status", "amount", "paidAt", "createdAt"],
   ledger: ["date", "account", "entryType", "amount", "currency", "referenceType", "referenceId", "description"],
-  contracts: ["contractId", "rentalOrderId", "bookingId", "customer", "periodStart", "periodEnd", "esignProvider", "esignStatus", "signedAt", "documentUrl"],
+  contracts: ["contractNumber", "customerNumber", "unit", "contractId", "rentalOrderId", "bookingId", "customer", "periodStart", "periodEnd", "esignProvider", "esignStatus", "signedAt", "documentUrl"],
 } as const;
 
 @ApiTags("reporting")
@@ -112,6 +112,7 @@ export class ReportingController {
   private sendCsv(res: Response, filename: string, csv: string): void {
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.send(csv);
+    // PRD go-live §12.2 — a UTF-8 BOM, or Excel opens Indonesian text as mojibake.
+    res.send(`\uFEFF${csv}`);
   }
 }
