@@ -25,7 +25,8 @@ export type Capability =
   | "run_reports" // run + export reports
   | "manage_users" // manage users, pricing config, feature flags, onboarding
   | "delete_any"
-  | "fire_waitlist"; // B10 — release a unit to the waitlist queue
+  | "fire_waitlist" // B10 — release a unit to the waitlist queue
+  | "read_messages"; // PRD go-live §9.5 — the WhatsApp inbox (branch-scoped)
 
 export const ALL_CAPABILITIES: readonly Capability[] = [
   "approve_booking",
@@ -40,6 +41,7 @@ export const ALL_CAPABILITIES: readonly Capability[] = [
   "manage_users",
   "delete_any",
   "fire_waitlist",
+  "read_messages",
 ];
 
 /**
@@ -62,6 +64,7 @@ export const CAPABILITY_MATRIX: Readonly<Record<BaseRole, ReadonlySet<Capability
     "manage_users",
     "delete_any",
     "fire_waitlist",
+    "read_messages",
   ]),
   FINANCE: new Set<Capability>([
     // Finance records and verifies payments and approves deposit refunds, and
@@ -83,11 +86,15 @@ export const CAPABILITY_MATRIX: Readonly<Record<BaseRole, ReadonlySet<Capability
     "price_override",
     "run_reports",
     "fire_waitlist",
+    "read_messages",
   ]),
   STAFF: new Set<Capability>([
     // Front-desk. Can create and take payment, nothing that needs judgement.
+    // Reads the branch's customer WhatsApp (go-live §9.5; Finance does not —
+    // pending the client's answer to PRD go-live §16 Q6).
     "create_booking",
     "record_payment",
+    "read_messages",
   ]),
 };
 

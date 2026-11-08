@@ -3,6 +3,8 @@ import { ApiTags } from "@nestjs/swagger";
 import { SendReplyRequestSchema } from "@rentos/contracts";
 
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
+import { RequireCapability } from "../common/decorators/require-capability.decorator.js";
+import { CapabilityGuard } from "../common/guards/capability.guard.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
 import { StaffGuard } from "../common/guards/staff.guard.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
@@ -20,7 +22,10 @@ import { MessagingService } from "./messaging.service.js";
  */
 @ApiTags("messaging")
 @Controller("messaging")
-@UseGuards(JwtAuthGuard, StaffGuard)
+// PRD go-live §9.5 — the inbox is read_messages (Admin, Supervisor, Staff;
+// not Finance). Still branch-scoped: MessagingService reads per tenant context.
+@UseGuards(JwtAuthGuard, StaffGuard, CapabilityGuard)
+@RequireCapability("read_messages")
 export class MessagingController {
   constructor(private readonly messaging: MessagingService) {}
 

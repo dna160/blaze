@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { authClient, isAdmin } from "@/lib/auth-client";
+import { canDo } from "@/lib/capabilities";
 import { useMessagingPause } from "@/lib/messaging-pause";
 import { usePendingApprovalCount } from "@/lib/pending-approvals";
 import { useUnreadMessageCount } from "@/lib/unread-messages";
@@ -51,7 +52,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
       <aside className="w-56 border-r border-brand-600/10 bg-white p-4">
         <div className="mb-6 px-2 text-lg font-semibold">RentOS Console</div>
         <nav className="space-y-1">
-          {[...NAV, ...(isAdmin(user) ? ADMIN_NAV : [])].map((item) => {
+          {[...NAV.filter((item) => item.href !== "/messaging" || canDo(user, "read_messages")), ...(isAdmin(user) ? ADMIN_NAV : [])].map((item) => {
             const badge =
               item.href === "/bookings" ? pendingApprovals : item.href === "/messaging" ? unreadMessages : 0;
             return (

@@ -36,6 +36,7 @@ describe("RBAC capability matrix (BUILD-SPEC C2, docs/RBAC.md §3) — cell by c
     manage_users: [true, false, false, false],
     delete_any: [true, false, false, false],
     fire_waitlist: [true, false, true, false],
+    read_messages: [true, false, true, true],
   };
 
   const roles = [admin, finance, spv, staff];

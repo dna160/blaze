@@ -301,7 +301,8 @@ export class CatalogService {
       tx.asset.findMany({
         where: { locationId: filters.locationId },
         include: {
-          assetType: { select: { name: true } },
+          // attributesSchema carries the size label (PRD go-live §5.2).
+          assetType: { select: { name: true, attributesSchema: true } },
           location: { select: { id: true, name: true } },
           bookings: {
             where: { status: { in: ["ACTIVE", "RENEWING", "SUSPENDED"] } },

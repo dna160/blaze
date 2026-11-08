@@ -27,6 +27,8 @@ interface UnitMapAsset {
     startDate: string;
     customer: { fullName: string | null; phone: string };
     invoices: Array<{ periodEnd: string | null }>;
+    /** PRD go-live §10 — set on rentals imported from Booqable, which have no paid RentOS invoice yet. */
+    paidThrough?: string | null;
   }>;
 }
 
@@ -301,7 +303,7 @@ export default function AssetsPage() {
                   </div>
                   <div>
                     <dt className="text-brand-700/50">Paid through</dt>
-                    <dd>{formatDate(selected.bookings[0].invoices[0]?.periodEnd)}</dd>
+                    <dd>{formatDate(selected.bookings[0].invoices[0]?.periodEnd ?? selected.bookings[0].paidThrough ?? null)}</dd>
                   </div>
                 </dl>
               ) : (

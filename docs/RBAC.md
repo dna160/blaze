@@ -83,6 +83,8 @@ super-user for cross-org operations and keeps its existing behaviour.
 | Run + export reports | ✔ | ✔ | ✔ | — |
 | Manage users, pricing config | ✔ | — | — | — |
 | Delete anything | ✔ | — | — | — |
+| Fire waitlist (B10) | ✔ | — | ✔ | — |
+| Read the WhatsApp inbox (`read_messages`, go-live §9.5) | ✔ | — | ✔ | ✔ |
 
 ### The four denials that gate R0
 
@@ -149,6 +151,11 @@ organization's WhatsApp number from one branch (PRD go-live G8). These check
 | Settings → Branch (legal entity, contacts, bank accounts, PKP, numbering, online payment) | any staff in scope | Super Admin only |
 | Inventory → Import units (CSV) | — | Super Admin only |
 | Settings → Users → Import CSV | — | `manage_users`; a branch Admin only into their own branch and never organization-wide roles |
+
+Inbox (PRD go-live §9.5): `read_messages` — ADMIN, SUPERVISOR and STAFF; **not**
+FINANCE. Branch-scoped as before. Open with the client (§16 Q6): confirm Finance
+stays out. Matrix row in `packages/domain/src/rbac/capability-matrix.ts`, mirrored in
+`apps/console/src/lib/capabilities.ts`.
 
 Document access (client page vault, PRD go-live §7.4): KYC files need
 `approve_booking` or `approve_deposit_refund` (as before) and every open is
