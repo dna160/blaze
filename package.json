@@ -21,7 +21,11 @@
     "db:seed": "pnpm --filter @rentos/database seed",
     "format": "prettier --write \"**/*.{ts,tsx,md,json}\" --ignore-path .gitignore",
     "wa:templates": "pnpm --filter @rentos/domain wa:templates",
-    "wa:number": "pnpm --filter @rentos/domain wa:number"
+    "wa:number": "pnpm --filter @rentos/domain wa:number",
+    "migrate:legacy": "pnpm --filter @rentos/api exec tsx scripts/go-live/migrate-legacy.ts",
+    "import:units": "pnpm --filter @rentos/api exec tsx scripts/go-live/import-units.ts",
+    "import:users": "pnpm --filter @rentos/api exec tsx scripts/go-live/import-users.ts",
+    "db:seed:production": "SEED_MODE=production pnpm --filter @rentos/database seed"
   },
   "devDependencies": {
     "prettier": "^3.4.2",

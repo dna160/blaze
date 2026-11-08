@@ -693,6 +693,10 @@ model Booking {
   /// PRD go-live §10 — the legacy system's booking number (Booqable "#46"); the
   /// migration importer's idempotency key for a rental.
   legacyBookingNumber String?       @map("legacy_booking_number")
+  /// PRD go-live §10 — the last day already paid for in the legacy system.
+  /// The recurring-invoice job never bills a cycle starting on or before it,
+  /// so a customer who prepaid in Booqable is not invoiced again.
+  paidThrough         DateTime?     @map("paid_through")
   createdAt           DateTime      @default(now()) @map("created_at")
   updatedAt           DateTime      @updatedAt @map("updated_at")
 
@@ -1061,6 +1065,8 @@ model MessagingContactState {
 model UserPasswordToken {
   id        String    @id @default(uuid()) @db.Uuid
   userId    String    @map("user_id") @db.Uuid
+  /// The user's home branch — users are RLS-scoped, so redeeming needs it.
+  tenantId  String    @map("tenant_id") @db.Uuid
   tokenHash String    @unique @map("token_hash")
   expiresAt DateTime  @map("expires_at")
   usedAt    DateTime? @map("used_at")

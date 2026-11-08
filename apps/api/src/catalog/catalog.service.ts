@@ -1,5 +1,7 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import {
+  applyUnitImport,
+  planUnitImport,
   computePooledAvailableCount,
   countAvailableStorageAssets,
   resolveBlackoutMonths,
@@ -7,7 +9,7 @@ import {
   toPricingConfig,
   type Prisma,
 } from "@rentos/database";
-import { computeTermSchedule, getBookingModelStrategy, termEndDate, type BookingWindow } from "@rentos/domain";
+import { computeTermSchedule, getBookingModelStrategy, hasOrganizationScope, termEndDate, type BookingWindow } from "@rentos/domain";
 import type {
   CreateAssetRequest,
   CreateAssetTypeRequest,
@@ -20,6 +22,8 @@ import type {
   UpsertLocationRequest,
 } from "@rentos/contracts";
 
+import { AuditService } from "../audit/audit.service.js";
+import type { AuthenticatedUser } from "../common/types/express-request.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 const SIZE_CLASSES = new Set(["SMALL", "MEDIUM", "LARGE"]);
@@ -31,7 +35,25 @@ function sizeClassOf(attributesSchema: unknown): "SMALL" | "MEDIUM" | "LARGE" | 
 
 @Injectable()
 export class CatalogService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
+
+  /** PRD go-live §5.3 — see packages/database/src/imports/units.ts for the rules. */
+  async importUnits(user: AuthenticatedUser, tenantId: string, csv: string, apply: boolean) {
+    if (!hasOrganizationScope(user.roleAssignments)) {
+      throw new ForbiddenException("Importing units requires an organization-scoped Admin.");
+    }
+    if (!apply) return this.prisma.runInTenantContext(tenantId, (tx) => planUnitImport(tx, tenantId, csv));
+    const plan = await this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const location = await tx.location.findFirst({ orderBy: { createdAt: "asc" }, select: { id: true } });
+      return applyUnitImport(tx, tenantId, csv, { locationId: location?.id ?? null });
+    });
+    if (!plan.canApply) throw new BadRequestException({ message: "The file has errors — nothing was imported.", plan });
+    await this.audit.record({ tenantId, actorUserId: user.id, action: "UNITS_IMPORTED", entityType: "Asset", metadata: { summary: plan.summary, missingFromFile: plan.missingFromFile.length } });
+    return plan;
+  }
 
   listPublishedAssetTypes(tenantId: string) {
     return this.prisma.runInTenantContext(tenantId, (tx) =>

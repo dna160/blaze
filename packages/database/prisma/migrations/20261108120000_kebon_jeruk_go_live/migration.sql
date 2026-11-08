@@ -16,7 +16,8 @@ ALTER TYPE "LedgerAccount" ADD VALUE 'OPENING_BALANCE';
 ALTER TABLE "assets" ADD COLUMN     "zone" TEXT;
 
 -- AlterTable
-ALTER TABLE "bookings" ADD COLUMN     "legacy_booking_number" TEXT;
+ALTER TABLE "bookings" ADD COLUMN     "legacy_booking_number" TEXT,
+ADD COLUMN     "paid_through" TIMESTAMP(3);
 
 -- AlterTable
 ALTER TABLE "contracts" ADD COLUMN     "confirmed_at" TIMESTAMP(3),
@@ -28,7 +29,8 @@ ADD COLUMN     "signature_user_agent" TEXT,
 ADD COLUMN     "terms_version" INTEGER;
 
 -- AlterTable
-ALTER TABLE "customers" ADD COLUMN     "customer_number" INTEGER,
+ALTER TABLE "customers" ADD COLUMN     "address" TEXT,
+ADD COLUMN     "customer_number" INTEGER,
 ADD COLUMN     "pph_type" TEXT;
 
 -- AlterTable
@@ -95,6 +97,7 @@ CREATE TABLE "messaging_contact_state" (
 CREATE TABLE "user_password_tokens" (
     "id" UUID NOT NULL,
     "user_id" UUID NOT NULL,
+    "tenant_id" UUID NOT NULL,
     "token_hash" TEXT NOT NULL,
     "expires_at" TIMESTAMP(3) NOT NULL,
     "used_at" TIMESTAMP(3),

@@ -3,6 +3,7 @@ import { ApiTags } from "@nestjs/swagger";
 import {
   ClerkExchangeSchema,
   ConsoleLoginRequestSchema,
+  SetStaffPasswordRequestSchema,
   MagicLinkExchangeSchema,
   MagicLinkRequestSchema,
   PlatformLoginRequestSchema,
@@ -12,12 +13,17 @@ import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js"
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 
+import { UsersService } from "../users/users.service.js";
+
 import { AuthService } from "./auth.service.js";
 
 @ApiTags("auth")
 @Controller("auth")
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly users: UsersService,
+  ) {}
 
   @Post("console/login")
   consoleLogin(
@@ -25,6 +31,12 @@ export class AuthController {
     @Body(new ZodValidationPipe(ConsoleLoginRequestSchema)) body: ReturnType<typeof ConsoleLoginRequestSchema.parse>,
   ) {
     return this.auth.consoleLogin(tenant, body.email, body.password);
+  }
+
+  /** PRD go-live §4.4 — a new staff member sets their password from the single-use link. Public by design. */
+  @Post("staff/set-password")
+  setStaffPassword(@Body(new ZodValidationPipe(SetStaffPasswordRequestSchema)) body: ReturnType<typeof SetStaffPasswordRequestSchema.parse>) {
+    return this.users.setPasswordWithToken(body.token, body.password);
   }
 
   /** Platform-admin login (Session 26) — tenant-agnostic, no @CurrentTenant() involved by design. */

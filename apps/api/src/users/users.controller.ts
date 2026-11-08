@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
-import { CreateStaffUserRequestSchema, UpdateStaffRoleRequestSchema } from "@rentos/contracts";
+import { CreateStaffUserRequestSchema, CsvImportRequestSchema, UpdateStaffRoleRequestSchema } from "@rentos/contracts";
 
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
@@ -37,6 +37,16 @@ export class UsersController {
     @Body(new ZodValidationPipe(CreateStaffUserRequestSchema)) body: ReturnType<typeof CreateStaffUserRequestSchema.parse>,
   ) {
     return this.users.createUser(user, tenant, body);
+  }
+
+  /** PRD go-live §4.4 — bulk create from go-live-users.csv; dry run unless apply. */
+  @Post("import")
+  importCsv(
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentTenant() tenant: ResolvedTenant,
+    @Body(new ZodValidationPipe(CsvImportRequestSchema)) body: ReturnType<typeof CsvImportRequestSchema.parse>,
+  ) {
+    return this.users.importUsers(user, tenant, body.csv, body.apply === true);
   }
 
   @Patch(":id/role")

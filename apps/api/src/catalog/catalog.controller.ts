@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import {
+  CsvImportRequestSchema,
   CreateAssetRequestSchema,
   CreateAssetTypeRequestSchema,
   RateTierSchema,
@@ -19,6 +20,9 @@ import { StaffGuard } from "../common/guards/staff.guard.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 
+import { CurrentUser } from "../common/decorators/current-user.decorator.js";
+import type { AuthenticatedUser } from "../common/types/express-request.js";
+
 import { CatalogService } from "./catalog.service.js";
 
 /** Public storefront catalog — no auth required (PRD §7.1.1: "prices visible without login"). */
@@ -26,6 +30,22 @@ import { CatalogService } from "./catalog.service.js";
 @Controller("catalog")
 export class CatalogController {
   constructor(private readonly catalog: CatalogService) {}
+
+  /**
+   * PRD go-live §5.3 — Console → Inventory → Import units (CSV). Dry run unless
+   * `apply`; apply only when the dry run is clean. Never deletes. Org-scoped
+   * Admin only (checked in the service on top of manage_users).
+   */
+  @Post("assets/import")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("manage_users")
+  importAssets(
+    @CurrentTenantId() tenantId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body(new ZodValidationPipe(CsvImportRequestSchema)) body: ReturnType<typeof CsvImportRequestSchema.parse>,
+  ) {
+    return this.catalog.importUnits(user, tenantId, body.csv, body.apply === true);
+  }
 
   @Get("asset-types")
   listAssetTypes(@CurrentTenantId() tenantId: string) {

@@ -109,3 +109,17 @@ export const CustomerAuthResponseSchema = z.object({
   customer: CustomerSessionSchema,
 });
 export type CustomerAuthResponse = z.infer<typeof CustomerAuthResponseSchema>;
+
+/** PRD go-live §4.4 — redeem a staff set-password link. */
+export const SetStaffPasswordRequestSchema = z.object({
+  token: z.string().min(20).max(200),
+  password: z.string().min(10, "Use at least 10 characters.").max(200),
+});
+export type SetStaffPasswordRequest = z.infer<typeof SetStaffPasswordRequestSchema>;
+
+/** PRD go-live §4.4 / §5.3 — CSV imports: dry run unless apply is true. */
+export const CsvImportRequestSchema = z.object({
+  csv: z.string().min(1).max(2_000_000),
+  apply: z.boolean().optional(),
+});
+export type CsvImportRequest = z.infer<typeof CsvImportRequestSchema>;

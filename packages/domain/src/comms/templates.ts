@@ -85,6 +85,13 @@ const TEMPLATES: Record<string, (vars: Vars) => RenderedMessage> = {
       `Halo ${v(vars, "customerName", "Pelanggan")}, berikut tautan untuk masuk ke akun sewa Anda. Berlaku 15 menit, mohon jangan dibagikan.\n` +
       `Here is your link to sign in to your rental account. Valid for 15 minutes — please don't share it.\n\nMasuk / Sign in: ${v(vars, "link")}`,
   }),
+  /** PRD go-live §4.4 — staff, by email: no shared or default passwords. */
+  staff_set_password: (vars) => ({
+    subject: "Akun RentOS Anda / Your RentOS console account",
+    text:
+      `Halo ${v(vars, "displayName", "")}, akun console RentOS untuk ${v(vars, "branchName", "City Storage")} sudah dibuat. Buat kata sandi Anda melalui tautan di bawah (sekali pakai, berlaku 72 jam).\n` +
+      `Your RentOS console account for ${v(vars, "branchName", "City Storage")} is ready. Set your password with the link below (single use, valid 72 hours).\n\n${v(vars, "link")}`,
+  }),
   kyc_requested: (vars) => ({
     subject: "Verifikasi identitas Anda / Verify your identity",
     text:

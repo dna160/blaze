@@ -4,6 +4,7 @@ import { PassportModule } from "@nestjs/passport";
 
 import { CrmModule } from "../crm/crm.module.js";
 import { NotificationsModule } from "../notifications/notifications.module.js";
+import { UsersModule } from "../users/users.module.js";
 
 import { AuthController } from "./auth.controller.js";
 import { AuthService } from "./auth.service.js";
@@ -18,6 +19,7 @@ import { JwtStrategy } from "./strategies/jwt.strategy.js";
     }),
     CrmModule,
     NotificationsModule,
+    UsersModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],

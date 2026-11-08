@@ -38,6 +38,10 @@ export async function runGenerateRecurringInvoices(leadDays = DEFAULT_LEAD_DAYS)
         leadThreshold.setDate(leadThreshold.getDate() - leadDays);
         if (new Date() < leadThreshold) continue;
 
+        // PRD go-live §10 — a lease imported from the legacy system is paid up
+        // to `paidThrough`; never bill a cycle that the customer already paid.
+        if (booking.paidThrough && nextCycleStart <= booking.paidThrough) continue;
+
         const alreadyGenerated = await tx.invoice.findFirst({
           where: { bookingId: booking.id, periodStart: nextCycleStart },
         });

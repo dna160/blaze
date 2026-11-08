@@ -17,6 +17,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { BookingModel, type Prisma, type PrismaClient } from "../generated/client/index.js";
+import { parseCsv } from "../src/imports/csv.js";
+
+export { parseCsv };
 
 export const DATA_DIR = path.join(__dirname, "data", "kebon-jeruk");
 
@@ -40,43 +43,6 @@ interface BranchProfile {
 
 export function readBranchProfile(): BranchProfile {
   return JSON.parse(readFileSync(path.join(DATA_DIR, "kebon-jeruk-branch-profile.json"), "utf8")) as BranchProfile;
-}
-
-/** Minimal RFC-4180 CSV reader — quoted fields, embedded commas and "" escapes. */
-export function parseCsv(text: string): Array<Record<string, string>> {
-  const rows: string[][] = [];
-  let field = "";
-  let row: string[] = [];
-  let quoted = false;
-  const src = text.replace(/^﻿/, "");
-  for (let i = 0; i < src.length; i++) {
-    const c = src[i]!;
-    if (quoted) {
-      if (c === '"' && src[i + 1] === '"') {
-        field += '"';
-        i++;
-      } else if (c === '"') quoted = false;
-      else field += c;
-    } else if (c === '"') quoted = true;
-    else if (c === ",") {
-      row.push(field);
-      field = "";
-    } else if (c === "\n" || c === "\r") {
-      if (c === "\r" && src[i + 1] === "\n") i++;
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = "";
-    } else field += c;
-  }
-  if (field !== "" || row.length > 0) {
-    row.push(field);
-    rows.push(row);
-  }
-  const nonEmpty = rows.filter((r) => r.some((v) => v.trim() !== ""));
-  const [header, ...body] = nonEmpty;
-  if (!header) return [];
-  return body.map((r) => Object.fromEntries(header.map((h, i) => [h.trim(), (r[i] ?? "").trim()])));
 }
 
 interface UnitTypeRow {
