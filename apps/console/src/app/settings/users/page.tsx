@@ -4,6 +4,7 @@ import { Fragment, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { ConsoleShell } from "@/components/ConsoleShell";
+import { CsvImportPanel } from "@/components/CsvImportPanel";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient, isAdmin, isOrgScoped } from "@/lib/auth-client";
 
@@ -37,6 +38,33 @@ const STATUS_COLORS: Record<string, string> = {
   ACTIVE: "bg-green-100 text-green-800",
   SUSPENDED: "bg-amber-100 text-amber-800",
 };
+
+interface UserImportResult {
+  plan: {
+    rows: Array<{ line: number; email: string; displayName: string; role: string; scope: string; branchSlug: string | null; action: string; errors: string[] }>;
+    summary: { create: number; exists: number; error: number };
+    canApply: boolean;
+  };
+  created: Array<{ email: string; displayName: string; branchSlug: string; link: string }>;
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        void navigator.clipboard.writeText(text).then(() => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+      className="rounded border border-brand-600/20 px-2 py-0.5 text-xs hover:bg-brand-700/5"
+    >
+      {copied ? "Copied" : "Copy link"}
+    </button>
+  );
+}
 
 const emptyForm = { email: "", displayName: "", password: "", role: "STAFF" as BaseRole, scope: "TENANT" as RoleScope };
 
@@ -125,6 +153,83 @@ export default function UsersPage() {
           : "You manage users for your branch."}
       </p>
       {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
+
+      <div className="mt-4">
+        <CsvImportPanel<UserImportResult>
+          title="Import CSV"
+          description={
+            <>
+              Columns: <code>email, display_name, role, scope, branch_slug, notes</code> (the go-live data pack&apos;s
+              go-live-users.csv). Role is ADMIN, FINANCE, SUPERVISOR or STAFF; scope is ORGANIZATION or TENANT (a TENANT user needs
+              a branch_slug). Nobody gets a password: each new user receives a single-use link to set their own.
+              {!orgScoped && " As a branch Admin you can only add users to your own branch."}
+            </>
+          }
+          endpoint="/users/import"
+          canApply={(r) => r.plan.canApply && r.plan.summary.create > 0}
+          applyLabel="Create users"
+          onApplied={() => void load()}
+          renderResult={(r, applied) => (
+            <div className="space-y-3 text-sm">
+              <p>
+                Create <b>{r.plan.summary.create}</b> · already exist <b>{r.plan.summary.exists}</b> ·{" "}
+                <span className={r.plan.summary.error ? "font-semibold text-red-700" : ""}>errors {r.plan.summary.error}</span>
+              </p>
+              {!applied && (
+                <div className="max-h-72 overflow-auto rounded border border-brand-600/10">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-brand-700/5 text-left">
+                      <tr>
+                        <th className="p-2">Line</th>
+                        <th className="p-2">Email</th>
+                        <th className="p-2">Name</th>
+                        <th className="p-2">Role</th>
+                        <th className="p-2">Branch</th>
+                        <th className="p-2">Result</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {r.plan.rows.map((row) => (
+                        <tr key={row.line} className="border-t border-brand-600/10">
+                          <td className="p-2">{row.line}</td>
+                          <td className="p-2">{row.email || "—"}</td>
+                          <td className="p-2">{row.displayName || "—"}</td>
+                          <td className="p-2">
+                            {row.role} @ {row.scope}
+                          </td>
+                          <td className="p-2">{row.branchSlug ?? "—"}</td>
+                          <td className={`p-2 ${row.errors.length ? "text-red-700" : ""}`}>
+                            {row.errors.length ? row.errors.join("; ") : row.action === "exists" ? "already exists — skipped" : "will be created"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {applied && r.created.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs text-brand-700/70">
+                    Each person sets their own password with their link. Links are <b>single use</b> and valid for <b>72 hours</b>.
+                    They were also emailed — but while messaging is paused, emails are suppressed, so hand these over directly
+                    (in person or by WhatsApp) and to their owner only.
+                  </p>
+                  <ul className="divide-y divide-brand-600/10 rounded border border-brand-600/10">
+                    {r.created.map((c) => (
+                      <li key={c.email} className="flex items-center justify-between gap-3 p-2 text-xs">
+                        <span>
+                          <b>{c.displayName}</b> · {c.email} · {c.branchSlug}
+                        </span>
+                        <CopyButton text={c.link} />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        />
+      </div>
 
       {/* Create form */}
       <form onSubmit={createUser} className="mt-6 grid grid-cols-1 gap-3 rounded-lg border border-brand-600/10 bg-white p-4 md:grid-cols-6">

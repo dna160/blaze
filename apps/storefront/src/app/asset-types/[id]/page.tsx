@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import type { AssetTypeDto, AvailabilityResponse } from "@rentos/contracts";
+import { unitSizeLabel } from "@rentos/contracts";
 
 import { BookingForm } from "@/components/BookingForm";
 import { apiFetch } from "@/lib/api";
@@ -27,7 +28,7 @@ export default async function AssetTypeDetailPage({ params }: { params: Promise<
       <div>
         <h1 className="text-2xl font-semibold">{assetType.name}</h1>
         <p className="mt-2 text-brand-700/70">
-          {String(assetType.attributesSchema.sizeM2 ?? "")} m² ·{" "}
+          {unitSizeLabel(assetType.attributesSchema) ?? "—"} ·{" "}
           {assetType.attributesSchema.climateControlled ? "Climate controlled" : "Standard"}
         </p>
         <p className="mt-4 text-2xl font-semibold text-accent-500">

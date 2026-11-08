@@ -6,7 +6,8 @@ import { useRouter } from "next/navigation";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { LinkedDevicePanel } from "@/components/LinkedDevicePanel";
 import { apiFetch, ApiError } from "@/lib/api";
-import { authClient, isAdmin } from "@/lib/auth-client";
+import { authClient, isOrgAdmin } from "@/lib/auth-client";
+import { notifyMessagingPauseChanged } from "@/lib/messaging-pause";
 
 type ProviderName = "console_log" | "whatsapp_cloud" | "whatsapp_linked";
 
@@ -16,6 +17,8 @@ interface MessagingConfig {
   businessAccountId: string | null;
   autoReplyEnabled: boolean;
   autoReplyText: string | null;
+  autoReplyCooldownHours: number;
+  pause: { paused: boolean; reason: string | null; pausedAt: string | null; pausedByUserId: string | null };
   accessTokenHint: string | null;
   hasAccessToken: boolean;
   updatedAt: string | null;
@@ -55,7 +58,9 @@ const SOURCE_COPY: Record<MessagingConfig["source"], { label: string; tone: stri
 export default function MessagingSettingsPage() {
   const router = useRouter();
   const me = authClient.getUser();
-  const canEdit = isAdmin(me);
+  // PRD go-live §9.5 — the number, pairing, auto-reply and pause belong to the
+  // whole organization, so only an organization-scoped Admin changes them.
+  const canEdit = isOrgAdmin(me);
 
   const [config, setConfig] = useState<MessagingConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +73,10 @@ export default function MessagingSettingsPage() {
   const [accessToken, setAccessToken] = useState("");
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
   const [autoReplyText, setAutoReplyText] = useState("");
+  const [cooldownHours, setCooldownHours] = useState("12");
+
+  const [pauseReason, setPauseReason] = useState("");
+  const [pauseBusy, setPauseBusy] = useState(false);
 
   const [testTo, setTestTo] = useState("");
   const [testResult, setTestResult] = useState<TestResult | null>(null);
@@ -82,6 +91,7 @@ export default function MessagingSettingsPage() {
       setBusinessAccountId(data.businessAccountId ?? "");
       setAutoReplyEnabled(data.autoReplyEnabled);
       setAutoReplyText(data.autoReplyText ?? "");
+      setCooldownHours(String(data.autoReplyCooldownHours ?? 12));
       setError(null);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) return router.push("/login");
@@ -109,6 +119,7 @@ export default function MessagingSettingsPage() {
           businessAccountId: businessAccountId.trim() || null,
           autoReplyEnabled,
           autoReplyText: autoReplyText.trim() || null,
+          autoReplyCooldownHours: Number(cooldownHours) > 0 ? Number(cooldownHours) : null,
           // Blank means "keep what's stored" — the token is never sent back to
           // the browser, so an empty field can't mean "clear it".
           ...(accessToken.trim() ? { accessToken: accessToken.trim() } : {}),
@@ -121,6 +132,34 @@ export default function MessagingSettingsPage() {
       setError((err as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  /** PRD go-live §9.1 — the organization-wide kill switch, behind a confirmation. */
+  async function togglePause(next: boolean) {
+    if (next && !pauseReason.trim()) {
+      setError("Say why messaging is being paused — the reason is shown in the banner on every page.");
+      return;
+    }
+    const question = next
+      ? "Pause ALL outbound messages (WhatsApp and email) for every branch? Messages will be recorded as suppressed instead of sent."
+      : "Resume sending? Review the suppressed messages first — anything held back while paused is NOT sent automatically.";
+    if (!window.confirm(question)) return;
+    setPauseBusy(true);
+    setError(null);
+    try {
+      await apiFetch("/organization/messaging/pause", {
+        token: authClient.getToken(),
+        method: "PUT",
+        body: next ? { paused: true, reason: pauseReason.trim() } : { paused: false },
+      });
+      setPauseReason("");
+      notifyMessagingPauseChanged();
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setPauseBusy(false);
     }
   }
 
@@ -175,6 +214,63 @@ export default function MessagingSettingsPage() {
             {config.updatedAt && (
               <p className="mt-1 text-xs text-slate-400">Last changed {new Date(config.updatedAt).toLocaleString()}</p>
             )}
+          </div>
+        )}
+
+        {config && (
+          <div className={`space-y-3 rounded border p-4 ${config.pause.paused ? "border-red-300 bg-red-50" : "border-slate-200 bg-white"}`}>
+            <h2 className="text-sm font-semibold text-slate-800">Pause all messaging</h2>
+            {config.pause.paused ? (
+              <p className="text-sm text-red-800">
+                <b>Paused</b>
+                {config.pause.reason ? `: ${config.pause.reason}` : ""}
+                {config.pause.pausedAt ? ` — since ${new Date(config.pause.pausedAt).toLocaleString("id-ID")}` : ""}. Nothing outbound reaches a
+                provider: notifications, reminders, the auto-reply and inbox replies are recorded as suppressed. Incoming messages are still recorded.
+              </p>
+            ) : (
+              <p className="text-xs text-slate-500">
+                Stops every outbound WhatsApp and email for all branches at once — use it during a data migration or if something is
+                sending that shouldn&apos;t. Each held-back message is recorded as suppressed so you can see what would have gone. The
+                legacy data import refuses to run unless messaging is paused.
+              </p>
+            )}
+            {canEdit ? (
+              config.pause.paused ? (
+                <button
+                  onClick={() => void togglePause(false)}
+                  disabled={pauseBusy}
+                  className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  {pauseBusy ? "Working…" : "Resume sending"}
+                </button>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    value={pauseReason}
+                    onChange={(e) => setPauseReason(e.target.value)}
+                    maxLength={300}
+                    placeholder="Reason, e.g. Data migration from Booqable"
+                    className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
+                  />
+                  <button
+                    onClick={() => void togglePause(true)}
+                    disabled={pauseBusy}
+                    className="rounded bg-red-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    {pauseBusy ? "Working…" : "Pause messaging"}
+                  </button>
+                </div>
+              )
+            ) : (
+              <p className="text-xs text-slate-500">Only an organization-scoped Admin (Super Admin) can pause or resume messaging.</p>
+            )}
+          </div>
+        )}
+
+        {!canEdit && (
+          <div className="rounded border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            You can see how messaging is set up. Changing the number, pairing, auto-reply or pause needs an organization-scoped Admin
+            (Super Admin), because they apply to every branch.
           </div>
         )}
 
@@ -267,8 +363,8 @@ export default function MessagingSettingsPage() {
           <form onSubmit={save} className="space-y-4 rounded border border-slate-200 bg-white p-4">
             <h2 className="text-sm font-semibold text-slate-800">Reply automatically to incoming messages</h2>
             <p className="text-xs text-slate-500">
-              When a customer messages your WhatsApp number, send this back once per message. Their message and the
-              reply both appear in the inbox.
+              When a customer messages your WhatsApp number, send this back — at most once per number per cooldown, and not
+              while a person on your team has replied within it. Their message and the reply both appear in the inbox.
             </p>
 
             <label className="flex items-center gap-2 text-sm">
@@ -292,6 +388,26 @@ export default function MessagingSettingsPage() {
                 placeholder="Terima kasih, pesan Anda sudah kami terima. Tim kami akan membalas segera. / Thanks — we've got your message and will reply shortly."
                 className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
               />
+              <span className="mt-1 block text-xs text-slate-500">
+                Placeholders, filled from Settings → Branch: <code>{"{branchName}"}</code>, <code>{"{branchWhatsapp}"}</code>,{" "}
+                <code>{"{branchPhone}"}</code> — the customer&apos;s own branch, or the first branch for an unknown number — and{" "}
+                <code>{"{allBranches}"}</code>, one &ldquo;Branch: WA … · Tel …&rdquo; line per branch. Example: &ldquo;Halo! Nomor ini hanya
+                untuk notifikasi otomatis. Untuk pertanyaan, hubungi CS {"{branchName}"} di WhatsApp {"{branchWhatsapp}"}.&rdquo;
+              </span>
+            </label>
+
+            <label className="block text-sm">
+              <span className="text-slate-700">Cooldown (hours)</span>
+              <input
+                type="number"
+                min={1}
+                max={336}
+                value={cooldownHours}
+                onChange={(e) => setCooldownHours(e.target.value)}
+                disabled={!canEdit || !autoReplyEnabled}
+                className="mt-1 w-32 rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
+              />
+              <span className="mt-1 block text-xs text-slate-500">At most one automatic reply per number in this window. Default 12.</span>
             </label>
 
             <button type="submit" disabled={busy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">

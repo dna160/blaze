@@ -161,10 +161,10 @@ export function LinkedDevicePanel({ canEdit }: { canEdit: boolean }) {
         online at least every few days, or WhatsApp unlinks it after about 14.
       </p>
       {status.detail && <p className="text-sm text-slate-700">{status.detail}</p>}
-      {status.state === "connected" && (
+      {status.dailyCap > 0 && (
         <p className="text-xs text-slate-500">
-          Sent today: {status.sentToday} of {status.dailyCap}. Messages are spaced a few seconds
-          apart to keep the number in good standing.
+          Sent today: <b>{status.sentToday}</b> of {status.dailyCap} (the daily cap, counted per Jakarta day and kept across
+          restarts). Messages are spaced a few seconds apart to keep the number in good standing.
         </p>
       )}
 

@@ -142,15 +142,15 @@ export default function KycPage() {
 
       {isCompany && (
         <div className="rounded-xl border border-brand-600/10 bg-white p-6">
-          <h3 className="font-medium">Apakah dibebankan PPh?</h3>
+          <h3 className="font-medium">Apakah akan memotong PPh?</h3>
           <p className="mt-1 text-sm text-brand-700/60">
-            Is income tax (PPh) withheld on this rental? If you are not sure, ask your finance team — we can change
-            this later.
+            Will your company withhold income tax (PPh) when paying this rental? If you are not sure, ask your finance
+            team — we can change this later.
           </p>
           <div className="mt-3 grid grid-cols-2 gap-2">
             {([
-              { value: true, label: "Ya", sub: "Yes, withheld" },
-              { value: false, label: "Tidak", sub: "No" },
+              { value: true, label: "Ya", sub: "Yes, we will withhold" },
+              { value: false, label: "Tidak", sub: "No, we pay in full" },
             ] as const).map((option) => (
               <button
                 key={String(option.value)}

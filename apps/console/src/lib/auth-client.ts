@@ -49,3 +49,12 @@ export const authClient = {
     window.localStorage.removeItem(USER_KEY);
   },
 };
+
+/**
+ * PRD go-live §5.1 / §9.5 — organization-wide settings (the branch profile,
+ * the WhatsApp number, pause, auto-reply) are changed by an organization-scoped
+ * Admin only (Super Admin). A branch Admin sees them read-only.
+ */
+export function isOrgAdmin(user: StaffSessionUser | null): boolean {
+  return Boolean(user?.roleAssignments?.some((r) => r.role === "ADMIN" && r.scope === "ORGANIZATION"));
+}

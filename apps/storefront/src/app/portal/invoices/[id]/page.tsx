@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import type { InvoiceDto, PaymentDto } from "@rentos/contracts";
+import type { BranchPublicProfile, InvoiceDto, PaymentDto } from "@rentos/contracts";
 
 import { apiFetch, ApiError, openPdf } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { waLink } from "@/lib/branch";
 import { getClientTenantSlug } from "@/lib/tenant-client";
 
 const TENANT_SLUG = getClientTenantSlug();
@@ -35,6 +36,8 @@ export default function InvoiceDetailPage() {
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [instructions, setInstructions] = useState<Record<string, unknown> | null>(null);
+  const [profile, setProfile] = useState<BranchPublicProfile | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
 
   async function load() {
     const token = authClient.getToken();
@@ -43,8 +46,13 @@ export default function InvoiceDetailPage() {
       return;
     }
     try {
-      const data = await apiFetch<InvoiceWithPayments>(`/invoices/${id}`, { tenantSlug: TENANT_SLUG, token });
+      const [data, branch] = await Promise.all([
+        apiFetch<InvoiceWithPayments>(`/invoices/${id}`, { tenantSlug: TENANT_SLUG, token }),
+        // PRD go-live §4.3 — whether online payment is on, and the bank details when it is not.
+        apiFetch<BranchPublicProfile>("/branch/profile", { tenantSlug: TENANT_SLUG }).catch(() => null),
+      ]);
       setInvoice(data);
+      setProfile(branch);
     } catch {
       router.push("/portal");
     }
@@ -71,8 +79,23 @@ export default function InvoiceDetailPage() {
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Payment failed.");
+      // 409 ONLINE_PAYMENTS_DISABLED: the branch turned online payment off since the page loaded —
+      // switch to the bank transfer instructions rather than leave a dead Pay button.
+      if (err instanceof ApiError && err.status === 409 && /online payment/i.test(err.message)) {
+        setProfile((p) => (p ? { ...p, onlinePaymentsEnabled: false } : p));
+      }
     } finally {
       setPaying(false);
+    }
+  }
+
+  async function copy(value: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(value);
+      setTimeout(() => setCopied(null), 2000);
+    } catch {
+      // Clipboard blocked (insecure context / permissions) — the number is on screen to copy by hand.
     }
   }
 
@@ -81,6 +104,13 @@ export default function InvoiceDetailPage() {
   const payable = invoice.status === "ISSUED" || invoice.status === "OVERDUE";
   const isProforma = invoice.scheduleIndex === 0 && invoice.status !== "PAID";
   const isScheduled = invoice.status === "SCHEDULED";
+  // Fail closed: until the profile says online payment is on, show bank transfer — never a Pay button
+  // that a mock gateway would turn into "paid" with no money moved (PRD go-live §4.3).
+  const onlinePayments = profile?.onlinePaymentsEnabled === true;
+  const proofLink = waLink(
+    profile?.contact.whatsapp,
+    `Halo ${profile?.name ?? ""}, berikut bukti transfer untuk invoice ${invoice.invoiceNumber} sebesar ${formatIDR(invoice.totalAmount)}.`,
+  );
 
   return (
     <div className="max-w-lg space-y-6">
@@ -147,7 +177,53 @@ export default function InvoiceDetailPage() {
         </div>
       )}
 
-      {payable && !instructions && (
+      {payable && !onlinePayments && (
+        <div className="space-y-4 rounded-xl border border-brand-600/10 bg-white p-6">
+          <div>
+            <h3 className="font-medium">Bayar dengan transfer bank / Pay by bank transfer</h3>
+            <p className="mt-1 text-sm text-brand-700/60">
+              Transfer tepat <strong>{formatIDR(invoice.totalAmount)}</strong> dan cantumkan nomor invoice{" "}
+              <strong>{invoice.invoiceNumber}</strong> pada berita transfer. / Transfer exactly this amount and quote the invoice number.
+            </p>
+          </div>
+          {profile && profile.bankAccounts.length > 0 ? (
+            <ul className="space-y-3">
+              {profile.bankAccounts.map((b) => (
+                <li key={`${b.bank}-${b.accountNumber}`} className="rounded-lg bg-brand-700/5 p-4 text-sm">
+                  <p className="font-medium">{b.bank}</p>
+                  <div className="mt-1 flex items-center justify-between gap-3">
+                    <span className="font-mono text-lg tracking-wide">{b.accountNumber}</span>
+                    <button type="button" onClick={() => copy(b.accountNumber)} className="rounded border border-brand-600/20 px-2 py-1 text-xs hover:border-accent-500">
+                      {copied === b.accountNumber ? "Tersalin / Copied" : "Salin / Copy"}
+                    </button>
+                  </div>
+                  <p className="mt-1 text-brand-700/70">a/n {b.accountName}</p>
+                  {b.swift && <p className="text-xs text-brand-700/60">SWIFT: {b.swift}</p>}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-brand-700/60">Hubungi CS kami untuk detail rekening. / Contact our CS for the bank details.</p>
+          )}
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-brand-600/10 p-3 text-sm">
+            <span className="text-brand-700/70">Nomor invoice / Invoice number</span>
+            <button type="button" onClick={() => copy(invoice.invoiceNumber)} className="font-mono underline decoration-dotted">
+              {copied === invoice.invoiceNumber ? "Tersalin / Copied" : invoice.invoiceNumber}
+            </button>
+          </div>
+          {proofLink && (
+            <a href={proofLink} target="_blank" rel="noreferrer" className="block w-full rounded bg-green-600 py-2 text-center font-medium text-white hover:bg-green-700">
+              Kirim bukti transfer ke WhatsApp CS / Send proof to WhatsApp CS
+            </a>
+          )}
+          {error && <p className="text-sm text-amber-700">{error}</p>}
+          <p className="text-xs text-brand-700/60">
+            Invoice ditandai lunas setelah tim kami memverifikasi transfer Anda. / The invoice is marked paid once our team has verified your transfer.
+          </p>
+        </div>
+      )}
+
+      {payable && onlinePayments && !instructions && (
         <div className="space-y-4 rounded-xl border border-brand-600/10 bg-white p-6">
           <h3 className="font-medium">Pay this invoice</h3>
           <div className="space-y-2">

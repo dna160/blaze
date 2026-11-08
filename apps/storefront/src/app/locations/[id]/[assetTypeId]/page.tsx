@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { AssetTypeDto, LocationDto } from "@rentos/contracts";
+import { unitSizeLabel } from "@rentos/contracts";
 
 import { StorageBookingForm } from "@/components/StorageBookingForm";
 import { apiFetch, ApiError } from "@/lib/api";
@@ -58,7 +59,7 @@ export default async function StorageBookingPage({ params }: { params: Promise<{
           <div className="flex justify-between border-b border-brand-600/10 pb-2">
             <dt className="text-brand-700/60">Size</dt>
             <dd>
-              {String(assetType.attributesSchema.sizeM2 ?? "")} m²
+              {unitSizeLabel(assetType.attributesSchema) ?? "—"}
               {assetType.attributesSchema.climateControlled ? " · climate controlled" : ""}
             </dd>
           </div>

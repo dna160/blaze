@@ -2,15 +2,24 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AssetTypeDto, BookingDto, ContractDto, InvoiceDto, SwapRequestDto } from "@rentos/contracts";
 import { isKycVerified } from "@rentos/contracts";
 
 import { apiFetch, apiUpload, ApiError, openPdf } from "@/lib/api";
+import { SignaturePad, type SignaturePadHandle } from "@/components/SignaturePad";
 import { authClient } from "@/lib/auth-client";
 import { formatDateId, formatIDR, getClientTenantSlug } from "@/lib/tenant-client";
 
 const TENANT_SLUG = getClientTenantSlug();
+
+/** PRD go-live §6 — the contract row now carries its own number ("Contract #KBJ-11-2026-36-40"). */
+type ContractWithNumber = ContractDto & { contractNumber?: string | null; confirmedAt?: string | null };
+
+/** A scheduled invoice carries a provisional SCHEDULED/… number until it is issued — never show that one. */
+function realInvoiceNumber(n: string): string | null {
+  return n.startsWith("SCHEDULED/") ? null : n;
+}
 
 type BookingDetail = BookingDto & {
   assetType?: { name: string };
@@ -36,7 +45,7 @@ export default function BookingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [booking, setBooking] = useState<BookingDetail | null>(null);
-  const [contract, setContract] = useState<ContractDto | null | undefined>(undefined);
+  const [contract, setContract] = useState<ContractWithNumber | null | undefined>(undefined);
   const [invoices, setInvoices] = useState<InvoiceDto[]>([]);
   const [kycStatus, setKycStatus] = useState<string | null>(null);
   const [assetTypes, setAssetTypes] = useState<AssetTypeDto[] | null>(null);
@@ -47,6 +56,10 @@ export default function BookingDetailPage() {
   const [swapReason, setSwapReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const padRef = useRef<SignaturePadHandle>(null);
+  const [padHasInk, setPadHasInk] = useState(false);
+  const [agreed, setAgreed] = useState(false);
+  const [signing, setSigning] = useState(false);
   const [swapping, setSwapping] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,7 +80,7 @@ export default function BookingDetailPage() {
       setKycStatus(me.kycStatus);
       setInvoices(mine.filter((i) => i.bookingId === b.id).sort((a, c) => (a.scheduleIndex ?? 99) - (c.scheduleIndex ?? 99)));
       if (!["DRAFT", "WAITLISTED", "PENDING_APPROVAL", "NEEDS_INFO"].includes(b.status)) {
-        const c = await apiFetch<ContractDto | null>(`/contracts/by-booking/${id}`, { tenantSlug: TENANT_SLUG, token });
+        const c = await apiFetch<ContractWithNumber | null>(`/contracts/by-booking/${id}`, { tenantSlug: TENANT_SLUG, token });
         setContract(c);
       }
       if (["ACTIVE", "RENEWING"].includes(b.status)) {
@@ -125,6 +138,41 @@ export default function BookingDetailPage() {
       setError(err instanceof ApiError ? err.message : "Upload failed.");
     } finally {
       setUploading(false);
+    }
+  }
+
+  /** PRD go-live §7.2 — sign on the pad: the PNG plus the signer's name; the API records time, IP and device. */
+  async function signWithPad(e: React.FormEvent) {
+    e.preventDefault();
+    const token = authClient.getToken();
+    if (!token) return;
+    const png = padRef.current?.toPng();
+    if (!png) {
+      setError("Silakan tanda tangan di kotak terlebih dahulu. / Please sign in the box first.");
+      return;
+    }
+    if (!signedByName.trim()) {
+      setError("Isi nama penandatangan. / Enter the signer's name.");
+      return;
+    }
+    if (!agreed) {
+      setError("Centang persetujuan Syarat & Ketentuan. / Tick the Terms agreement.");
+      return;
+    }
+    setSigning(true);
+    setError(null);
+    try {
+      await apiFetch(`/contracts/by-booking/${id}/sign-pad`, {
+        tenantSlug: TENANT_SLUG,
+        token,
+        method: "POST",
+        body: { signedByName: signedByName.trim(), signaturePng: png },
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not save the signature.");
+    } finally {
+      setSigning(false);
     }
   }
 
@@ -201,6 +249,7 @@ export default function BookingDetailPage() {
       {invoices.length > 0 && (
         <div className="rounded-xl border border-brand-600/10 bg-white p-6">
           <h3 className="font-medium">{booking.termMonths ? "Payment schedule" : "Invoices"}</h3>
+          {contract?.contractNumber && <p className="text-xs text-brand-700/60">Contract #{contract.contractNumber}</p>}
           <ul className="mt-3 divide-y divide-brand-600/10 text-sm">
             {invoices.map((inv) => {
               const payable = inv.status === "ISSUED" || inv.status === "OVERDUE";
@@ -211,6 +260,7 @@ export default function BookingDetailPage() {
                       {inv.scheduleIndex === 0 ? "First payment (proforma)" : inv.scheduleIndex !== null && inv.scheduleIndex !== undefined ? `Payment ${inv.scheduleIndex + 1}` : inv.invoiceNumber}
                     </p>
                     <p className="text-xs text-brand-700/60">
+                      {realInvoiceNumber(inv.invoiceNumber) ? `Invoice #${inv.invoiceNumber} · ` : ""}
                       Due {formatDateId(inv.dueDate)} · {inv.status === "SCHEDULED" ? "scheduled" : inv.status.toLowerCase()}
                     </p>
                   </div>
@@ -230,15 +280,22 @@ export default function BookingDetailPage() {
       {contract && (
         <div className="rounded-xl border border-brand-600/10 bg-white p-6">
           <h3 className="font-medium">Rental agreement</h3>
+          {contract.contractNumber && <p className="text-sm text-brand-700/70">Contract #{contract.contractNumber}</p>}
           {contract.unsignedDocumentUrl && (
             <button type="button" onClick={() => open(`/contracts/${contract.id}/document`)} className="mt-2 text-sm text-accent-500 underline">
               Download the agreement (PDF)
             </button>
           )}
           {contract.signedAt ? (
-            <p className="mt-2 text-sm text-green-700">
-              Signed by {contract.signedByName} on {new Date(contract.signedAt).toLocaleDateString("id-ID")}.
-            </p>
+            <div className="mt-2 text-sm">
+              <p className="text-green-700">
+                Signed by {contract.signedByName} on {new Date(contract.signedAt).toLocaleDateString("id-ID")}.
+                {contract.confirmedAt ? " Confirmed by City Storage." : ""}
+              </p>
+              <button type="button" onClick={() => open(`/contracts/${contract.id}/file`)} className="mt-1 text-accent-500 underline">
+                Open the signed agreement (PDF)
+              </button>
+            </div>
           ) : esignPending ? (
             <p className="mt-2 text-sm text-amber-700">
               Sent for e-signature via {contract.esignProvider} — waiting for the signature to complete.
@@ -250,31 +307,55 @@ export default function BookingDetailPage() {
       )}
 
       {canSignContract && (
-        <div className="space-y-4 rounded-xl border border-brand-600/10 bg-white p-6">
-          <h3 className="font-medium">Sign your rental agreement</h3>
-          <p className="text-sm text-brand-700/60">
-            Print the agreement above, sign it, and upload a photo or scan (PDF/JPEG/PNG).
-          </p>
-          <input
-            required
-            value={signedByName}
-            onChange={(e) => setSignedByName(e.target.value)}
-            placeholder="Full legal name"
-            className="w-full rounded border border-brand-600/20 px-3 py-2"
-          />
-          <input
-            type="file"
-            accept="application/pdf,image/jpeg,image/png"
-            disabled={uploading || !signedByName}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) signContract(file);
-            }}
-            className="w-full text-sm"
-          />
+        <form onSubmit={signWithPad} className="space-y-4 rounded-xl border border-brand-600/10 bg-white p-6">
+          <div>
+            <h3 className="font-medium">Tanda tangani perjanjian sewa / Sign your rental agreement</h3>
+            <p className="mt-1 text-sm text-brand-700/60">
+              Baca perjanjian di atas, lalu tanda tangan di kotak ini dengan jari atau mouse. / Read the agreement above, then sign in the box with your finger or mouse.
+            </p>
+          </div>
+          <label className="block text-sm">
+            <span className="text-brand-700/70">Nama penandatangan / Signer name</span>
+            <input
+              required
+              value={signedByName}
+              onChange={(e) => setSignedByName(e.target.value)}
+              placeholder="Nama lengkap sesuai KTP / Full legal name"
+              autoComplete="name"
+              className="mt-1 w-full rounded border border-brand-600/20 px-3 py-2"
+            />
+          </label>
+          <SignaturePad ref={padRef} onChange={setPadHasInk} disabled={signing} />
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="mt-1" />
+            <span>Saya telah membaca dan menyetujui Syarat &amp; Ketentuan / I have read and agree to the Terms</span>
+          </label>
           {error && <p className="text-sm text-red-600">{error}</p>}
-          {uploading && <p className="text-xs text-brand-700/60">Uploading...</p>}
-        </div>
+          <button
+            disabled={signing || !padHasInk || !agreed || !signedByName.trim()}
+            className="w-full rounded bg-brand-700 py-2 font-medium text-white disabled:opacity-50"
+          >
+            {signing ? "Menyimpan… / Saving…" : "Tanda tangani / Sign agreement"}
+          </button>
+
+          <details className="text-sm">
+            <summary className="cursor-pointer text-brand-700/60">Atau unggah dokumen yang sudah ditandatangani / Or upload a signed scan</summary>
+            <div className="mt-3 space-y-2">
+              <p className="text-brand-700/60">Print the agreement, sign it, and upload a photo or scan (PDF/JPEG/PNG). Uses the signer name above.</p>
+              <input
+                type="file"
+                accept="application/pdf,image/jpeg,image/png"
+                disabled={uploading || !signedByName}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) signContract(file);
+                }}
+                className="w-full text-sm"
+              />
+              {uploading && <p className="text-xs text-brand-700/60">Uploading...</p>}
+            </div>
+          </details>
+        </form>
       )}
 
       {canGiveNotice && (

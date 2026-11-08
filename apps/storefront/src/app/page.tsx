@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { AssetDto, AssetTypeDto, LocationDto } from "@rentos/contracts";
+import { unitSizeLabel, type BranchPublicProfile } from "@rentos/contracts";
 
+import { BranchInfo } from "@/components/BranchInfo";
 import { LocationMap } from "@/components/LocationMap";
 import { apiFetch } from "@/lib/api";
 import { resolveTenantSlug } from "@/lib/tenant";
@@ -25,9 +27,11 @@ export default async function CatalogPage() {
   const isStorageTenant = assetTypes.some((t) => t.bookingModel === "RECURRING_LEASE");
 
   if (isStorageTenant) {
-    const [locations, assets] = await Promise.all([
+    const [locations, assets, profile] = await Promise.all([
       apiFetch<LocationDto[]>("/catalog/locations", { tenantSlug }),
       apiFetch<AssetDto[]>("/catalog/assets", { tenantSlug }),
+      // PRD go-live §5.1 — facilities, hours and CS contacts; optional, never blocks the catalog.
+      apiFetch<BranchPublicProfile>("/branch/profile", { tenantSlug }).catch(() => null),
     ]);
     const unitCounts: Record<string, number> = {};
     for (const a of assets) unitCounts[a.locationId] = (unitCounts[a.locationId] ?? 0) + 1;
@@ -50,6 +54,11 @@ export default async function CatalogPage() {
         <div className="mt-6">
           <LocationMap locations={locations} unitCounts={unitCounts} />
         </div>
+        {profile && (
+          <div className="mt-8">
+            <BranchInfo profile={profile} />
+          </div>
+        )}
       </div>
     );
   }
@@ -68,7 +77,7 @@ export default async function CatalogPage() {
           >
             <h2 className="text-lg font-medium">{assetType.name}</h2>
             <p className="mt-1 text-sm text-brand-700/60">
-              {String(assetType.attributesSchema.sizeM2 ?? "")} m²
+              {unitSizeLabel(assetType.attributesSchema) ?? ""}
               {assetType.attributesSchema.climateControlled ? " · Climate controlled" : ""}
             </p>
             <p className="mt-4 text-xl font-semibold text-accent-500">
