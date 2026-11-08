@@ -8,6 +8,15 @@ import type { BookingDto, ContractDto, InvoiceDto, PipelineBookingDto } from "@r
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { apiFetch, apiFetchBlob, apiUpload, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { canDo } from "@/lib/capabilities";
+
+/** The contract row as the API returns it — ContractDto plus the go-live fields (PRD go-live §6.2, §7.2). */
+type ContractRow = ContractDto & {
+  contractNumber?: string | null;
+  confirmedAt?: string | null;
+  documentUrl?: string | null;
+  signatureImageKey?: string | null;
+};
 
 interface BookingWithRelations extends BookingDto {
   customer: { id: string; fullName: string | null; phone: string | null; email: string | null; kycStatus: string; preferredChannel: string };
@@ -29,7 +38,9 @@ export default function BookingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [booking, setBooking] = useState<BookingWithRelations | null>(null);
-  const [contract, setContract] = useState<ContractDto | null>(null);
+  const [contract, setContract] = useState<ContractRow | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const canConfirm = canDo(authClient.getUser(), "approve_booking");
   const [pipeline, setPipeline] = useState<PipelineBookingDto | null>(null);
   const [invoices, setInvoices] = useState<InvoiceDto[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
@@ -48,7 +59,7 @@ export default function BookingDetailPage() {
       const b = await apiFetch<BookingWithRelations>(`/bookings/${id}`, { token });
       setBooking(b);
       if (!["DRAFT", "WAITLISTED", "PENDING_APPROVAL", "NEEDS_INFO"].includes(b.status)) {
-        const c = await apiFetch<ContractDto | null>(`/contracts/by-booking/${id}`, { token });
+        const c = await apiFetch<ContractRow | null>(`/contracts/by-booking/${id}`, { token });
         setContract(c);
       }
       // Pipeline stage + the booking's invoices (schedule) — both tolerate failure so the page still renders.
@@ -88,6 +99,35 @@ export default function BookingDetailPage() {
       window.open(URL.createObjectURL(blob), "_blank", "noopener");
     } catch {
       setError("Could not open the agreement PDF.");
+    }
+  }
+
+  /** Signed copy: the signature-pad PDF (with the stamp once confirmed) or the uploaded scan. */
+  async function openSignedContract() {
+    const token = authClient.getToken();
+    if (!token || !contract) return;
+    try {
+      const blob = await apiFetchBlob(`/contracts/${contract.id}/file`, token);
+      window.open(URL.createObjectURL(blob), "_blank", "noopener");
+    } catch {
+      setError("Could not open the signed contract.");
+    }
+  }
+
+  /** PRD go-live §7.2 — staff approve the signed contract; the PDF gets the CONFIRMED stamp. */
+  async function confirmContract() {
+    const token = authClient.getToken();
+    if (!token || !contract) return;
+    setConfirming(true);
+    setError(null);
+    try {
+      await apiFetch(`/contracts/${contract.id}/confirm`, { token, method: "POST", body: {} });
+      setNotice("Contract confirmed — the signed PDF now carries the CONFIRMED stamp.");
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not confirm the contract.");
+    } finally {
+      setConfirming(false);
     }
   }
 
@@ -158,6 +198,12 @@ export default function BookingDetailPage() {
         {booking.location ? ` · ${booking.location.name}` : ""} · {fmtDate(booking.startDate)}
         {booking.endDate ? ` → ${fmtDate(booking.endDate)}` : ""}
         {booking.termMonths ? ` · ${booking.termMonths}-month term` : ""} · Status: {booking.status}
+        {contract?.contractNumber ? (
+          <>
+            {" · "}
+            <span className="font-medium text-brand-700">Contract #{contract.contractNumber}</span>
+          </>
+        ) : null}
       </p>
       <p className="text-xs text-brand-700/50">
         {booking.customer.phone ?? "no phone"} · {booking.customer.email ?? "no email"} · messages via {booking.customer.preferredChannel === "EMAIL" ? "email" : "WhatsApp"} · KYC {booking.customer.kycStatus}
@@ -219,7 +265,11 @@ export default function BookingDetailPage() {
                   <td className="py-1">{inv.scheduleIndex !== null && inv.scheduleIndex !== undefined ? inv.scheduleIndex + 1 : "—"}</td>
                   <td className="py-1">
                     <Link href={`/invoices/${inv.id}`} className="hover:underline">
-                      {inv.invoiceNumber}
+                      {inv.invoiceNumber.startsWith("SCHEDULED/") ? (
+                        <span className="text-brand-700/50">numbered when issued</span>
+                      ) : (
+                        `Invoice #${inv.invoiceNumber}`
+                      )}
                     </Link>
                   </td>
                   <td className="py-1 text-xs text-brand-700/60">
@@ -315,16 +365,41 @@ export default function BookingDetailPage() {
 
       {contract && (
         <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">
-          <h2 className="font-medium">Rental agreement</h2>
+          <h2 className="font-medium">
+            Rental agreement{contract.contractNumber ? ` — Contract #${contract.contractNumber}` : ""}
+            {contract.confirmedAt && (
+              <span className="ml-2 rounded border-2 border-green-700 px-2 py-0.5 text-xs font-bold tracking-wide text-green-700">CONFIRMED</span>
+            )}
+          </h2>
           {contract.unsignedDocumentUrl && (
             <button onClick={openContractPdf} className="mt-1 text-sm text-accent-500 underline">
               Open generated agreement (PDF)
             </button>
           )}
           {contract.signedAt ? (
-            <p className="mt-2 text-sm text-green-700">
-              Signed by {contract.signedByName} on {new Date(contract.signedAt).toLocaleDateString("id-ID")}.
-            </p>
+            <div className="mt-2 space-y-2 text-sm">
+              <p className="text-green-700">
+                Signed by {contract.signedByName} on {new Date(contract.signedAt).toLocaleDateString("id-ID")}
+                {contract.esignProvider === "SIGNATURE_PAD" ? " on the portal signature pad" : contract.esignProvider === "LEGACY" ? " (imported from Booqable)" : ""}.
+                {contract.confirmedAt ? ` Confirmed ${new Date(contract.confirmedAt).toLocaleDateString("id-ID")}.` : ""}
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                {contract.documentUrl && (
+                  <button onClick={openSignedContract} className="text-accent-500 underline">
+                    Open signed contract (PDF)
+                  </button>
+                )}
+                {!contract.confirmedAt && canConfirm && (
+                  <button
+                    onClick={confirmContract}
+                    disabled={confirming}
+                    className="rounded bg-brand-700 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    {confirming ? "Confirming…" : "Confirm contract"}
+                  </button>
+                )}
+              </div>
+            </div>
           ) : esignPending ? (
             <p className="mt-2 text-sm text-amber-700">
               Sent for e-signature via {contract.esignProvider} — waiting for the signature to complete.

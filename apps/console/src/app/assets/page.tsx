@@ -251,8 +251,8 @@ export default function AssetsPage() {
               <h2 className="text-lg font-medium">{g.location}</h2>
               <div className="mt-3 space-y-3">
                 {g.rows.map(([row, units]) => (
-                  <div key={row} className="flex items-center gap-2">
-                    <span className="w-14 shrink-0 text-xs font-semibold text-brand-700/50">{row}</span>
+                  <div key={row} className="flex items-start gap-2">
+                    <span className="w-14 shrink-0 pt-3 text-xs font-semibold text-brand-700/50">{row}</span>
                     <div className="flex flex-wrap gap-2">
                       {units.map((a) => (
                         <button

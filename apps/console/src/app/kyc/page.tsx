@@ -120,12 +120,14 @@ export default function KycReviewPage() {
                 )}
                 {doc.customer.type === "BUSINESS" && (
                   <p className="mt-1 text-xs text-brand-700/60">
-                    PPh:{" "}
-                    {doc.customer.pphWithheld === null
-                      ? "not answered yet"
-                      : doc.customer.pphWithheld
-                        ? "withheld (dibebankan)"
-                        : "not withheld"}
+                    Apakah akan memotong PPh? / Will the company withhold PPh?{" "}
+                    <b>
+                      {doc.customer.pphWithheld === null
+                        ? "not answered yet"
+                        : doc.customer.pphWithheld
+                          ? "Ya — the company withholds PPh"
+                          : "Tidak — no withholding"}
+                    </b>
                   </p>
                 )}
                 {doc.providerReason && (
