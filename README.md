@@ -98,6 +98,11 @@ see `packages/database/prisma/seed.ts`). `NEXT_PUBLIC_DEV_TENANT_SLUG` /
 `NEXT_PUBLIC_TENANT_SLUG` point the frontends at it without needing
 wildcard DNS.
 
+The demo seed creates staff users with a shared demo password and is for local
+and staging only. A real deployment uses `pnpm db:seed:production`, which
+bootstraps City Storage Kebon Jeruk from the client's data pack with no users,
+and then the go-live imports — see [`docs/RUNBOOK-GO-LIVE.md`](./docs/RUNBOOK-GO-LIVE.md).
+
 ### Full Docker stack
 
 ```bash

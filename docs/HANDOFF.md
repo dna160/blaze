@@ -1747,6 +1747,72 @@ feature in question is cheap insurance against repeating this.
 
 ## Resume here
 
+### Kebon Jeruk go-live (2026-11-08) — read this first
+
+Spec: [`docs/PRD-kebon-jeruk-go-live.md`](./PRD-kebon-jeruk-go-live.md) (wins over
+everything below for City Storage). Operator steps: [`docs/RUNBOOK-GO-LIVE.md`](./RUNBOOK-GO-LIVE.md).
+Data pack (client materials of 2026-11-08): `packages/database/prisma/data/kebon-jeruk/`.
+
+**Built (P0, all verified against local Postgres):**
+- **One migration**, `20261108120000_kebon_jeruk_go_live` — additive except
+  `invoice_number_counters`, whose rows move to `document_number_counters`
+  (INVOICE, scope `YYYY-MM`) before it is dropped. Verified upgrading a database in
+  the pre-change shape.
+- **Seed modes**: `SEED_MODE=production` (`pnpm db:seed:production`) = organization
+  + Kebon Jeruk tenant + 7 unit types + T&C v1 from the data pack, messaging
+  paused, **no users/customers/units**. Demo seed refuses `NODE_ENV=production`
+  without an explicit `SEED_MODE`. Demo units are now `DEMO-9xx` on the real types.
+  Shared bootstrap: `packages/database/prisma/city-storage.ts`.
+- **Numbering** (`packages/database/src/document-number.ts`): `Tenant.numbering`
+  formats with `{BRANCH} {M} {MM} {YYYY} {CUST} {SEQ} {SEQ:n} {SLUG}`, month/year in
+  the tenant's timezone, separate CONTRACT/INVOICE/CREDIT_NOTE counters. Kebon
+  Jeruk = `KBJ-{M}-{YYYY}-{CUST}-{SEQ}`, never resetting. Unconfigured tenants keep
+  `SLUG/YYYY/MM/000001`. `Customer.customerNumber` is assigned by the
+  `customers_assign_number` trigger (org-wide counter) on every insert path.
+  Every new Contract gets `contractNumber` + `termsVersion` (`newContractFields`).
+- **Messaging pause** (`packages/database/src/messaging-pause.ts`): every sender
+  calls `outboundBlock()` first and records SUPPRESSED instead; a source-scan test
+  (`packages/database/test/messaging-pause.test.ts`) fails if a new sender skips it.
+  Auto-reply: atomic once-per-cooldown claim (`messaging_contact_state`), skipped
+  after a human inbox reply, placeholders rendered by `@rentos/domain`
+  `renderAutoReply`. Messaging setup/pause need an org-scoped Admin (G8).
+- **wa-bridge**: daily cap counter in `wa.daily_send_counts` (survives restarts),
+  day boundary `WA_BRIDGE_TZ`. Go test with a real DB:
+  `WA_BRIDGE_TEST_DATABASE_URL=… go test ./...`.
+- **Payments**: `apps/api/src/payments/online-payments.ts` — production without
+  `PAYMENT_PROVIDER=xendit` disables online payment; each branch also needs
+  `featureFlags.onlinePaymentsEnabled` (default false). Checkout answers 409 otherwise.
+- **Branch profile** (`apps/api/src/branch/`): `GET /branch/profile` (public),
+  `GET|PUT /branch/settings` (edit = org-scoped Admin, field-level audit).
+- **Documents** (`apps/api/src/documents/`): `pdf-layout.ts` (pure layout, City
+  Storage format) + `documents.service.ts` (assembly). T&C parsed by
+  `@rentos/domain` `parseContractTerms` from `ContractTerms` (versioned per org).
+  Signature pad `POST /contracts/by-booking/:id/sign-pad`, staff
+  `POST /contracts/:id/confirm` (CONFIRMED stamp). Logo = `Tenant.branding.logoPngBase64`
+  (from the client's quotation PDF). PDFs print with Helvetica: `pdfText()` maps the
+  few non-WinAnsi symbols (≤ → <=).
+- **Vault**: `GET /customers/:id/documents`; KYC opens audited (`KYC_FILE_OPENED`).
+  `PATCH /customers/:id/tax-profile` (staff, audited).
+- **Imports** (engines in `packages/database/src/imports/`, CLIs in
+  `apps/api/scripts/go-live/`): `pnpm import:units`, `pnpm import:users` (prints
+  single-use set-password links — how the first Super Admin enters production),
+  `pnpm migrate:legacy` (dry run, refuses unless paused, idempotent, opening-balance
+  ledger only, `Booking.paidThrough` stops the recurring job billing prepaid months).
+  Console endpoints: `POST /catalog/assets/import`, `POST /users/import`,
+  `POST /auth/staff/set-password`.
+
+**Still open (P1/P2, not built):** PPh settlement net of withholding and partial
+payments (§8.4 — the PDF breakdown exists behind `Organization.taxConfig.pphWithholdingEnabled`,
+off until finance's worked examples), reports date-range presets + XLSX + AR-aging
+drill-down (§12; CSV BOM done), RentalOrders console page (§13), T&C money rules
+(§14), everything in §15. See the PRD §16 questions — the unit type per unit (Q5)
+blocks the unit import today.
+
+**Test baseline:** `@rentos/domain` has 4 pre-existing failures in the WhatsApp OTP
+template tests (`whatsapp-templates.test.ts`, `whatsapp-callsites.test.ts`), present
+on `main` at ac2ece8 before this work; nothing here touches them.
+
+
 
 ### Which spec wins (read before planning any storage work)
 
