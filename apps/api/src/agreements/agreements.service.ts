@@ -1,7 +1,9 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 
+import { AuditService } from "../audit/audit.service.js";
 import { BookingService } from "../booking/booking.service.js";
+import { DocumentsService } from "../documents/documents.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { STORAGE_PROVIDER, type StorageProvider } from "../storage/storage-provider.interface.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
@@ -30,7 +32,90 @@ export class AgreementsService {
     private readonly booking: BookingService,
     @Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider,
     @Inject(ESIGN_PROVIDER) private readonly esign: ESignProvider,
+    private readonly documents: DocumentsService,
+    private readonly audit: AuditService,
   ) {}
+
+  /**
+   * PRD go-live §7.2 — sign on the portal's signature pad (touch or mouse).
+   * The PNG is stored next to the contract with the signer's name, time, IP
+   * and user agent; the signed PDF is re-rendered with the signature in the
+   * signature block and becomes the contract's signed document. Satisfies the
+   * contract gate exactly like an uploaded scan does.
+   */
+  async signWithPad(
+    tenant: ResolvedTenant,
+    bookingId: string,
+    params: { signedByName: string; signaturePng: string; ip: string | null; userAgent: string | null; actorUserId: string | null },
+  ) {
+    const match = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(params.signaturePng.trim());
+    if (!match) throw new BadRequestException("signaturePng must be a PNG data URL (data:image/png;base64,...).");
+    const png = Buffer.from(match[1]!, "base64");
+    if (png.length < 200) throw new BadRequestException("The signature is empty — please sign in the box.");
+    if (png.length > 2 * 1024 * 1024) throw new BadRequestException("Signature image too large.");
+    if (!png.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+      throw new BadRequestException("signaturePng is not a PNG image.");
+    }
+
+    const contract = await this.prisma.runInTenantContext(tenant.id, (tx) =>
+      tx.contract.findFirst({ where: { bookingId }, orderBy: { createdAt: "desc" } }),
+    );
+    if (!contract) throw new NotFoundException("No contract exists for this booking yet — it's generated on approval.");
+    if (contract.esignStatus === "SIGNED" && contract.signedAt) throw new BadRequestException("This contract is already signed.");
+
+    const { storageKey } = await this.storage.save({
+      key: `contracts/${tenant.id}/${bookingId}/signature-${contract.id}-${randomUUID()}.png`,
+      buffer: png,
+      contentType: "image/png",
+    });
+    const signedAt = new Date();
+    await this.prisma.runInTenantContext(tenant.id, (tx) =>
+      tx.contract.update({
+        where: { id: contract.id },
+        data: {
+          signatureImageKey: storageKey,
+          signatureIp: params.ip,
+          signatureUserAgent: params.userAgent?.slice(0, 500) ?? null,
+          signedByName: params.signedByName,
+          signedAt,
+          esignProvider: "SIGNATURE_PAD",
+          esignStatus: "SIGNED",
+        },
+      }),
+    );
+    await this.documents.regenerateContract(tenant.id, contract.id);
+    await this.audit.record({
+      tenantId: tenant.id,
+      actorUserId: params.actorUserId,
+      action: "CONTRACT_SIGNED_PAD",
+      entityType: "Contract",
+      entityId: contract.id,
+      metadata: { signedByName: params.signedByName, ip: params.ip, userAgent: params.userAgent, signedAt: signedAt.toISOString() },
+      ipAddress: params.ip ?? undefined,
+    });
+    await this.booking.tryActivateAfterContractSigned(tenant, bookingId);
+    return this.getById(tenant.id, contract.id);
+  }
+
+  /** PRD go-live §7.2 — staff approve the signed contract; the PDF gets the "CONFIRMED" stamp. */
+  async confirm(tenant: ResolvedTenant, contractId: string, userId: string) {
+    const contract = await this.getById(tenant.id, contractId);
+    if (!contract.signedAt) throw new BadRequestException("The contract has not been signed yet.");
+    if (contract.confirmedAt) return contract;
+    await this.prisma.runInTenantContext(tenant.id, (tx) =>
+      tx.contract.update({ where: { id: contractId }, data: { confirmedAt: new Date(), confirmedByUserId: userId } }),
+    );
+    if (contract.signatureImageKey) await this.documents.regenerateContract(tenant.id, contractId);
+    await this.audit.record({ tenantId: tenant.id, actorUserId: userId, action: "CONTRACT_CONFIRMED", entityType: "Contract", entityId: contractId });
+    return this.getById(tenant.id, contractId);
+  }
+
+  /** The stored signature PNG (staff document vault). */
+  async getSignatureImage(tenantId: string, contractId: string) {
+    const contract = await this.getById(tenantId, contractId);
+    if (!contract.signatureImageKey) throw new NotFoundException("This contract was not signed on the signature pad.");
+    return this.storage.read(contract.signatureImageKey);
+  }
 
   getByBooking(tenantId: string, bookingId: string) {
     return this.prisma.runInTenantContext(tenantId, (tx) =>

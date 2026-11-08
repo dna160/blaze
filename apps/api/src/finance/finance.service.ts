@@ -91,21 +91,7 @@ export class FinanceService {
     const cachedIsFresh = invoice.documentUrl && (!wantsPaidVersion || invoice.documentUrl.endsWith("/paid.pdf"));
     if (invoice.documentUrl && cachedIsFresh) return this.documents.read(invoice.documentUrl);
 
-    const tenantRow = await this.prisma.raw.tenant.findUniqueOrThrow({ where: { id: tenant.id }, select: { legalName: true } });
-    const pdf = await this.documents.renderInvoice({
-      tenant: { name: tenant.name, legalName: tenantRow.legalName, isPkp: tenant.isPkp },
-      invoice: {
-        ...invoice,
-        subtotal: invoice.subtotal.toString(),
-        taxAmount: invoice.taxAmount.toString(),
-        totalAmount: invoice.totalAmount.toString(),
-        lines: invoice.lines.map((l) => ({ description: l.description, quantity: l.quantity.toString(), unitPrice: l.unitPrice.toString(), amount: l.amount.toString(), lineType: l.lineType })),
-      },
-      customer: invoice.customer,
-      unit: invoice.booking
-        ? { code: invoice.booking.asset?.code ?? null, assetTypeName: invoice.booking.assetType.name, locationName: invoice.booking.location?.name ?? null }
-        : null,
-    });
+    const pdf = await this.documents.invoicePdf(tenant.id, invoiceId);
     const key = await this.documents.store(`invoices/${tenant.id}/${invoice.id}/${wantsPaidVersion ? "paid" : "proforma"}.pdf`, pdf);
     await this.prisma.runInTenantContext(tenant.id, (tx) => tx.invoice.update({ where: { id: invoiceId }, data: { documentUrl: key } }));
     return { kind: "buffer" as const, buffer: pdf, contentType: "application/pdf" };

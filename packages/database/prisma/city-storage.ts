@@ -180,13 +180,19 @@ export async function bootstrapCityStorage(prisma: PrismaClient, opts: { mode: "
       organizationId: org.id,
       slug: t.slug,
       ...profileFields,
-      branding: { primaryColor: "#0F172A", accentColor: "#F59E0B" },
+      branding: { primaryColor: "#0F172A", accentColor: "#F26522" },
       featureFlags,
     },
   });
   // An existing tenant keeps its other flags. Production never keeps online
   // payment on from an earlier demo seed; the demo (staging) tenant has it on,
   // because there the mock gateway is the point.
+  // The City Storage logo, from the client's own quotation PDF, for the
+  // document header (and anywhere else that wants it as a data URL).
+  const logoPath = path.join(DATA_DIR, "city-storage-logo.png");
+  const branding = { ...((tenant.branding as Record<string, unknown>) ?? {}), logoPngBase64: readFileSync(logoPath).toString("base64") };
+  await prisma.tenant.update({ where: { id: tenant.id }, data: { branding: branding as Prisma.InputJsonValue } });
+
   const flags = {
     ...((tenant.featureFlags as Record<string, unknown>) ?? {}),
     onlinePaymentsEnabled: opts.mode === "demo",

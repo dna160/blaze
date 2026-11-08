@@ -705,46 +705,12 @@ export class BookingService {
     });
 
     // PDFs are rendered outside the DB transaction (I/O to storage), then the keys are attached.
-    const pricing = result.booking.priceSnapshot as { basePrice?: number; adminFee?: number; currency?: string };
-    const schedule = [result.proforma, ...result.cycles].map((inv) => ({
-      index: inv.scheduleIndex ?? 0,
-      periodStart: inv.periodStart!,
-      periodEnd: inv.periodEnd!,
-      dueDate: inv.dueDate,
-      totalAmount: inv.totalAmount.toString(),
-    }));
-    const depositLine = result.proforma.lines.find((l) => l.lineType === "DEPOSIT");
-    const tenantRow = await this.prisma.raw.tenant.findUniqueOrThrow({ where: { id: tenant.id }, select: { legalName: true } });
-    const contractPdf = await this.documents.renderContract({
-      tenant: { name: tenant.name, legalName: tenantRow.legalName, slug: tenant.slug },
-      contractId: result.contract.id,
-      customer: result.booking.customer,
-      unit: { code: result.booking.asset?.code ?? null, assetTypeName: result.booking.assetType.name, locationName: result.booking.location?.name ?? null, locationAddress: result.booking.location?.address ?? null },
-      term: {
-        startDate: result.booking.startDate,
-        endDate: result.booking.endDate,
-        termMonths: result.booking.termMonths,
-        monthlyRent: String(pricing.basePrice ?? 0),
-        deposit: depositLine?.amount.toString() ?? "0",
-        adminFee: String(pricing.adminFee ?? 0),
-        currency: pricing.currency ?? "IDR",
-      },
-      schedule,
-      blackoutMonths,
-      generatedAt: new Date(),
-    });
-    const contractKey = await this.documents.store(`contracts/${tenant.id}/${bookingId}/agreement-${result.contract.id}.pdf`, contractPdf);
-    const proformaPdf = await this.documents.renderInvoice({
-      tenant: { name: tenant.name, legalName: tenantRow.legalName, isPkp: tenant.isPkp },
-      invoice: { ...result.proforma, subtotal: result.proforma.subtotal.toString(), taxAmount: result.proforma.taxAmount.toString(), totalAmount: result.proforma.totalAmount.toString(), lines: result.proforma.lines.map((l) => ({ description: l.description, quantity: l.quantity.toString(), unitPrice: l.unitPrice.toString(), amount: l.amount.toString(), lineType: l.lineType })) },
-      customer: result.booking.customer,
-      unit: { code: result.booking.asset?.code ?? null, assetTypeName: result.booking.assetType.name, locationName: result.booking.location?.name ?? null },
-    });
-    const proformaKey = await this.documents.store(`invoices/${tenant.id}/${result.proforma.id}/proforma.pdf`, proformaPdf);
-    await this.prisma.runInTenantContext(tenant.id, async (tx) => {
-      await tx.contract.update({ where: { id: result.contract.id }, data: { unsignedDocumentUrl: contractKey } });
-      await tx.invoice.update({ where: { id: result.proforma.id }, data: { documentUrl: proformaKey } });
-    });
+    await this.documents.regenerateContract(tenant.id, result.contract.id);
+    const proformaKey = await this.documents.store(
+      `invoices/${tenant.id}/${result.proforma.id}/proforma.pdf`,
+      await this.documents.invoicePdf(tenant.id, result.proforma.id),
+    );
+    await this.prisma.runInTenantContext(tenant.id, (tx) => tx.invoice.update({ where: { id: result.proforma.id }, data: { documentUrl: proformaKey } }));
 
     await this.notifications.notifyCustomer({
       tenantId: tenant.id,

@@ -1,220 +1,314 @@
-import { Inject, Injectable } from "@nestjs/common";
-import PDFDocument from "pdfkit";
+import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { computeDeposit, computeTax, money, parseContractTerms, roundMoney, type DepositRule, type ParsedContractTerms } from "@rentos/domain";
 
+import { onlinePaymentsStatus } from "../payments/online-payments.js";
+import { PrismaService } from "../prisma/prisma.service.js";
 import { STORAGE_PROVIDER, type StorageProvider } from "../storage/storage-provider.interface.js";
 
+import {
+  renderContractPdf,
+  renderInvoicePdf,
+  type BankAccountLine,
+  type BranchBlock,
+  type CustomerBlock,
+  type DocLine,
+} from "./pdf-layout.js";
+
 /**
- * PRD v2 P9 — "Generate Contract + Proforma Invoice" has to produce
- * documents, not just rows. Both are rendered server-side with pdfkit
- * (pure JS, no headless browser) and stored through the existing
- * StorageProvider port exactly like KYC uploads and signed contracts —
- * LocalDisk in dev, S3 in production — so serving them reuses the
- * buffer-or-redirect shape every file endpoint already has.
+ * PRD v2 P9 / go-live §7 — contracts and invoices as City Storage's own
+ * documents. This service assembles everything a document shows from the
+ * database (branch profile, customer, unit, numbers, terms version,
+ * signature) and hands it to the pure layout in pdf-layout.ts; PDFs are
+ * stored through the StorageProvider port exactly like KYC uploads (local
+ * disk in dev, S3 in production).
  *
- * Layout is deliberately plain: the tenant's legal name, the parties, the
- * unit, the term, the payment schedule, and signature blocks. Per-tenant
- * document templates with placeholders (PRD §7.2.7) are the follow-up;
- * the data each template needs is already assembled here.
+ * A contract always re-renders with the T&C version stored on it, so a
+ * signed contract keeps the terms that were signed even after the
+ * organization publishes a new version.
  */
 
-export interface ContractDocumentInput {
-  tenant: { name: string; legalName?: string | null; slug: string };
-  contractId: string;
-  customer: { fullName: string | null; phone: string | null; email: string | null };
-  unit: { code: string | null; assetTypeName: string; locationName: string | null; locationAddress: string | null };
-  term: { startDate: Date; endDate: Date | null; termMonths: number | null; monthlyRent: string; deposit: string; adminFee: string; currency: string };
-  schedule: Array<{ index: number; periodStart: Date; periodEnd: Date; dueDate: Date; totalAmount: string }>;
-  blackoutMonths: number;
-  generatedAt: Date;
+const RATE_LABEL: Record<string, string> = { MONTHLY: "Monthly", WEEKLY: "Weekly", DAILY: "Daily" };
+
+interface PriceSnapshot {
+  basePrice?: number;
+  currency?: string;
+  depositRule?: DepositRule;
+  taxInclusive?: boolean;
 }
 
-export interface InvoiceDocumentInput {
-  tenant: { name: string; legalName?: string | null; isPkp: boolean };
-  invoice: {
-    id: string;
-    invoiceNumber: string;
-    status: string;
-    issueDate: Date;
-    dueDate: Date;
-    periodStart: Date | null;
-    periodEnd: Date | null;
-    subtotal: string;
-    taxAmount: string;
-    totalAmount: string;
-    currency: string;
-    scheduleIndex: number | null;
-    lines: Array<{ description: string; quantity: string; unitPrice: string; amount: string; lineType: string }>;
-  };
-  customer: { fullName: string | null; phone: string | null; email: string | null };
-  unit: { code: string | null; assetTypeName: string; locationName: string | null } | null;
+function asStrings(v: unknown): string[] {
+  if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string");
+  if (typeof v === "string" && v.trim()) return [v];
+  return [];
 }
 
-function fmtDate(d: Date): string {
-  return d.toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
+function sum(values: Array<{ toString(): string }>): number {
+  return values.reduce<number>((a, v) => a + Number(v.toString()), 0);
 }
 
-function fmtMoney(amount: string, currency = "IDR"): string {
-  const n = Number(amount);
-  return `${currency === "IDR" ? "Rp" : currency} ${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(n)}`;
-}
-
-function render(build: (doc: PDFKit.PDFDocument) => void): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margin: 56, info: { Producer: "RentOS" } });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c: Buffer) => chunks.push(c));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-    build(doc);
-    doc.end();
-  });
+function money2(n: number): string {
+  return roundMoney(money(n)).toFixed(2);
 }
 
 @Injectable()
 export class DocumentsService {
-  constructor(@Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(STORAGE_PROVIDER) private readonly storage: StorageProvider,
+  ) {}
 
-  async renderContract(input: ContractDocumentInput): Promise<Buffer> {
-    return render((doc) => {
-      const owner = input.tenant.legalName ?? input.tenant.name;
-      doc.fontSize(18).text("PERJANJIAN SEWA UNIT / RENTAL AGREEMENT", { align: "center" });
-      doc.moveDown(0.3).fontSize(10).fillColor("#555").text(`${owner} · Contract ${input.contractId.slice(0, 8).toUpperCase()} · ${fmtDate(input.generatedAt)}`, { align: "center" });
-      doc.fillColor("#000").moveDown(1.2);
+  // ---------------------------------------------------------------- shared
 
-      doc.fontSize(12).text("Para pihak / Parties", { underline: true }).moveDown(0.4).fontSize(10);
-      doc.text(`Pemberi sewa / Lessor: ${owner}`);
-      doc.text(`Penyewa / Lessee: ${input.customer.fullName ?? "-"}${input.customer.phone ? ` · ${input.customer.phone}` : ""}${input.customer.email ? ` · ${input.customer.email}` : ""}`);
-      doc.moveDown(0.8);
+  /** `tenants`/`organizations`/`contract_terms` sit outside RLS — plain reads. */
+  private async branch(tenantId: string) {
+    const t = await this.prisma.raw.tenant.findUniqueOrThrow({
+      where: { id: tenantId },
+      include: { organization: { select: { id: true, legalName: true, taxConfig: true } }, domains: { where: { isPrimary: true } } },
+    });
+    const contact = (t.contact ?? {}) as { whatsapp?: string; whatsappDisplay?: string; phone?: string; email?: string };
+    const branding = (t.branding ?? {}) as { logoPngBase64?: string };
+    const banks = ((t.bankAccounts ?? []) as unknown as Array<BankAccountLine & { showOnInvoice?: boolean }>).filter((b) => b.showOnInvoice !== false);
+    const block: BranchBlock = {
+      name: t.name,
+      legalName: t.legalName ?? t.organization.legalName,
+      addressLines: asStrings(t.address),
+      phone: contact.phone ?? null,
+      whatsapp: contact.whatsappDisplay ?? contact.whatsapp ?? null,
+      email: contact.email ?? null,
+      logoPng: branding.logoPngBase64 ? Buffer.from(branding.logoPngBase64, "base64") : null,
+      bankAccounts: banks,
+    };
+    const domain = t.domains[0]?.domain;
+    const storefront =
+      domain && !/\.(local|test|localhost)$/.test(domain) ? `https://${domain}` : (process.env.STOREFRONT_BASE_URL ?? "http://localhost:3000").replace("{tenant}", t.slug);
+    return {
+      block,
+      isPkp: t.isPkp,
+      organizationId: t.organization.id,
+      taxConfig: (t.organization.taxConfig ?? {}) as { pphWithholdingEnabled?: boolean; pphRates?: Record<string, number>; defaultPphType?: string },
+      featureFlags: (t.featureFlags ?? {}) as Record<string, unknown>,
+      storefront,
+    };
+  }
 
-      doc.fontSize(12).text("Objek sewa / Unit", { underline: true }).moveDown(0.4).fontSize(10);
-      doc.text(`Unit: ${input.unit.code ?? "(to be assigned)"} — ${input.unit.assetTypeName}`);
-      doc.text(`Lokasi / Branch: ${input.unit.locationName ?? "-"}${input.unit.locationAddress ? `, ${input.unit.locationAddress}` : ""}`);
-      doc.moveDown(0.8);
+  private customerBlock(c: {
+    type: string;
+    fullName: string | null;
+    companyName: string | null;
+    address: string | null;
+    email: string | null;
+    phone: string | null;
+    taxId: string | null;
+    customerNumber: number | null;
+  }): CustomerBlock {
+    return {
+      name: c.fullName ?? c.companyName ?? "-",
+      companyName: c.companyName,
+      address: c.address,
+      email: c.email,
+      phone: c.phone,
+      taxId: c.taxId,
+      isBusiness: c.type === "BUSINESS",
+      customerNumber: c.customerNumber,
+    };
+  }
 
-      doc.fontSize(12).text("Jangka waktu & biaya / Term & charges", { underline: true }).moveDown(0.4).fontSize(10);
-      doc.text(`Mulai / Start: ${fmtDate(input.term.startDate)}`);
-      if (input.term.endDate) doc.text(`Berakhir / End: ${fmtDate(input.term.endDate)} (${input.term.termMonths} bulan / months)`);
-      doc.text(`Sewa bulanan / Monthly rent: ${fmtMoney(input.term.monthlyRent, input.term.currency)}`);
-      doc.text(`Deposit (dikembalikan / refundable): ${fmtMoney(input.term.deposit, input.term.currency)}`);
-      if (Number(input.term.adminFee) > 0) doc.text(`Biaya admin / Admin fee: ${fmtMoney(input.term.adminFee, input.term.currency)}`);
-      doc.moveDown(0.8);
+  /** Raw bytes of a stored object, whichever provider holds it (S3 hands back a presigned URL). */
+  async readBytes(storageKey: string): Promise<Buffer | null> {
+    const r = await this.storage.read(storageKey);
+    if (r.kind === "buffer") return r.buffer;
+    const res = await fetch(r.url);
+    return res.ok ? Buffer.from(await res.arrayBuffer()) : null;
+  }
 
-      if (input.schedule.length > 0) {
-        doc.fontSize(12).text("Jadwal pembayaran / Payment schedule", { underline: true }).moveDown(0.4).fontSize(9);
-        const x0 = doc.x;
-        const cols = [30, 200, 120, 130];
-        const header = ["#", "Periode / Period", "Jatuh tempo / Due", "Jumlah / Amount"];
-        let y = doc.y;
-        header.forEach((h, i) => doc.text(h, x0 + cols.slice(0, i).reduce((a, b) => a + b, 0), y, { width: cols[i], continued: false }));
-        y += 14;
-        doc.moveTo(x0, y).lineTo(x0 + cols.reduce((a, b) => a + b, 0), y).strokeColor("#999").stroke();
-        y += 4;
-        for (const row of input.schedule) {
-          const cells = [
-            String(row.index + 1),
-            `${fmtDate(row.periodStart)} – ${fmtDate(row.periodEnd)}`,
-            fmtDate(row.dueDate),
-            fmtMoney(row.totalAmount, input.term.currency),
-          ];
-          cells.forEach((c, i) => doc.text(c, x0 + cols.slice(0, i).reduce((a, b) => a + b, 0), y, { width: cols[i] }));
-          y += 14;
-          if (y > doc.page.height - 120) {
-            doc.addPage();
-            y = doc.y;
-          }
-        }
-        doc.x = x0;
-        doc.y = y + 8;
-        doc.fontSize(8).fillColor("#555").text("Cicilan pertama (#1) adalah proforma: sewa bulan pertama + deposit + biaya admin. / Payment #1 is the proforma: first month's rent + deposit + admin fee.", { width: cols.reduce((a, b) => a + b, 0) });
-        doc.fillColor("#000").moveDown(0.8);
-      }
+  private async terms(organizationId: string, version: number | null): Promise<{ parsed: ParsedContractTerms | null; version: number | null }> {
+    const row = version
+      ? await this.prisma.raw.contractTerms.findUnique({ where: { organizationId_version: { organizationId, version } } })
+      : await this.prisma.raw.contractTerms.findFirst({ where: { organizationId }, orderBy: { version: "desc" } });
+    return row ? { parsed: parseContractTerms(row.body), version: row.version } : { parsed: null, version: null };
+  }
 
-      doc.x = 56;
-      doc.fontSize(12).text("Ketentuan / Terms", { underline: true }).moveDown(0.4).fontSize(9);
-      const terms = [
-        "Pembayaran pertama harus diterima sebelum tanggal mulai sewa; unit baru dapat diakses setelah pembayaran diterima. / The first payment must be received before the start date; access begins once payment is confirmed.",
-        "Sewa bulanan jatuh tempo pada tanggal yang tercantum dalam jadwal. Keterlambatan dapat mengakibatkan penangguhan akses. / Monthly rent is due on the dates in the schedule; late payment may suspend access.",
-        `Deposit ditahan selama masa sewa dan ${input.blackoutMonths} bulan setelah berakhir, lalu dikembalikan setelah pemeriksaan unit. / The deposit is held through the term plus ${input.blackoutMonths} month(s) after it ends, then refunded after inspection.`,
-        "Barang terlarang (mudah terbakar, ilegal, mudah rusak) tidak boleh disimpan. / Prohibited goods (flammable, illegal, perishable) may not be stored.",
-        "Perpanjangan dapat diajukan melalui portal sebelum masa sewa berakhir. / Extensions can be requested through the portal before the term ends.",
-      ];
-      terms.forEach((t, i) => doc.text(`${i + 1}. ${t}`, { width: doc.page.width - 112 }).moveDown(0.25));
-      doc.moveDown(1.2);
-      if (doc.y > doc.page.height - 160) doc.addPage();
+  // -------------------------------------------------------------- contract
 
-      doc.fontSize(10);
-      const sigY = doc.y;
-      doc.text("Pemberi sewa / Lessor", 56, sigY);
-      doc.text("Penyewa / Lessee", 330, sigY);
-      doc.moveTo(56, sigY + 60).lineTo(260, sigY + 60).stroke();
-      doc.moveTo(330, sigY + 60).lineTo(534, sigY + 60).stroke();
-      doc.text(owner, 56, sigY + 64);
-      doc.text(input.customer.fullName ?? "", 330, sigY + 64);
+  async contractPdf(tenantId: string, contractId: string, opts: { withSignature: boolean }): Promise<Buffer> {
+    const contract = await this.prisma.runInTenantContext(tenantId, (tx) =>
+      tx.contract.findUnique({
+        where: { id: contractId },
+        include: {
+          booking: { include: { customer: true, asset: true, assetType: true, invoices: { include: { lines: true } }, deposits: true } },
+          rentalOrder: { include: { customer: true, asset: true, assetType: true, invoices: { include: { lines: true } } } },
+        },
+      }),
+    );
+    if (!contract) throw new NotFoundException("Contract not found.");
+    const owner = contract.booking ?? contract.rentalOrder;
+    if (!owner) throw new NotFoundException("Contract has neither a booking nor a rental order.");
+
+    const branch = await this.branch(tenantId);
+    const snapshot = ((contract.booking?.priceSnapshot ?? contract.rentalOrder?.priceSnapshot) ?? {}) as PriceSnapshot;
+    const currency = snapshot.currency ?? "IDR";
+    const base = money(snapshot.basePrice ?? 0);
+    const invoices = [...owner.invoices].filter((i) => i.status !== "VOID").sort((a, b) => (a.scheduleIndex ?? 0) - (b.scheduleIndex ?? 0));
+    const proforma = invoices.find((i) => i.scheduleIndex === 0) ?? invoices[0];
+    // PKP as it was when the contract was billed, not as it is today (§8.1).
+    const pkp = proforma ? Number(proforma.taxAmount.toString()) > 0 : branch.isPkp;
+    const tax = computeTax(base, { isTenantPkp: pkp, taxInclusive: snapshot.taxInclusive ?? false });
+    const heldDeposit = contract.booking?.deposits[0]?.amount;
+    const depositLine = proforma?.lines.find((l) => l.lineType === "DEPOSIT")?.amount;
+    const deposit = heldDeposit ?? depositLine ?? computeDeposit(snapshot.depositRule, base);
+
+    const rate = contract.booking?.rateTier ?? "MONTHLY";
+    const lines: DocLine[] = [
+      {
+        title: `1x ${owner.assetType.name}`,
+        period: RATE_LABEL[rate] ?? rate,
+        subLine: `Storage — ${owner.asset?.code ?? "(unit to be assigned)"}`,
+        amount: tax.netAmount.toFixed(2),
+      },
+    ];
+
+    const terms = await this.terms(branch.organizationId, contract.termsVersion);
+    const signaturePng = opts.withSignature && contract.signatureImageKey ? await this.readBytes(contract.signatureImageKey) : null;
+
+    return renderContractPdf({
+      branch: branch.block,
+      customer: this.customerBlock(owner.customer),
+      contractNumber: contract.contractNumber ?? contract.id.slice(0, 8).toUpperCase(),
+      date: contract.createdAt,
+      bookingRef: contract.booking?.legacyBookingNumber ?? owner.id.slice(0, 8).toUpperCase(),
+      from: contract.booking?.startDate ?? contract.rentalOrder!.periodStart,
+      until: contract.booking?.endDate ?? contract.rentalOrder?.periodEnd ?? null,
+      lines,
+      totals: {
+        currency,
+        subtotal: tax.netAmount.toFixed(2),
+        taxAmount: pkp ? tax.taxAmount.toFixed(2) : null,
+        total: tax.grossAmount.toFixed(2),
+        deposit: Number(deposit.toString()) > 0 ? deposit.toString() : null,
+        due: null,
+      },
+      schedule: invoices
+        .filter((i) => i.scheduleIndex !== null && i.periodStart && i.periodEnd)
+        .map((i) => ({
+          index: i.scheduleIndex!,
+          periodStart: i.periodStart!,
+          periodEnd: i.periodEnd!,
+          dueDate: i.dueDate,
+          amount: i.totalAmount.toString(),
+          invoiceNumber: i.invoiceNumber,
+        })),
+      terms: terms.parsed,
+      termsVersion: terms.version,
+      signature:
+        opts.withSignature && contract.signedAt
+          ? { png: signaturePng, signerName: contract.signedByName ?? owner.customer.fullName ?? "", signedAt: contract.signedAt }
+          : null,
+      confirmedAt: opts.withSignature ? contract.confirmedAt : null,
     });
   }
 
-  async renderInvoice(input: InvoiceDocumentInput): Promise<Buffer> {
-    const isProforma = input.invoice.scheduleIndex === 0 && input.invoice.status !== "PAID";
-    return render((doc) => {
-      const owner = input.tenant.legalName ?? input.tenant.name;
-      doc.fontSize(18).text(isProforma ? "PROFORMA INVOICE" : input.invoice.status === "PAID" ? "INVOICE (LUNAS / PAID)" : "INVOICE", { align: "right" });
-      doc.fontSize(10).fillColor("#555").text(input.invoice.invoiceNumber, { align: "right" });
-      doc.fillColor("#000").moveDown(0.5);
-      doc.fontSize(12).text(owner);
-      doc.fontSize(9).fillColor("#555").text(input.tenant.isPkp ? "PKP — PPN 11% applies" : "Non-PKP").fillColor("#000").moveDown(1);
-
-      doc.fontSize(10);
-      doc.text(`Kepada / Bill to: ${input.customer.fullName ?? "-"}`);
-      if (input.customer.phone) doc.text(input.customer.phone);
-      if (input.customer.email) doc.text(input.customer.email);
-      doc.moveDown(0.5);
-      if (input.unit) doc.text(`Unit: ${input.unit.code ?? "-"} — ${input.unit.assetTypeName}${input.unit.locationName ? ` · ${input.unit.locationName}` : ""}`);
-      doc.text(`Tanggal terbit / Issued: ${fmtDate(input.invoice.issueDate)}`);
-      doc.text(`Jatuh tempo / Due: ${fmtDate(input.invoice.dueDate)}`);
-      if (input.invoice.periodStart && input.invoice.periodEnd) {
-        doc.text(`Periode / Period: ${fmtDate(input.invoice.periodStart)} – ${fmtDate(input.invoice.periodEnd)}`);
-      }
-      doc.moveDown(1);
-
-      const x0 = doc.x;
-      const cols = [280, 60, 70, 100];
-      let y = doc.y;
-      ["Keterangan / Description", "Qty", "Harga / Unit", "Jumlah / Amount"].forEach((h, i) =>
-        doc.text(h, x0 + cols.slice(0, i).reduce((a, b) => a + b, 0), y, { width: cols[i], align: i === 0 ? "left" : "right" }),
+  /**
+   * Render and store the generated (unsigned) agreement, and — once it was
+   * signed on the signature pad — the signed version with the signature and
+   * any CONFIRMED stamp. A contract signed by uploading a scan keeps that
+   * scan as its signed document; only the generated copy is refreshed.
+   */
+  async regenerateContract(tenantId: string, contractId: string): Promise<{ unsignedKey: string; signedKey: string | null }> {
+    const contract = await this.prisma.runInTenantContext(tenantId, (tx) => tx.contract.findUniqueOrThrow({ where: { id: contractId } }));
+    const folder = `contracts/${tenantId}/${contract.bookingId ?? contract.rentalOrderId}`;
+    const unsignedKey = await this.store(`${folder}/agreement-${contractId}.pdf`, await this.contractPdf(tenantId, contractId, { withSignature: false }));
+    let signedKey: string | null = null;
+    if (contract.signatureImageKey) {
+      signedKey = await this.store(
+        `${folder}/agreement-${contractId}-signed${contract.confirmedAt ? "-confirmed" : ""}.pdf`,
+        await this.contractPdf(tenantId, contractId, { withSignature: true }),
       );
-      y += 14;
-      doc.moveTo(x0, y).lineTo(x0 + cols.reduce((a, b) => a + b, 0), y).strokeColor("#999").stroke();
-      y += 4;
-      for (const line of input.invoice.lines) {
-        const cells = [line.description, line.quantity, fmtMoney(line.unitPrice, input.invoice.currency), fmtMoney(line.amount, input.invoice.currency)];
-        cells.forEach((c, i) => doc.text(c, x0 + cols.slice(0, i).reduce((a, b) => a + b, 0), y, { width: cols[i], align: i === 0 ? "left" : "right" }));
-        y += 16;
-      }
-      y += 6;
-      doc.moveTo(x0, y).lineTo(x0 + cols.reduce((a, b) => a + b, 0), y).stroke();
-      y += 8;
-      const totalsX = x0 + cols[0]! + cols[1]!;
-      const totalsW = cols[2]! + cols[3]!;
-      doc.text(`Subtotal: ${fmtMoney(input.invoice.subtotal, input.invoice.currency)}`, totalsX, y, { width: totalsW, align: "right" });
-      y += 14;
-      if (Number(input.invoice.taxAmount) > 0) {
-        doc.text(`PPN 11%: ${fmtMoney(input.invoice.taxAmount, input.invoice.currency)}`, totalsX, y, { width: totalsW, align: "right" });
-        y += 14;
-      }
-      doc.fontSize(12).text(`TOTAL: ${fmtMoney(input.invoice.totalAmount, input.invoice.currency)}`, totalsX, y, { width: totalsW, align: "right" });
-      doc.fontSize(9).fillColor("#555");
-      doc.y = y + 30;
-      doc.x = x0;
-      doc.text(
-        isProforma
-          ? "Proforma — bukan faktur pajak. Pembayaran mengamankan unit Anda; invoice final diterbitkan setelah pembayaran. / Proforma — not a tax invoice. Payment secures your unit; the final invoice is issued on payment."
-          : "Terima kasih. / Thank you.",
-      );
+    }
+    await this.prisma.runInTenantContext(tenantId, (tx) =>
+      tx.contract.update({ where: { id: contractId }, data: { unsignedDocumentUrl: unsignedKey, ...(signedKey ? { documentUrl: signedKey } : {}) } }),
+    );
+    return { unsignedKey, signedKey };
+  }
+
+  // --------------------------------------------------------------- invoice
+
+  async invoicePdf(tenantId: string, invoiceId: string): Promise<Buffer> {
+    const invoice = await this.prisma.runInTenantContext(tenantId, (tx) =>
+      tx.invoice.findUnique({
+        where: { id: invoiceId },
+        include: {
+          lines: true,
+          customer: true,
+          booking: { include: { asset: true, contracts: { orderBy: { createdAt: "desc" }, take: 1 } } },
+          rentalOrder: { include: { asset: true, contracts: { orderBy: { createdAt: "desc" }, take: 1 } } },
+        },
+      }),
+    );
+    if (!invoice) throw new NotFoundException("Invoice not found.");
+    const branch = await this.branch(tenantId);
+    const owner = invoice.booking ?? invoice.rentalOrder;
+    const unitCode = owner?.asset?.code ?? null;
+
+    const chargeLines = invoice.lines.filter((l) => l.lineType !== "DEPOSIT" && l.lineType !== "TAX");
+    const depositLines = invoice.lines.filter((l) => l.lineType === "DEPOSIT");
+    const subtotal = sum(chargeLines.map((l) => l.amount));
+    const taxAmount = Number(invoice.taxAmount.toString());
+    const deposit = sum(depositLines.map((l) => l.amount));
+    const due = Number(invoice.totalAmount.toString());
+
+    const lines: DocLine[] = chargeLines.map((l) => ({
+      title: Number(l.quantity.toString()) !== 1 ? `${Number(l.quantity.toString())}x ${l.description}` : l.description,
+      period: l.lineType === "RENT" ? "Monthly" : "",
+      subLine: l.lineType === "RENT" && unitCode ? `Storage — ${unitCode}` : null,
+      amount: l.amount.toString(),
+    }));
+
+    // §8.3 — display only, and only once finance has validated the rates
+    // (Organization.taxConfig.pphWithholdingEnabled). DPP is the rent, never
+    // the deposit or the PPN.
+    let withholding: { label: string; amount: string; transfer: string } | null = null;
+    if (invoice.customer.pphWithheld === true && branch.taxConfig.pphWithholdingEnabled === true) {
+      const type = invoice.customer.pphType ?? branch.taxConfig.defaultPphType ?? "PPH_4_2_FINAL";
+      const rate = branch.taxConfig.pphRates?.[type] ?? (type === "PPH_23" ? 0.02 : 0.1);
+      const amount = Math.round(subtotal * rate);
+      withholding = {
+        label: `${type === "PPH_23" ? "PPh 23" : "PPh Final 4(2)"} ${Math.round(rate * 1000) / 10}% dipotong oleh penyewa`,
+        amount: money2(amount),
+        transfer: money2(due - amount),
+      };
+    }
+
+    const online = onlinePaymentsStatus(branch.featureFlags).enabled;
+    return renderInvoicePdf({
+      branch: branch.block,
+      customer: this.customerBlock(invoice.customer),
+      kind: invoice.scheduleIndex === 0 && invoice.status !== "PAID" ? "PROFORMA" : "INVOICE",
+      invoiceNumber: invoice.invoiceNumber,
+      status: invoice.status,
+      issueDate: invoice.issueDate,
+      dueDate: invoice.dueDate,
+      bookingRef: invoice.booking ? (invoice.booking.legacyBookingNumber ?? invoice.booking.id.slice(0, 8).toUpperCase()) : null,
+      contractNumber: owner?.contracts[0]?.contractNumber ?? null,
+      from: invoice.periodStart,
+      until: invoice.periodEnd,
+      lines,
+      totals: {
+        currency: invoice.currency,
+        subtotal: money2(subtotal),
+        taxAmount: taxAmount > 0 ? money2(taxAmount) : null,
+        total: money2(subtotal + taxAmount),
+        deposit: deposit > 0 ? money2(deposit) : null,
+        due: money2(due),
+      },
+      withholding,
+      portalUrl: online ? `${branch.storefront}/portal/invoices/${invoice.id}` : null,
     });
   }
 
-  async store(key: string, buffer: Buffer): Promise<string> {
-    const { storageKey } = await this.storage.save({ key, buffer, contentType: "application/pdf" });
+  // --------------------------------------------------------------- storage
+
+  async store(key: string, buffer: Buffer, contentType = "application/pdf"): Promise<string> {
+    const { storageKey } = await this.storage.save({ key, buffer, contentType });
     return storageKey;
   }
 

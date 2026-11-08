@@ -471,6 +471,8 @@ model Customer {
   email            String?
   fullName         String?         @map("full_name")
   /// #4 — business fields (null for INDIVIDUAL): company name, NPWP, NIB, PIC.
+  /// PRD go-live §7.1 — printed in the contract/invoice customer block.
+  address          String?
   companyName      String?         @map("company_name")
   taxId            String?         @map("tax_id")
   /// Nomor Induk Berusaha — the business registration number. BUSINESS only.

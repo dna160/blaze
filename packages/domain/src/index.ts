@@ -151,3 +151,11 @@ export {
   type WhatsAppTemplateSpec,
 } from "./comms/whatsapp-templates.js";
 export { renderAutoReply, allBranchesLines, DEFAULT_AUTO_REPLY_TEXT, type BranchContact } from "./comms/auto-reply.js";
+export {
+  parseContractTerms,
+  alignContractTerms,
+  type ParsedContractTerms,
+  type TermsArticle,
+  type TermsLanguage,
+  type AlignedArticle,
+} from "./documents/contract-terms.js";

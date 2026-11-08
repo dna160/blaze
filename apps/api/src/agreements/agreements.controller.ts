@@ -20,7 +20,10 @@ import type { Request, Response } from "express";
 import { BookingService } from "../booking/booking.service.js";
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
+import { RequireCapability } from "../common/decorators/require-capability.decorator.js";
+import { CapabilityGuard } from "../common/guards/capability.guard.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
+import { StaffGuard } from "../common/guards/staff.guard.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
 import { TenancyService } from "../tenancy/tenancy.service.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
@@ -97,6 +100,49 @@ export class AgreementsController {
       mimetype: file.mimetype,
       size: file.size,
     });
+  }
+
+  /** PRD go-live §7.2 — sign on the portal's signature pad. Body: { signedByName, signaturePng: "data:image/png;base64,..." }. */
+  @Post("by-booking/:bookingId/sign-pad")
+  @UseGuards(JwtAuthGuard)
+  async signWithPad(
+    @CurrentTenant() tenant: ResolvedTenant,
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("bookingId") bookingId: string,
+    @Body("signedByName") signedByName: string,
+    @Body("signaturePng") signaturePng: string,
+    @Req() req: Request,
+  ) {
+    await this.assertAccess(tenant, user, bookingId);
+    if (!signedByName?.trim()) throw new BadRequestException("signedByName is required.");
+    if (!signaturePng) throw new BadRequestException("signaturePng is required.");
+    return this.contracts.signWithPad(tenant, bookingId, {
+      signedByName: signedByName.trim().slice(0, 120),
+      signaturePng,
+      ip: req.ip ?? null,
+      userAgent: req.header("user-agent") ?? null,
+      actorUserId: user.kind === "STAFF" ? user.id : null,
+    });
+  }
+
+  /** Staff approve a signed contract — the PDF gets the CONFIRMED stamp (§7.2). */
+  @Post(":id/confirm")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("approve_booking")
+  confirm(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
+    return this.contracts.confirm(tenant, id, user.id);
+  }
+
+  @Get(":id/signature")
+  @UseGuards(JwtAuthGuard, StaffGuard)
+  async signature(@CurrentTenant() tenant: ResolvedTenant, @Param("id") id: string, @Res() res: Response) {
+    const result = await this.contracts.getSignatureImage(tenant.id, id);
+    if (result.kind === "redirect") {
+      res.redirect(result.url);
+      return;
+    }
+    res.setHeader("Content-Type", result.contentType);
+    res.send(result.buffer);
   }
 
   /**
