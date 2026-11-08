@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { findOrCreateCustomerAccessToken, resolveMessagingConfig, type ResolvedMessagingConfig } from "@rentos/database";
+import { findOrCreateCustomerAccessToken, outboundBlock, recordSuppressed, resolveMessagingConfig, type ResolvedMessagingConfig } from "@rentos/database";
 import { buildMagicLinkUrl, renderMessage } from "@rentos/domain";
 
 import { RedisService } from "../common/redis/redis.service.js";
@@ -148,6 +148,25 @@ export class NotificationsService {
   }
 
   async notify(params: NotifyParams): Promise<void> {
+    // PRD go-live §9.1 — the organization's kill switch. Checked before the
+    // QUEUED row exists so a paused send is never mistaken for one in flight.
+    const blocked = await outboundBlock(this.prisma.raw, params.tenantId);
+    if (blocked) {
+      await this.prisma.runInTenantContext(params.tenantId, (tx) =>
+        recordSuppressed(tx, {
+          tenantId: params.tenantId,
+          customerId: params.customerId,
+          channel: params.channel,
+          templateKey: params.templateKey,
+          recipient: params.recipient,
+          payload: params.variables,
+          reason: blocked,
+        }),
+      );
+      this.logger.log(`${params.templateKey} to ${params.recipient} suppressed — ${blocked}`);
+      return;
+    }
+
     const record = await this.prisma.runInTenantContext(params.tenantId, (tx) =>
       tx.notification.create({
         data: {

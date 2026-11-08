@@ -10,7 +10,7 @@ import {
   type ThreadMessage,
   type ThreadResponse,
 } from "@rentos/contracts";
-import { resolveMessagingConfig } from "@rentos/database";
+import { markHumanReply, outboundBlock, recordSuppressed, resolveMessagingConfig } from "@rentos/database";
 import { hasOrganizationScope } from "@rentos/domain";
 
 import { MESSAGING_PROVIDERS, type MessagingProviderRegistry } from "../notifications/messaging-provider.interface.js";
@@ -322,6 +322,22 @@ export class MessagingService {
     const phone = normalizePhone(phoneInput);
     if (!phone) throw new BadRequestException("A phone number is required.");
 
+    // PRD go-live §9.1 — recorded, never sent, and the agent is told why.
+    const blocked = await outboundBlock(this.prisma.raw, tenantId);
+    if (blocked) {
+      await this.prisma.runInTenantContext(tenantId, (tx) =>
+        recordSuppressed(tx, {
+          tenantId,
+          channel: "WHATSAPP",
+          templateKey: "agent_reply",
+          recipient: phone,
+          payload: { text, sentBy: user.id },
+          reason: blocked,
+        }),
+      );
+      throw new ConflictException({ code: "MESSAGING_PAUSED", windowOpenUntil: null, message: `${blocked}. The reply was recorded but not sent.` });
+    }
+
     const lastInboundAt = await this.prisma.runInTenantContext(tenantId, async (tx) => {
       const rows = await tx.$queryRaw<Array<{ last_inbound_at: Date | null }>>`
         SELECT max(created_at) AS last_inbound_at
@@ -371,6 +387,10 @@ export class MessagingService {
       // number up, and paraphrasing them would only lose information.
       throw new BadGatewayException((err as Error).message);
     }
+
+    // PRD go-live §9.2 — a person is handling this conversation; keep the auto-reply quiet.
+    const owner = await this.prisma.raw.tenant.findUnique({ where: { id: tenantId }, select: { organizationId: true } });
+    if (owner) await markHumanReply(this.prisma.raw, owner.organizationId, phone).catch(() => undefined);
 
     const customerId = await this.prisma.runInTenantContext(tenantId, async (tx) => {
       const row = await tx.notification.findFirst({

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -43,7 +44,63 @@ type onWhatsApp struct {
 	checked time.Time
 }
 
-func today() string { return time.Now().Format("2006-01-02") }
+// capZone is the day boundary of the daily cap. Asia/Jakarta by default
+// (WA_BRIDGE_TZ), so "today" for a branch is its own calendar day rather than
+// one that flips over at 07:00 WIB.
+var capZone = time.UTC
+
+func today() string { return time.Now().In(capZone).Format("2006-01-02") }
+
+// The daily cap counter lives in wa.daily_send_counts (PRD go-live §9.3), so
+// a restart — or a crash loop — no longer hands the number a fresh allowance.
+// One atomic upsert per send: the row lock serializes concurrent reservations
+// for the same number. When the manager has no database (unit tests) the
+// in-memory sendState counts instead.
+
+func (inst *Instance) reserveSend(ctx context.Context, cap int) (bool, error) {
+	if inst.mgr.db == nil {
+		return inst.send.reserve(cap), nil
+	}
+	row := inst.mgr.db.QueryRowContext(ctx, `
+		INSERT INTO wa.daily_send_counts (instance_id, day, count) VALUES ($1, $2, 1)
+		ON CONFLICT (instance_id, day) DO UPDATE SET count = wa.daily_send_counts.count + 1
+		WHERE $3 <= 0 OR wa.daily_send_counts.count < $3
+		RETURNING count`, inst.id, today(), cap)
+	var n int
+	switch err := row.Scan(&n); {
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	if cap > 0 && n > cap { // a fresh row with a cap below 1
+		inst.releaseSend(ctx)
+		return false, nil
+	}
+	return true, nil
+}
+
+func (inst *Instance) releaseSend(ctx context.Context) {
+	if inst.mgr.db == nil {
+		inst.send.release()
+		return
+	}
+	// Detached from the request context: a cancelled send must still give its slot back.
+	_, _ = inst.mgr.db.ExecContext(context.WithoutCancel(ctx),
+		`UPDATE wa.daily_send_counts SET count = count - 1 WHERE instance_id = $1 AND day = $2 AND count > 0`, inst.id, today())
+}
+
+func (inst *Instance) sentToday(ctx context.Context) int {
+	if inst.mgr.db == nil {
+		return inst.send.countToday()
+	}
+	var n int
+	if err := inst.mgr.db.QueryRowContext(ctx,
+		`SELECT count FROM wa.daily_send_counts WHERE instance_id = $1 AND day = $2`, inst.id, today()).Scan(&n); err != nil {
+		return 0
+	}
+	return n
+}
 
 func (s *sendState) countToday() int {
 	s.countsMu.Lock()
@@ -132,13 +189,18 @@ func (inst *Instance) SendText(ctx context.Context, to, text string) (string, er
 	if err != nil {
 		return "", err
 	}
-	if !inst.send.reserve(cfg.DailyCap) {
+	ok, err := inst.reserveSend(ctx, cfg.DailyCap)
+	if err != nil {
+		// Fail closed: a send we cannot count is a send that could break the cap.
+		return "", &SendError{Status: 503, Code: "counter_unavailable", Message: "Could not reserve today's send slot: " + err.Error(), ChannelWide: true}
+	}
+	if !ok {
 		return "", &SendError{Status: 429, Code: "daily_cap", Message: fmt.Sprintf("This number has sent its %d messages for today (WA_BRIDGE_DAILY_CAP).", cfg.DailyCap), ChannelWide: true}
 	}
 	sent := false
 	defer func() {
 		if !sent {
-			inst.send.release()
+			inst.releaseSend(ctx)
 		}
 	}()
 

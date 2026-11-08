@@ -16,6 +16,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -24,6 +25,7 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+	_ "time/tzdata" // WA_BRIDGE_TZ must resolve in the Alpine image, which ships no zoneinfo
 
 	_ "github.com/lib/pq"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -73,6 +75,11 @@ func loadConfig() (Config, error) {
 		DefaultCountryCode: env("WA_BRIDGE_DEFAULT_COUNTRY_CODE", "62"),
 		LogLevel:           env("WA_BRIDGE_LOG_LEVEL", "WARN"),
 	}
+	zone, err := time.LoadLocation(env("WA_BRIDGE_TZ", "Asia/Jakarta"))
+	if err != nil {
+		return cfg, fmt.Errorf("WA_BRIDGE_TZ: %w", err)
+	}
+	capZone = zone
 	if len(cfg.Token) < 32 {
 		return cfg, errors.New("WA_BRIDGE_TOKEN must be set to at least 32 characters (openssl rand -hex 32)")
 	}
@@ -117,6 +124,15 @@ func openStore(ctx context.Context, cfg Config) (*sql.DB, *sqlstore.Container, e
 		id         text PRIMARY KEY,
 		jid        text,
 		updated_at timestamptz NOT NULL DEFAULT now()
+	)`); err != nil {
+		return nil, nil, err
+	}
+	// PRD go-live §9.3 — the daily cap survives restarts.
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS wa.daily_send_counts (
+		instance_id text NOT NULL,
+		day         date NOT NULL,
+		count       integer NOT NULL DEFAULT 0,
+		PRIMARY KEY (instance_id, day)
 	)`); err != nil {
 		return nil, nil, err
 	}

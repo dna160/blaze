@@ -15,6 +15,15 @@ export const MessagingConfigResponseSchema = z.object({
   /** Auto-reply to inbound WhatsApp messages. Free-form, so no approved template is needed. */
   autoReplyEnabled: z.boolean(),
   autoReplyText: z.string().nullable(),
+  /** PRD go-live §9.2 — one auto-reply per number per this many hours. */
+  autoReplyCooldownHours: z.number(),
+  /** PRD go-live §9.1 — the organization's outbound kill switch. */
+  pause: z.object({
+    paused: z.boolean(),
+    reason: z.string().nullable(),
+    pausedAt: z.string().nullable(),
+    pausedByUserId: z.string().nullable(),
+  }),
   /** Last 4 characters of the saved token — enough to tell two credentials apart, useless on its own. */
   accessTokenHint: z.string().nullable(),
   hasAccessToken: z.boolean(),
@@ -36,6 +45,7 @@ export const UpdateMessagingConfigRequestSchema = z
     businessAccountId: z.string().trim().min(1).max(64).nullable().optional(),
     autoReplyEnabled: z.boolean().optional(),
     autoReplyText: z.string().trim().max(1000).nullable().optional(),
+    autoReplyCooldownHours: z.number().min(1).max(24 * 14).nullable().optional(),
     /** Omit to keep the stored token; send a new value to replace it. Never returned by any read. */
     accessToken: z.string().trim().min(20).max(1024).nullable().optional(),
   })
@@ -44,6 +54,25 @@ export const UpdateMessagingConfigRequestSchema = z
     path: ["phoneNumberId"],
   });
 export type UpdateMessagingConfigRequest = z.infer<typeof UpdateMessagingConfigRequestSchema>;
+
+/** PRD go-live §9.1 — pausing needs a reason so the banner can say why; unpausing does not. */
+export const MessagingPauseRequestSchema = z
+  .object({
+    paused: z.boolean(),
+    reason: z.string().trim().max(300).nullable().optional(),
+  })
+  .refine((v) => !v.paused || Boolean(v.reason), { message: "Say why messaging is being paused.", path: ["reason"] });
+export type MessagingPauseRequest = z.infer<typeof MessagingPauseRequestSchema>;
+
+export const MessagingPauseResponseSchema = z.object({
+  paused: z.boolean(),
+  reason: z.string().nullable(),
+  pausedAt: z.string().nullable(),
+  pausedByUserId: z.string().nullable(),
+  /** SUPPRESSED notifications waiting for review (PRD go-live §10.2 step 6). */
+  suppressedCount: z.number(),
+});
+export type MessagingPauseResponse = z.infer<typeof MessagingPauseResponseSchema>;
 
 /**
  * Test send. `accessToken`/`phoneNumberId` are optional overrides so a

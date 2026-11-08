@@ -1,6 +1,9 @@
 import { BadGatewayException, BadRequestException, ConflictException, ForbiddenException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import {
   getMessagingConfigView,
+  getMessagingPause,
+  setMessagingPause,
+  SUPPRESSED_STATUS,
   messagingConfigKey,
   resolveMessagingConfig,
   saveMessagingConfig,
@@ -16,11 +19,14 @@ import {
 } from "@rentos/database";
 import { can, hasOrganizationScope } from "@rentos/domain";
 
+import { AuditService } from "../audit/audit.service.js";
 import { NotificationsService } from "../notifications/notifications.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import type {
   LinkedDeviceStatusResponse,
   MessagingConfigResponse,
+  MessagingPauseRequest,
+  MessagingPauseResponse,
   PairLinkedDeviceRequest,
   PairLinkedDeviceResponse,
   TestMessagingRequest,
@@ -42,6 +48,7 @@ export class OrganizationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly audit: AuditService,
   ) {}
 
   private assertOrgScope(user: AuthenticatedUser): string {
@@ -149,13 +156,55 @@ export class OrganizationService {
     return user.organizationId;
   }
 
+  /**
+   * PRD go-live §9.5 / G8 — the messaging setup (number, pairing, auto-reply,
+   * pause) is the WHOLE organization's, so changing it takes an org-scoped
+   * Admin. A branch-scoped Admin also holds manage_users; the capability alone
+   * let them repoint every branch's WhatsApp, which is why scope is checked
+   * here and not only the role.
+   */
+  private assertOrgAdmin(user: AuthenticatedUser): string {
+    const orgId = this.assertOrgScope(user);
+    if (!can(user.roleAssignments, "manage_users")) {
+      throw new ForbiddenException("Changing the organization's messaging setup requires an organization-scoped Admin.");
+    }
+    return orgId;
+  }
+
   async getMessagingConfig(user: AuthenticatedUser): Promise<MessagingConfigResponse> {
-    const view = await getMessagingConfigView(this.prisma.raw, this.assertOrgId(user));
-    return { ...view, canStoreSecrets: messagingConfigKey() !== null };
+    const orgId = this.assertOrgId(user);
+    const view = await getMessagingConfigView(this.prisma.raw, orgId);
+    return { ...view, pause: await getMessagingPause(this.prisma.raw, orgId), canStoreSecrets: messagingConfigKey() !== null };
+  }
+
+  /** PRD go-live §9.1 — read by every console page for the red banner, so staff-wide. */
+  async getMessagingPauseStatus(user: AuthenticatedUser): Promise<MessagingPauseResponse> {
+    const orgId = this.assertOrgId(user);
+    const pause = await getMessagingPause(this.prisma.raw, orgId);
+    const suppressedCount = await withOrgReadContext(this.prisma.raw, orgId, (tx) =>
+      tx.notification.count({ where: { status: SUPPRESSED_STATUS } }),
+    );
+    return { ...pause, suppressedCount };
+  }
+
+  async setMessagingPause(user: AuthenticatedUser, body: MessagingPauseRequest): Promise<MessagingPauseResponse> {
+    const orgId = this.assertOrgAdmin(user);
+    await setMessagingPause(this.prisma.raw, orgId, { paused: body.paused, reason: body.reason ?? null, userId: user.id });
+    if (user.tenantId) {
+      await this.audit.record({
+        tenantId: user.tenantId,
+        actorUserId: user.id,
+        action: body.paused ? "MESSAGING_PAUSED" : "MESSAGING_UNPAUSED",
+        entityType: "Organization",
+        entityId: orgId,
+        metadata: { reason: body.reason ?? null },
+      });
+    }
+    return this.getMessagingPauseStatus(user);
   }
 
   async updateMessagingConfig(user: AuthenticatedUser, body: UpdateMessagingConfigRequest): Promise<MessagingConfigResponse> {
-    const orgId = this.assertOrgId(user);
+    const orgId = this.assertOrgAdmin(user);
     if (body.accessToken && messagingConfigKey() === null) {
       // Refuse rather than store it readable. Better a clear error now than a
       // credential sitting in plaintext in a JSON column nobody re-audits.
@@ -174,7 +223,17 @@ export class OrganizationService {
       throw new BadRequestException("An access token is required the first time WhatsApp Cloud is enabled.");
     }
     const view = await saveMessagingConfig(this.prisma.raw, orgId, body, user.id);
-    return { ...view, canStoreSecrets: true };
+    if (user.tenantId) {
+      await this.audit.record({
+        tenantId: user.tenantId,
+        actorUserId: user.id,
+        action: "MESSAGING_CONFIG_UPDATED",
+        entityType: "Organization",
+        entityId: orgId,
+        metadata: { provider: body.provider, autoReplyEnabled: body.autoReplyEnabled ?? null, tokenReplaced: Boolean(body.accessToken) },
+      });
+    }
+    return { ...view, pause: await getMessagingPause(this.prisma.raw, orgId), canStoreSecrets: true };
   }
 
   /**
@@ -185,7 +244,7 @@ export class OrganizationService {
    * expected answer here, not a server fault.
    */
   async testMessaging(user: AuthenticatedUser, body: TestMessagingRequest): Promise<TestMessagingResponse> {
-    this.assertOrgId(user);
+    this.assertOrgAdmin(user);
     if (!user.tenantId) throw new ForbiddenException("A branch session is required to send a test.");
 
     let config: ResolvedMessagingConfig;
@@ -238,6 +297,7 @@ export class OrganizationService {
   }
 
   async pairLinkedDevice(user: AuthenticatedUser, body: PairLinkedDeviceRequest): Promise<PairLinkedDeviceResponse> {
+    this.assertOrgAdmin(user);
     const conn = this.requireBridge(user);
     try {
       return await waBridgePair(conn, body.phone);
@@ -247,6 +307,7 @@ export class OrganizationService {
   }
 
   async logoutLinkedDevice(user: AuthenticatedUser): Promise<LinkedDeviceStatusResponse> {
+    this.assertOrgAdmin(user);
     const conn = this.requireBridge(user);
     try {
       return linkedView(await waBridgeLogout(conn), true);

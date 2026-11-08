@@ -66,6 +66,11 @@ export { fireNextWaitlistEntry } from "./waitlist.js";
 export {
   resolveMessagingConfig,
   resolveAutoReply,
+  claimAutoReply,
+  releaseAutoReplyClaim,
+  markHumanReply,
+  contactKey,
+  DEFAULT_AUTO_REPLY_COOLDOWN_HOURS,
   findOrganizationIdByPhoneNumberId,
   getMessagingConfigView,
   saveMessagingConfig,
@@ -92,3 +97,11 @@ export {
   type WaBridgeState,
   type WaBridgeStatus,
 } from "./wa-bridge.js";
+export {
+  getMessagingPause,
+  outboundBlock,
+  setMessagingPause,
+  recordSuppressed,
+  SUPPRESSED_STATUS,
+  type MessagingPauseState,
+} from "./messaging-pause.js";

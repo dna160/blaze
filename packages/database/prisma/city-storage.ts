@@ -144,7 +144,7 @@ export async function bootstrapCityStorage(prisma: PrismaClient, opts: { mode: "
     contract_required: true,
     allowSubMonthly: false,
     paymentMethods: ["MANUAL_TRANSFER", "CARD"],
-    // PRD go-live §4.3 — off until the client's Xendit account exists.
+    // PRD go-live §4.3 — off until the client's Xendit account exists (set below).
     onlinePaymentsEnabled: false,
     // The external API stays off in production until §15's key scopes land.
     api_access_enabled: opts.mode === "demo",
@@ -184,12 +184,15 @@ export async function bootstrapCityStorage(prisma: PrismaClient, opts: { mode: "
       featureFlags,
     },
   });
-  // An existing tenant keeps its flags, but never silently keeps online
-  // payment switched on from a demo seed when bootstrapping production.
-  if (opts.mode === "production") {
-    const flags = { ...((tenant.featureFlags as Record<string, unknown>) ?? {}), onlinePaymentsEnabled: false, api_access_enabled: false };
-    await prisma.tenant.update({ where: { id: tenant.id }, data: { featureFlags: flags as Prisma.InputJsonValue } });
-  }
+  // An existing tenant keeps its other flags. Production never keeps online
+  // payment on from an earlier demo seed; the demo (staging) tenant has it on,
+  // because there the mock gateway is the point.
+  const flags = {
+    ...((tenant.featureFlags as Record<string, unknown>) ?? {}),
+    onlinePaymentsEnabled: opts.mode === "demo",
+    ...(opts.mode === "production" ? { api_access_enabled: false } : {}),
+  };
+  await prisma.tenant.update({ where: { id: tenant.id }, data: { featureFlags: flags as Prisma.InputJsonValue } });
 
   const LOCATION_ID = "00000000-0000-0000-0000-000000000101";
   await prisma.location.upsert({

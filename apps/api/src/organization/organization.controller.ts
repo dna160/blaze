@@ -1,6 +1,11 @@
 import { Body, Controller, Get, Post, Put, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
-import { PairLinkedDeviceRequestSchema, TestMessagingRequestSchema, UpdateMessagingConfigRequestSchema } from "@rentos/contracts";
+import {
+  MessagingPauseRequestSchema,
+  PairLinkedDeviceRequestSchema,
+  TestMessagingRequestSchema,
+  UpdateMessagingConfigRequestSchema,
+} from "@rentos/contracts";
 
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
@@ -58,6 +63,23 @@ export class OrganizationController {
     @Body(new ZodValidationPipe(UpdateMessagingConfigRequestSchema)) body: ReturnType<typeof UpdateMessagingConfigRequestSchema.parse>,
   ) {
     return this.organization.updateMessagingConfig(user, body);
+  }
+
+  /** PRD go-live §9.1 — the console banner polls this; every staff role may read it. */
+  @Get("messaging/pause")
+  messagingPause(@CurrentUser() user: AuthenticatedUser) {
+    return this.organization.getMessagingPauseStatus(user);
+  }
+
+  /** Org-scoped Admin only (checked in the service, on top of manage_users). */
+  @Put("messaging/pause")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("manage_users")
+  setMessagingPause(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body(new ZodValidationPipe(MessagingPauseRequestSchema)) body: ReturnType<typeof MessagingPauseRequestSchema.parse>,
+  ) {
+    return this.organization.setMessagingPause(user, body);
   }
 
   @Post("messaging/test")

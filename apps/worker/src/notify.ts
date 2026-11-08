@@ -1,4 +1,12 @@
-import { findOrCreateCustomerAccessToken, getPrismaClient, resolveMessagingConfig, waBridgeSendText, withTenantContext } from "@rentos/database";
+import {
+  findOrCreateCustomerAccessToken,
+  getPrismaClient,
+  outboundBlock,
+  recordSuppressed,
+  resolveMessagingConfig,
+  waBridgeSendText,
+  withTenantContext,
+} from "@rentos/database";
 import { buildMagicLinkUrl, buildWhatsAppTemplatePayload, renderMessage } from "@rentos/domain";
 
 /**
@@ -22,6 +30,25 @@ export async function notify(params: {
 }): Promise<void> {
   const prisma = getPrismaClient();
   const channel = params.channel ?? "WHATSAPP";
+
+  // PRD go-live §9.1 — same kill switch as apps/api's NotificationsService.notify.
+  const blocked = await outboundBlock(prisma, params.tenantId);
+  if (blocked) {
+    await withTenantContext(prisma, params.tenantId, (tx) =>
+      recordSuppressed(tx, {
+        tenantId: params.tenantId,
+        customerId: params.customerId,
+        channel,
+        templateKey: params.templateKey,
+        recipient: params.recipient,
+        recipientRole: params.recipientRole,
+        payload: params.variables,
+        reason: blocked,
+      }),
+    );
+    console.log(`[suppressed] ${params.templateKey} -> ${params.recipient}: ${blocked}`);
+    return;
+  }
 
   const record = await withTenantContext(prisma, params.tenantId, (tx) =>
     tx.notification.create({

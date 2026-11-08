@@ -60,6 +60,8 @@ export interface MessagingConfigView {
   businessAccountId: string | null;
   autoReplyEnabled: boolean;
   autoReplyText: string | null;
+  /** PRD go-live §9.2 — at most one auto-reply per number per this many hours. */
+  autoReplyCooldownHours: number;
   /** Last 4 characters of the saved token, so staff can tell which one is loaded. */
   accessTokenHint: string | null;
   hasAccessToken: boolean;
@@ -78,6 +80,7 @@ interface StoredConfig {
   /** Auto-reply to an inbound WhatsApp message. Free-form, so it needs no approved template. */
   autoReplyEnabled?: boolean;
   autoReplyText?: string;
+  autoReplyCooldownHours?: number;
   /** AES-256-GCM, "<iv-hex>:<tag-hex>:<ciphertext-hex>". */
   accessTokenSealed?: string;
   updatedAt?: string;
@@ -199,13 +202,65 @@ export async function readStoredConfig(prisma: PrismaClient, organizationId: str
 export async function resolveAutoReply(
   prisma: PrismaClient,
   tenantId: string,
-): Promise<{ enabled: boolean; text: string } | null> {
+): Promise<{ enabled: boolean; text: string; cooldownHours: number; organizationId: string } | null> {
   const organizationId = await organizationIdForTenant(prisma, tenantId);
   if (!organizationId) return null;
   const stored = await readStoredConfig(prisma, organizationId);
   if (!stored.autoReplyEnabled) return null;
   const text = stored.autoReplyText?.trim();
-  return text ? { enabled: true, text } : null;
+  return text ? { enabled: true, text, cooldownHours: autoReplyCooldownHours(stored), organizationId } : null;
+}
+
+export const DEFAULT_AUTO_REPLY_COOLDOWN_HOURS = 12;
+
+function autoReplyCooldownHours(stored: StoredConfig): number {
+  const h = Number(stored.autoReplyCooldownHours);
+  return Number.isFinite(h) && h > 0 ? h : DEFAULT_AUTO_REPLY_COOLDOWN_HOURS;
+}
+
+/** Digits only — the key messaging_contact_state uses for a counterpart. */
+export function contactKey(phone: string): string {
+  return phone.replace(/\D/g, "");
+}
+
+/**
+ * PRD go-live §9.2 — claim the right to auto-reply to this number, atomically.
+ *
+ * One statement: the upsert's conflict row lock serializes concurrent webhook
+ * deliveries for the same number, so three inbound messages inside a minute
+ * produce exactly one claim. The claim fails while an auto-reply was already
+ * sent within the cooldown, or a human replied within it.
+ */
+export async function claimAutoReply(prisma: PrismaClient, organizationId: string, phone: string, cooldownHours: number): Promise<boolean> {
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+    INSERT INTO messaging_contact_state (id, organization_id, phone, last_auto_reply_at, updated_at)
+    VALUES (gen_random_uuid(), ${organizationId}::uuid, ${contactKey(phone)}, now(), now())
+    ON CONFLICT (organization_id, phone) DO UPDATE SET last_auto_reply_at = now(), updated_at = now()
+    WHERE (messaging_contact_state.last_auto_reply_at IS NULL
+           OR messaging_contact_state.last_auto_reply_at < now() - make_interval(secs => ${cooldownHours * 3600}))
+      AND (messaging_contact_state.last_human_reply_at IS NULL
+           OR messaging_contact_state.last_human_reply_at < now() - make_interval(secs => ${cooldownHours * 3600}))
+    RETURNING id
+  `;
+  return rows.length > 0;
+}
+
+/** Undo a claim whose send then failed, so the next message can try again. */
+export async function releaseAutoReplyClaim(prisma: PrismaClient, organizationId: string, phone: string): Promise<void> {
+  await prisma.messagingContactState.updateMany({
+    where: { organizationId, phone: contactKey(phone) },
+    data: { lastAutoReplyAt: null },
+  });
+}
+
+/** A person answered this number (console inbox) — the auto-reply stays quiet for a cooldown. */
+export async function markHumanReply(prisma: PrismaClient, organizationId: string, phone: string): Promise<void> {
+  const key = contactKey(phone);
+  await prisma.messagingContactState.upsert({
+    where: { organizationId_phone: { organizationId, phone: key } },
+    create: { organizationId, phone: key, lastHumanReplyAt: new Date() },
+    update: { lastHumanReplyAt: new Date() },
+  });
 }
 
 /** What actually sends a message for this tenant, and where those credentials came from. */
@@ -227,6 +282,7 @@ export async function getMessagingConfigView(prisma: PrismaClient, organizationI
     businessAccountId: stored.businessAccountId ?? null,
     autoReplyEnabled: stored.autoReplyEnabled ?? false,
     autoReplyText: stored.autoReplyText ?? null,
+    autoReplyCooldownHours: autoReplyCooldownHours(stored),
     accessTokenHint: stored.accessTokenHint ?? null,
     hasAccessToken: Boolean(stored.accessTokenSealed),
     updatedAt: stored.updatedAt ?? null,
@@ -242,6 +298,7 @@ export interface MessagingConfigUpdate {
   businessAccountId?: string | null;
   autoReplyEnabled?: boolean;
   autoReplyText?: string | null;
+  autoReplyCooldownHours?: number | null;
   /** Omit to keep the stored token; pass a new one to replace it. */
   accessToken?: string | null;
 }
@@ -260,6 +317,7 @@ export async function saveMessagingConfig(
     businessAccountId: update.businessAccountId ?? undefined,
     autoReplyEnabled: update.autoReplyEnabled ?? existing.autoReplyEnabled,
     autoReplyText: update.autoReplyText ?? existing.autoReplyText,
+    autoReplyCooldownHours: update.autoReplyCooldownHours ?? existing.autoReplyCooldownHours,
     updatedAt: new Date().toISOString(),
     updatedByUserId,
   };

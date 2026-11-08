@@ -150,3 +150,4 @@ export {
   type WhatsAppSendPayload,
   type WhatsAppTemplateSpec,
 } from "./comms/whatsapp-templates.js";
+export { renderAutoReply, allBranchesLines, DEFAULT_AUTO_REPLY_TEXT, type BranchContact } from "./comms/auto-reply.js";

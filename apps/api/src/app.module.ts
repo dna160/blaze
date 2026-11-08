@@ -7,6 +7,7 @@ import { AuditModule } from "./audit/audit.module.js";
 import { AuthModule } from "./auth/auth.module.js";
 import { AutomationModule } from "./automation/automation.module.js";
 import { BookingModule } from "./booking/booking.module.js";
+import { BranchModule } from "./branch/branch.module.js";
 import { CatalogModule } from "./catalog/catalog.module.js";
 import { HttpExceptionFilter } from "./common/filters/http-exception.filter.js";
 import { TenantMiddleware } from "./common/middleware/tenant.middleware.js";
@@ -44,6 +45,7 @@ import { WebhookDispatchModule } from "./webhook-dispatch/webhook-dispatch.modul
     CatalogModule,
     CrmModule,
     BookingModule,
+    BranchModule,
     AgreementsModule,
     FinanceModule,
     PaymentsModule,

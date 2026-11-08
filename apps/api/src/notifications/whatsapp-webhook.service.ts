@@ -1,7 +1,17 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { createHmac } from "node:crypto";
 
-import { findOrganizationIdByPhoneNumberId, resolveAutoReply, resolveMessagingConfig, secretsMatch } from "@rentos/database";
+import {
+  claimAutoReply,
+  findOrganizationIdByPhoneNumberId,
+  outboundBlock,
+  recordSuppressed,
+  releaseAutoReplyClaim,
+  resolveAutoReply,
+  resolveMessagingConfig,
+  secretsMatch,
+} from "@rentos/database";
+import { renderAutoReply, type BranchContact } from "@rentos/domain";
 
 import { MESSAGING_PROVIDERS, type MessagingProviderRegistry } from "./messaging-provider.interface.js";
 
@@ -287,23 +297,23 @@ export class WhatsAppWebhookService {
     // knows this phone number. Meta strips the leading +, and customers are
     // stored with it, so both spellings are tried.
     const candidates = [message.from, `+${message.from.replace(/^\+/, "")}`];
+    // Every branch that knows this number — the auto-reply points a customer
+    // of exactly one branch at that branch's CS (PRD go-live §9.4).
+    const matches: Array<{ tenantId: string; customerId: string }> = [];
     for (const tenantId of tenantIds) {
       const customer = await this.prisma.runInTenantContext(tenantId, (tx) =>
         tx.customer.findFirst({ where: { phone: { in: candidates } }, select: { id: true } }),
       );
-      if (!customer) continue;
-      const saved = await this.saveInbound(tenantId, customer.id, message, text, profileName);
-      if (saved) await this.autoReply(tenantId, message.from);
-      return;
+      if (customer) matches.push({ tenantId, customerId: customer.id });
     }
 
-    // An unrecognised number still leaves a trail, on the organization's first
-    // branch, rather than being dropped.
-    const fallback = tenantIds[0];
-    if (fallback) {
-      const saved = await this.saveInbound(fallback, null, message, text, profileName);
-      if (saved) await this.autoReply(fallback, message.from);
-    }
+    // The message is recorded once, on the first branch that knows the number;
+    // an unrecognised number still leaves a trail on the organization's first
+    // branch rather than being dropped.
+    const home = matches[0] ?? (tenantIds[0] ? { tenantId: tenantIds[0], customerId: null } : null);
+    if (!home) return;
+    const saved = await this.saveInbound(home.tenantId, home.customerId, message, text, profileName);
+    if (saved) await this.autoReply(home.tenantId, message.from, tenantIds, matches.length === 1 ? matches[0]!.tenantId : null);
   }
 
   /**
@@ -314,18 +324,50 @@ export class WhatsAppWebhookService {
    * answering one right now, so this works before a single template has been
    * approved.
    *
-   * Only fires for a message we actually recorded, so Meta's redeliveries do not
+   * PRD go-live §9.2 — at most once per number per cooldown (default 12h), and
+   * not at all while a human answered within that cooldown. The claim is one
+   * atomic statement, so three messages inside a minute produce one reply even
+   * when their webhooks race. Outbound echoes (messages the number's owner
+   * typed on the phone) never get here: the bridge drops IsFromMe, and Meta
+   * reports our own sends as statuses, not messages.
+   *
+   * PRD go-live §9.1 — while messaging is paused the reply is recorded as
+   * SUPPRESSED instead of sent.
+   *
+   * Only fires for a message we actually recorded, so redeliveries do not
    * produce a reply each time. A failure here is logged and swallowed: an
    * unanswered message is better than a webhook that errors and gets retried
    * into a loop.
    */
-  private async autoReply(tenantId: string, to: string): Promise<void> {
+  private async autoReply(tenantId: string, to: string, orgTenantIds: string[], soleBranchTenantId: string | null): Promise<void> {
     try {
       const reply = await resolveAutoReply(this.prisma.raw, tenantId);
       if (!reply) return;
 
+      if (!(await claimAutoReply(this.prisma.raw, reply.organizationId, to, reply.cooldownHours))) {
+        this.logger.log(`Auto-reply to ${to} skipped — within the ${reply.cooldownHours}h cooldown or a person replied recently.`);
+        return;
+      }
+
+      const text = await this.renderAutoReplyText(reply.text, orgTenantIds, soleBranchTenantId);
+
+      const blocked = await outboundBlock(this.prisma.raw, tenantId);
+      if (blocked) {
+        await this.prisma.runInTenantContext(tenantId, (tx) =>
+          recordSuppressed(tx, { tenantId, channel: "WHATSAPP", templateKey: "auto_reply", recipient: to, payload: { text }, reason: blocked }),
+        );
+        return;
+      }
+
       const config = await resolveMessagingConfig(this.prisma.raw, tenantId);
-      const result = await this.providers[config.provider].sendText({ to, text: reply.text }, config);
+      let result;
+      try {
+        result = await this.providers[config.provider].sendText({ to, text }, config);
+      } catch (err) {
+        // Give the slot back so the customer's next message can be answered.
+        await releaseAutoReplyClaim(this.prisma.raw, reply.organizationId, to);
+        throw err;
+      }
 
       await this.prisma.runInTenantContext(tenantId, (tx) =>
         tx.notification.create({
@@ -335,7 +377,7 @@ export class WhatsAppWebhookService {
             templateKey: "auto_reply",
             recipientRole: "CUSTOMER",
             recipient: to,
-            payload: { text: reply.text },
+            payload: { text },
             status: "SENT",
             providerRef: result.providerRef,
             sentAt: new Date(),
@@ -345,6 +387,20 @@ export class WhatsAppWebhookService {
     } catch (err) {
       this.logger.error(`Auto-reply to ${to} failed: ${(err as Error).message}`);
     }
+  }
+
+  /** PRD go-live §9.4 — fill {branchName}/{branchWhatsapp}/{branchPhone}/{allBranches} from Settings → Branch. */
+  private async renderAutoReplyText(template: string, orgTenantIds: string[], soleBranchTenantId: string | null): Promise<string> {
+    const tenants = await this.prisma.raw.tenant.findMany({
+      where: { id: { in: orgTenantIds } },
+      select: { id: true, name: true, contact: true },
+      orderBy: { name: "asc" },
+    });
+    const branches: BranchContact[] = tenants.map((t) => {
+      const c = (t.contact ?? {}) as { whatsapp?: string; whatsappDisplay?: string; phone?: string };
+      return { id: t.id, name: t.name, whatsapp: c.whatsappDisplay ?? c.whatsapp ?? null, phone: c.phone ?? null };
+    });
+    return renderAutoReply(template, branches, soleBranchTenantId);
   }
 
   /** The attachment id and caption for a media message, so the inbox can label it. Downloading is out of scope. */

@@ -184,6 +184,7 @@ type Status struct {
 }
 
 func (inst *Instance) Status() Status {
+	sent := inst.sentToday(context.Background()) // a DB read; not under inst.mu
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
 	s := Status{ID: inst.id, State: inst.state, Detail: inst.detail, DailyCap: inst.mgr.cfg.DailyCap}
@@ -196,7 +197,7 @@ func (inst *Instance) Status() Status {
 		expires := inst.pairExpires
 		s.PairExpiresAt = &expires
 	}
-	s.SentToday = inst.send.countToday()
+	s.SentToday = sent
 	return s
 }
 

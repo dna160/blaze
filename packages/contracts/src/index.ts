@@ -11,3 +11,4 @@ export * from "./platform-api.js";
 export * from "./ota-sync.js";
 export * from "./platform-admin.js";
 export * from "./automation.js";
+export * from "./branch.js";

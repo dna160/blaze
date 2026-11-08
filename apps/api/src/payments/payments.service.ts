@@ -11,6 +11,7 @@ import { STORAGE_PROVIDER, type StorageProvider } from "../storage/storage-provi
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 import { WebhookDispatcherService } from "../webhook-dispatch/webhook-dispatch.service.js";
 
+import { onlinePaymentsStatus } from "./online-payments.js";
 import { PAYMENT_PROVIDER, type PaymentMethodValue, type PaymentProvider } from "./payment-provider.interface.js";
 
 const ALLOWED_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
@@ -30,6 +31,14 @@ export class PaymentsService {
 
   /** Storefront checkout (PRD §7.1.3). */
   async initiate(tenant: ResolvedTenant, invoiceId: string, method: PaymentMethodValue) {
+    const online = onlinePaymentsStatus(tenant.featureFlags);
+    if (!online.enabled) {
+      throw new ConflictException({
+        code: "ONLINE_PAYMENTS_DISABLED",
+        reason: online.reason,
+        message: "Online payment is not available for this branch. Please pay by bank transfer and send the proof to our WhatsApp CS.",
+      });
+    }
     const invoice = await this.prisma.runInTenantContext(tenant.id, (tx) =>
       tx.invoice.findUnique({ where: { id: invoiceId } }),
     );
