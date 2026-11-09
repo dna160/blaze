@@ -19,6 +19,7 @@ Secrets are referenced **by name only**. Values live in Railway, never in git or
 | B4 | **Numbering**: keep `KBJ-` in front, or continue exactly as Booqable (`5-2026-36-39`)? | Client (§16 Q1) | Settings → Branch → numbering |
 | B5 | **PKP**: does Kebon Jeruk charge PPN from go-live? Seeded `isPkp=false`. | Finance (§16 Q2) | Settings → Branch |
 | B6 | **Storefront domain** (e.g. `sewa.citystorage.co.id`). | Client (§16 Q9) | `tenant_domains`, step 9 |
+| B7 | **The phone that owns the City Storage system number**, to re-pair it under production (it is paired under the `gudang-aman` demo tenant today). | Client | step 6 |
 
 Open but not blocking: Free Style pooled vs fixed units (Q3 — the three Free Style
 types are seeded **unpublished**), zone of unit 38 and units 92–100 (Q5), inbox access
@@ -77,7 +78,9 @@ explicitly.
 `WA_BRIDGE_TOKEN`, `WA_BRIDGE_DATABASE_URL` (owner role), `WA_BRIDGE_WEBHOOK_URL`
 (`https://<api>/api/notifications/wa-bridge/webhook`), `WA_BRIDGE_MIN_GAP_MS=3000`,
 `WA_BRIDGE_DAILY_CAP=1000`, `WA_BRIDGE_TZ=Asia/Jakarta`. The daily count now lives in
-`wa.daily_send_counts` and survives restarts.
+`wa.daily_send_counts` and survives restarts. One bridge per environment: the
+production bridge stores its sessions in the production database and calls back the
+production API (step 6 — the City Storage number moves there).
 
 ### apps/storefront (build-time)
 `NEXT_PUBLIC_API_URL`. **Remove `NEXT_PUBLIC_DEV_TENANT_SLUG`** once the domain is
@@ -142,7 +145,41 @@ pnpm import:units --tenant city-storage-kebon-jeruk --file kebon-jeruk-units.csv
    Re-run with `--apply` when it reports zero errors (or use Console → Inventory →
    Import units). It never deletes.
 
-## 6. Messaging
+## 6. Messaging — the City Storage system number
+
+**The WhatsApp number currently paired under the `gudang-aman` demo tenant is City
+Storage's own system number** — the one admin number every branch sends from
+(contracts, invoices, sign-in links, reminders; PRD go-live §9). It is not a demo
+number. Two consequences:
+
+- **Today, demo traffic goes out from City Storage's real number.** Anything the demo
+  tenant triggers on the current database (approvals, dunning, sign-in links,
+  auto-replies) reaches real WhatsApp users from it, and cold-messaging the seeded
+  fake numbers is how a linked number gets banned. Until the move below, keep the
+  demo organization paused: log in as a Gudang Aman org admin → Settings →
+  Messaging → **Pause messaging**.
+- **The pairing does not follow the data.** The linked device is keyed by
+  organization id in the bridge's `wa` schema (`wa.rentos_instances`), so the new
+  production City Storage organization starts unpaired. Move it by re-pairing:
+
+1. Production gets **its own** wa-bridge service: `WA_BRIDGE_DATABASE_URL` = the
+   production database, `WA_BRIDGE_WEBHOOK_URL` = the production API. Staging keeps
+   `MESSAGING_PROVIDER=console_log` and no bridge variables from then on.
+2. Production console, as the Super Admin → Settings → Messaging → linked device →
+   enter the system number → **Get pairing code**. On the phone that owns the number:
+   WhatsApp → Linked devices → Link a device → *Link with phone number instead* →
+   type the code. The state moves to *connected*; send a test message to a staff phone.
+3. Staging console (Gudang Aman org admin) → Settings → Messaging → **Unlink**, so the
+   old linked device is logged out. Check on the phone (Linked devices) that only the
+   production link remains.
+4. Re-enter the auto-reply text and cooldown in production — they were saved on the
+   demo organization and do not carry over.
+
+The system number and the branch CS numbers are different jobs: customers reply to
+their branch's CS (Settings → Branch → contacts), which is what `{branchWhatsapp}`
+in the auto-reply points to. If the system number is also a branch's CS number, the
+default auto-reply would tell people to message the number they are already
+messaging — write that branch's text without `{branchWhatsapp}`.
 
 Pair the admin WhatsApp number in Settings → Messaging (org-scoped Admin only). Set the
 auto-reply text, e.g. the default in `@rentos/domain` `DEFAULT_AUTO_REPLY_TEXT`, using

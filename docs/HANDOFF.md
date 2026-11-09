@@ -1801,6 +1801,12 @@ Data pack (client materials of 2026-11-08): `packages/database/prisma/data/kebon
   Console endpoints: `POST /catalog/assets/import`, `POST /users/import`,
   `POST /auth/staff/set-password`.
 
+**WhatsApp number (owner, 2026-11-09):** the number paired under the `gudang-aman`
+demo tenant is City Storage's organization-wide system number, not a demo number.
+Demo traffic on the current database therefore sends from the real number — keep
+that org paused — and the production City Storage org must re-pair it (pairing is
+keyed by organization id in `wa.rentos_instances`). Steps: RUNBOOK-GO-LIVE §6.
+
 **Still open (P1/P2, not built):** PPh settlement net of withholding and partial
 payments (§8.4 — the PDF breakdown exists behind `Organization.taxConfig.pphWithholdingEnabled`,
 off until finance's worked examples), reports date-range presets + XLSX + AR-aging
