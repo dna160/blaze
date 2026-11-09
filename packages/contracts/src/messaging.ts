@@ -17,6 +17,8 @@ export const MessagingConfigResponseSchema = z.object({
   autoReplyText: z.string().nullable(),
   /** PRD go-live §9.2 — one auto-reply per number per this many hours. */
   autoReplyCooldownHours: z.number(),
+  /** The organization's system number (E.164): sends every customer message, never a branch CS contact. */
+  systemWhatsapp: z.string().nullable(),
   /** PRD go-live §9.1 — the organization's outbound kill switch. */
   pause: z.object({
     paused: z.boolean(),
@@ -46,6 +48,12 @@ export const UpdateMessagingConfigRequestSchema = z
     autoReplyEnabled: z.boolean().optional(),
     autoReplyText: z.string().trim().max(1000).nullable().optional(),
     autoReplyCooldownHours: z.number().min(1).max(24 * 14).nullable().optional(),
+    systemWhatsapp: z
+      .string()
+      .trim()
+      .regex(/^\+\d{8,15}$/, "E.164, e.g. +628111877838")
+      .nullable()
+      .optional(),
     /** Omit to keep the stored token; send a new value to replace it. Never returned by any read. */
     accessToken: z.string().trim().min(20).max(1024).nullable().optional(),
   })

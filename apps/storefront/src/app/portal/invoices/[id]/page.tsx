@@ -211,11 +211,27 @@ export default function InvoiceDetailPage() {
               {copied === invoice.invoiceNumber ? "Tersalin / Copied" : invoice.invoiceNumber}
             </button>
           </div>
-          {proofLink && (
+          {proofLink ? (
             <a href={proofLink} target="_blank" rel="noreferrer" className="block w-full rounded bg-green-600 py-2 text-center font-medium text-white hover:bg-green-700">
               Kirim bukti transfer ke WhatsApp CS / Send proof to WhatsApp CS
             </a>
-          )}
+          ) : profile?.contact.phone || profile?.contact.email ? (
+            // No CS WhatsApp on file: the system number that sent this link only notifies, so point at the CS phone/email.
+            <p className="rounded-lg border border-brand-600/10 p-3 text-sm text-brand-700/80">
+              Kirim bukti transfer ke CS kami / Send the transfer proof to our CS:{" "}
+              {profile.contact.phone && (
+                <a href={`tel:${profile.contact.phone.replace(/[^\d+]/g, "")}`} className="underline">
+                  {profile.contact.phone}
+                </a>
+              )}
+              {profile.contact.phone && profile.contact.email ? " · " : ""}
+              {profile.contact.email && (
+                <a href={`mailto:${profile.contact.email}?subject=${encodeURIComponent(`Bukti transfer ${invoice.invoiceNumber}`)}`} className="underline">
+                  {profile.contact.email}
+                </a>
+              )}
+            </p>
+          ) : null}
           {error && <p className="text-sm text-amber-700">{error}</p>}
           <p className="text-xs text-brand-700/60">
             Invoice ditandai lunas setelah tim kami memverifikasi transfer Anda. / The invoice is marked paid once our team has verified your transfer.

@@ -3,6 +3,8 @@
   "organization": {
     "legalName": "PT Servis Storej Indonesia",
     "brandName": "City Storage",
+    "systemWhatsapp": "+628111877838",
+    "systemWhatsapp_note": "Owner, 2026-11-09: the organization-wide system number. Every customer message, for every branch, is sent from it (linked device). It is NOT a branch CS contact and must not be listed as one.",
     "note": "Seed currently says 'PT City Storage Indonesia' - replace with the legal entity above"
   },
   "tenant": {
@@ -26,9 +28,11 @@
       "coords_note": "Fill from Google Maps pin before go-live (storefront map)"
     },
     "customerService": {
-      "whatsapp": "+628111877838",
+      "whatsapp": null,
+      "whatsapp_note": "The quotation's WhatsApp +628111877838 is the system number (see organization.systemWhatsapp). The CS contact on the website is different - fill in Settings -> Branch.",
       "phone": "+62 21 3006 7838",
-      "email": "cs@citystorage.co.id"
+      "email": "cs@citystorage.co.id",
+      "phone_email_note": "From the quotation - confirm they match the CS contact on the website."
     },
     "operatingHours": {
       "days": "Mon-Fri excl. national holidays",

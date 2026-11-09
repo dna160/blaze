@@ -1801,8 +1801,14 @@ Data pack (client materials of 2026-11-08): `packages/database/prisma/data/kebon
   Console endpoints: `POST /catalog/assets/import`, `POST /users/import`,
   `POST /auth/staff/set-password`.
 
-**WhatsApp number (owner, 2026-11-09):** the number paired under the `gudang-aman`
-demo tenant is City Storage's organization-wide system number, not a demo number.
+**WhatsApp number (owner, 2026-11-09):** +62 811-1877-838 is City Storage's
+organization-wide system number — every customer message for every branch is sent
+from it — and is NOT a CS contact (the website's CS numbers differ). Stored as
+`messagingConfig.systemWhatsapp` (seeded; Settings → Messaging); Settings → Branch
+refuses it as a CS WhatsApp; the auto-reply drops it and offers `{branchContact}`
+(CS WhatsApp → phone → email). Kebon Jeruk's CS WhatsApp is empty until the client
+gives it. It is currently paired under the `gudang-aman`
+demo tenant, not a demo number.
 Demo traffic on the current database therefore sends from the real number — keep
 that org paused — and the production City Storage org must re-pair it (pairing is
 keyed by organization id in `wa.rentos_instances`). Steps: RUNBOOK-GO-LIVE §6.

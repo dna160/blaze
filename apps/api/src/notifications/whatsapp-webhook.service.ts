@@ -3,7 +3,9 @@ import { createHmac } from "node:crypto";
 
 import {
   claimAutoReply,
+  contactKey,
   findOrganizationIdByPhoneNumberId,
+  organizationSystemNumber,
   outboundBlock,
   recordSuppressed,
   releaseAutoReplyClaim,
@@ -393,12 +395,21 @@ export class WhatsAppWebhookService {
   private async renderAutoReplyText(template: string, orgTenantIds: string[], soleBranchTenantId: string | null): Promise<string> {
     const tenants = await this.prisma.raw.tenant.findMany({
       where: { id: { in: orgTenantIds } },
-      select: { id: true, name: true, contact: true },
+      select: { id: true, name: true, contact: true, organizationId: true },
       orderBy: { name: "asc" },
     });
+    // The reply is sent FROM the system number; never tell anyone to contact it.
+    const system = tenants[0] ? await organizationSystemNumber(this.prisma.raw, tenants[0].organizationId) : null;
     const branches: BranchContact[] = tenants.map((t) => {
-      const c = (t.contact ?? {}) as { whatsapp?: string; whatsappDisplay?: string; phone?: string };
-      return { id: t.id, name: t.name, whatsapp: c.whatsappDisplay ?? c.whatsapp ?? null, phone: c.phone ?? null };
+      const c = (t.contact ?? {}) as { whatsapp?: string; whatsappDisplay?: string; phone?: string; email?: string };
+      const isSystem = Boolean(system && c.whatsapp && contactKey(c.whatsapp) === system);
+      return {
+        id: t.id,
+        name: t.name,
+        whatsapp: isSystem ? null : (c.whatsappDisplay ?? c.whatsapp ?? null),
+        phone: c.phone ?? null,
+        email: c.email ?? null,
+      };
     });
     return renderAutoReply(template, branches, soleBranchTenantId);
   }

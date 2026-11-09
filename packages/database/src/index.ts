@@ -70,6 +70,7 @@ export {
   releaseAutoReplyClaim,
   markHumanReply,
   contactKey,
+  organizationSystemNumber,
   DEFAULT_AUTO_REPLY_COOLDOWN_HOURS,
   findOrganizationIdByPhoneNumberId,
   getMessagingConfigView,

@@ -18,6 +18,7 @@ interface MessagingConfig {
   autoReplyEnabled: boolean;
   autoReplyText: string | null;
   autoReplyCooldownHours: number;
+  systemWhatsapp: string | null;
   pause: { paused: boolean; reason: string | null; pausedAt: string | null; pausedByUserId: string | null };
   accessTokenHint: string | null;
   hasAccessToken: boolean;
@@ -74,6 +75,7 @@ export default function MessagingSettingsPage() {
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
   const [autoReplyText, setAutoReplyText] = useState("");
   const [cooldownHours, setCooldownHours] = useState("12");
+  const [systemWhatsapp, setSystemWhatsapp] = useState("");
 
   const [pauseReason, setPauseReason] = useState("");
   const [pauseBusy, setPauseBusy] = useState(false);
@@ -92,6 +94,7 @@ export default function MessagingSettingsPage() {
       setAutoReplyEnabled(data.autoReplyEnabled);
       setAutoReplyText(data.autoReplyText ?? "");
       setCooldownHours(String(data.autoReplyCooldownHours ?? 12));
+      setSystemWhatsapp(data.systemWhatsapp ?? "");
       setError(null);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) return router.push("/login");
@@ -120,6 +123,7 @@ export default function MessagingSettingsPage() {
           autoReplyEnabled,
           autoReplyText: autoReplyText.trim() || null,
           autoReplyCooldownHours: Number(cooldownHours) > 0 ? Number(cooldownHours) : null,
+          systemWhatsapp: systemWhatsapp.trim() || null,
           // Blank means "keep what's stored" — the token is never sent back to
           // the browser, so an empty field can't mean "clear it".
           ...(accessToken.trim() ? { accessToken: accessToken.trim() } : {}),
@@ -390,9 +394,9 @@ export default function MessagingSettingsPage() {
               />
               <span className="mt-1 block text-xs text-slate-500">
                 Placeholders, filled from Settings → Branch: <code>{"{branchName}"}</code>, <code>{"{branchWhatsapp}"}</code>,{" "}
-                <code>{"{branchPhone}"}</code> — the customer&apos;s own branch, or the first branch for an unknown number — and{" "}
+                <code>{"{branchPhone}"}</code>, <code>{"{branchContact}"}</code> (CS WhatsApp, else phone, else email) — the customer&apos;s own branch, or the first branch for an unknown number — and{" "}
                 <code>{"{allBranches}"}</code>, one &ldquo;Branch: WA … · Tel …&rdquo; line per branch. Example: &ldquo;Halo! Nomor ini hanya
-                untuk notifikasi otomatis. Untuk pertanyaan, hubungi CS {"{branchName}"} di WhatsApp {"{branchWhatsapp}"}.&rdquo;
+                untuk notifikasi otomatis. Untuk pertanyaan, hubungi CS {"{branchName}"}: {"{branchContact}"}.&rdquo;
               </span>
             </label>
 
@@ -408,6 +412,21 @@ export default function MessagingSettingsPage() {
                 className="mt-1 w-32 rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
               />
               <span className="mt-1 block text-xs text-slate-500">At most one automatic reply per number in this window. Default 12.</span>
+            </label>
+
+            <label className="block text-sm">
+              <span className="text-slate-700">System number (E.164)</span>
+              <input
+                value={systemWhatsapp}
+                onChange={(e) => setSystemWhatsapp(e.target.value)}
+                placeholder="+628111877838"
+                disabled={!canEdit}
+                className="mt-1 w-56 rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
+              />
+              <span className="mt-1 block text-xs text-slate-500">
+                The one number every customer message is sent from, for all branches. It only notifies: it cannot be saved as a
+                branch&apos;s CS contact, and the auto-reply never points customers back to it.
+              </span>
             </label>
 
             <button type="submit" disabled={busy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">

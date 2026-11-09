@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import type { BankAccount, BranchPublicProfile, BranchSettings, UpdateBranchSettingsRequest } from "@rentos/contracts";
-import { formatDocumentNumber, resolveNumbering, zonedYearMonth, type Prisma } from "@rentos/database";
+import { contactKey, formatDocumentNumber, organizationSystemNumber, resolveNumbering, zonedYearMonth, type Prisma } from "@rentos/database";
 import { can, hasOrganizationScope } from "@rentos/domain";
 
 import { AuditService } from "../audit/audit.service.js";
@@ -113,6 +113,15 @@ export class BranchService {
         select: { name: true },
       });
       if (clash) throw new BadRequestException(`Branch code ${body.branchCode} is already used by ${clash.name}.`);
+    }
+    // Owner, 2026-11-09: the organization's system number sends every customer
+    // message for every branch; customers who answer it get the auto-reply. Listing
+    // it as a branch's CS contact would send people in a circle.
+    const system = await organizationSystemNumber(this.prisma.raw, before.organizationId);
+    if (system && body.contact?.whatsapp && contactKey(body.contact.whatsapp) === system) {
+      throw new BadRequestException(
+        "That is the organization's system number — it only sends notifications. Enter the WhatsApp number customers should contact this branch's CS on.",
+      );
     }
     if (body.onlinePaymentsEnabled === true && !gatewayReady()) {
       throw new BadRequestException(

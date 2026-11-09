@@ -471,8 +471,15 @@ export function renderInvoicePdf(input: InvoicePdfInput): Promise<Buffer> {
           doc.text(`Atau bayar online / Or pay online: ${pdfText(input.portalUrl)}`, M, y, { width: CONTENT_W });
           y = doc.y + 6;
         }
+        const cs = input.branch.whatsapp
+          ? `WhatsApp CS ${input.branch.whatsapp}`
+          : input.branch.phone
+            ? `CS ${input.branch.phone}${input.branch.email ? ` / ${input.branch.email}` : ""}`
+            : input.branch.email
+              ? `CS ${input.branch.email}`
+              : "CS kami / our CS";
         doc.font("Helvetica").fontSize(7.5).fillColor(GREY).text(
-          `Mohon cantumkan nomor invoice pada berita transfer dan kirim bukti transfer ke WhatsApp CS${input.branch.whatsapp ? ` ${pdfText(input.branch.whatsapp)}` : ""}. / Please quote the invoice number and send the transfer proof to our WhatsApp CS.`,
+          `Mohon cantumkan nomor invoice pada berita transfer dan kirim bukti transfer ke ${pdfText(cs)}. / Please quote the invoice number and send the transfer proof to ${pdfText(cs)}.`,
           M,
           y,
           { width: CONTENT_W },

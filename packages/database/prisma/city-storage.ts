@@ -24,7 +24,7 @@ export { parseCsv };
 export const DATA_DIR = path.join(__dirname, "data", "kebon-jeruk");
 
 interface BranchProfile {
-  organization: { legalName: string; brandName: string };
+  organization: { legalName: string; brandName: string; systemWhatsapp?: string | null };
   tenant: {
     slug: string;
     branchCode: string;
@@ -33,7 +33,7 @@ interface BranchProfile {
     defaultLocale: string;
     isPkp: boolean;
     location: { name: string; addressLines: string[]; latitude: number | null; longitude: number | null };
-    customerService: { whatsapp: string; phone: string; email: string };
+    customerService: { whatsapp: string | null; phone: string; email: string };
     operatingHours: Record<string, string>;
     bankAccounts: Array<{ bank: string; accountNumber: string; accountName: string; swift?: string; showOnInvoice: boolean }>;
     facilities: string[];
@@ -103,6 +103,19 @@ export async function bootstrapCityStorage(prisma: PrismaClient, opts: { mode: "
     },
   });
 
+  // The organization-wide system number (owner, 2026-11-09): every customer
+  // message is sent from it. Kept with the messaging config so Settings →
+  // Branch can refuse it as a CS contact and the auto-reply never points at it.
+  if (profile.organization.systemWhatsapp) {
+    const current = (org.messagingConfig ?? {}) as Record<string, unknown>;
+    if (current.systemWhatsapp !== profile.organization.systemWhatsapp) {
+      await prisma.organization.update({
+        where: { id: org.id },
+        data: { messagingConfig: { ...current, systemWhatsapp: profile.organization.systemWhatsapp } as Prisma.InputJsonValue },
+      });
+    }
+  }
+
   const featureFlags: Prisma.InputJsonValue = {
     deposits_enabled: true,
     kyc_required: true,
@@ -126,8 +139,9 @@ export async function bootstrapCityStorage(prisma: PrismaClient, opts: { mode: "
     defaultLocale: t.defaultLocale,
     timezone: t.timezone,
     contact: {
+      // Never the system number (organization.systemWhatsapp): that one only sends.
       whatsapp: t.customerService.whatsapp,
-      whatsappDisplay: prettyPhone(t.customerService.whatsapp),
+      whatsappDisplay: t.customerService.whatsapp ? prettyPhone(t.customerService.whatsapp) : null,
       phone: t.customerService.phone,
       email: t.customerService.email,
       csDisplayName: `CS ${t.name}`,

@@ -199,10 +199,10 @@ export default function BranchSettingsPage() {
 
           <Section title="Customer service contacts" description="Printed in the document header; the auto-reply uses the WhatsApp number.">
             <div className="grid gap-3 md:grid-cols-2">
-              <Field label="WhatsApp (E.164)" hint="e.g. +628111877838">
+              <Field label="CS WhatsApp (E.164)" hint="The branch's own CS number, as on the website — not the system number that sends notifications.">
                 <input value={form.contact.whatsapp ?? ""} onChange={(e) => set("contact", { ...form.contact, whatsapp: e.target.value })} className={input} />
               </Field>
-              <Field label="WhatsApp as printed" hint="e.g. +62 811-1877-838">
+              <Field label="CS WhatsApp as printed" hint="e.g. +62 812-3456-7890">
                 <input value={form.contact.whatsappDisplay ?? ""} onChange={(e) => set("contact", { ...form.contact, whatsappDisplay: e.target.value })} className={input} />
               </Field>
               <Field label="Phone">

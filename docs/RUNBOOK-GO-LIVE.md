@@ -19,6 +19,7 @@ Secrets are referenced **by name only**. Values live in Railway, never in git or
 | B4 | **Numbering**: keep `KBJ-` in front, or continue exactly as Booqable (`5-2026-36-39`)? | Client (§16 Q1) | Settings → Branch → numbering |
 | B5 | **PKP**: does Kebon Jeruk charge PPN from go-live? Seeded `isPkp=false`. | Finance (§16 Q2) | Settings → Branch |
 | B6 | **Storefront domain** (e.g. `sewa.citystorage.co.id`). | Client (§16 Q9) | `tenant_domains`, step 9 |
+| B8 | **Kebon Jeruk's CS contact as shown on the website** (WhatsApp, and confirm phone 021-300 67838 / `cs@citystorage.co.id`). The data pack's WhatsApp, +62 811-1877-838, is the system number, so the branch has no CS WhatsApp until this is entered. | Client | Settings → Branch → contacts |
 | B7 | **The phone that owns the City Storage system number**, to re-pair it under production (it is paired under the `gudang-aman` demo tenant today). | Client | step 6 |
 
 Open but not blocking: Free Style pooled vs fixed units (Q3 — the three Free Style
@@ -147,10 +148,15 @@ pnpm import:units --tenant city-storage-kebon-jeruk --file kebon-jeruk-units.csv
 
 ## 6. Messaging — the City Storage system number
 
-**The WhatsApp number currently paired under the `gudang-aman` demo tenant is City
-Storage's own system number** — the one admin number every branch sends from
-(contracts, invoices, sign-in links, reminders; PRD go-live §9). It is not a demo
-number. Two consequences:
+**+62 811-1877-838 is City Storage's system number** (owner, 2026-11-09): every
+customer message, for every branch, is sent from it (contracts, invoices, sign-in
+links, reminders, auto-replies; PRD go-live §9). It is **not** a CS contact — the
+branches' CS contacts on the website are different numbers. RentOS stores it as the
+organization's system number (Settings → Messaging; seeded from the data pack),
+refuses it as a branch CS WhatsApp in Settings → Branch, and the auto-reply never
+points customers back to it.
+
+It is currently paired under the `gudang-aman` demo tenant. Two consequences:
 
 - **Today, demo traffic goes out from City Storage's real number.** Anything the demo
   tenant triggers on the current database (approvals, dunning, sign-in links,
@@ -175,11 +181,10 @@ number. Two consequences:
 4. Re-enter the auto-reply text and cooldown in production — they were saved on the
    demo organization and do not carry over.
 
-The system number and the branch CS numbers are different jobs: customers reply to
-their branch's CS (Settings → Branch → contacts), which is what `{branchWhatsapp}`
-in the auto-reply points to. If the system number is also a branch's CS number, the
-default auto-reply would tell people to message the number they are already
-messaging — write that branch's text without `{branchWhatsapp}`.
+Customers who reply to the system number get the auto-reply, which points them to
+their branch's CS: use `{branchContact}` (CS WhatsApp, else phone, else email), as in
+`DEFAULT_AUTO_REPLY_TEXT`. Until Kebon Jeruk's CS WhatsApp is entered (B8) it falls
+back to the CS phone.
 
 Pair the admin WhatsApp number in Settings → Messaging (org-scoped Admin only). Set the
 auto-reply text, e.g. the default in `@rentos/domain` `DEFAULT_AUTO_REPLY_TEXT`, using

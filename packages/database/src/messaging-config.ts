@@ -62,6 +62,8 @@ export interface MessagingConfigView {
   autoReplyText: string | null;
   /** PRD go-live §9.2 — at most one auto-reply per number per this many hours. */
   autoReplyCooldownHours: number;
+  /** The organization's system number (E.164) — sends everything, is never a branch CS contact. */
+  systemWhatsapp: string | null;
   /** Last 4 characters of the saved token, so staff can tell which one is loaded. */
   accessTokenHint: string | null;
   hasAccessToken: boolean;
@@ -81,6 +83,8 @@ interface StoredConfig {
   autoReplyEnabled?: boolean;
   autoReplyText?: string;
   autoReplyCooldownHours?: number;
+  /** E.164 — the organization's system number, every customer message is sent from it (not a CS contact). */
+  systemWhatsapp?: string;
   /** AES-256-GCM, "<iv-hex>:<tag-hex>:<ciphertext-hex>". */
   accessTokenSealed?: string;
   updatedAt?: string;
@@ -283,6 +287,7 @@ export async function getMessagingConfigView(prisma: PrismaClient, organizationI
     autoReplyEnabled: stored.autoReplyEnabled ?? false,
     autoReplyText: stored.autoReplyText ?? null,
     autoReplyCooldownHours: autoReplyCooldownHours(stored),
+    systemWhatsapp: stored.systemWhatsapp ?? null,
     accessTokenHint: stored.accessTokenHint ?? null,
     hasAccessToken: Boolean(stored.accessTokenSealed),
     updatedAt: stored.updatedAt ?? null,
@@ -299,6 +304,7 @@ export interface MessagingConfigUpdate {
   autoReplyEnabled?: boolean;
   autoReplyText?: string | null;
   autoReplyCooldownHours?: number | null;
+  systemWhatsapp?: string | null;
   /** Omit to keep the stored token; pass a new one to replace it. */
   accessToken?: string | null;
 }
@@ -318,6 +324,7 @@ export async function saveMessagingConfig(
     autoReplyEnabled: update.autoReplyEnabled ?? existing.autoReplyEnabled,
     autoReplyText: update.autoReplyText ?? existing.autoReplyText,
     autoReplyCooldownHours: update.autoReplyCooldownHours ?? existing.autoReplyCooldownHours,
+    systemWhatsapp: update.systemWhatsapp === undefined ? existing.systemWhatsapp : (update.systemWhatsapp ?? undefined),
     updatedAt: new Date().toISOString(),
     updatedByUserId,
   };
@@ -334,4 +341,10 @@ export async function saveMessagingConfig(
     data: { messagingConfig: next as unknown as Prisma.InputJsonValue },
   });
   return getMessagingConfigView(prisma, organizationId);
+}
+
+/** The organization's system number (digits only), or null. Organizations sit outside RLS. */
+export async function organizationSystemNumber(prisma: PrismaClient, organizationId: string): Promise<string | null> {
+  const n = (await readStoredConfig(prisma, organizationId)).systemWhatsapp;
+  return n ? contactKey(n) || null : null;
 }
