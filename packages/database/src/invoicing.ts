@@ -117,7 +117,7 @@ async function persistInvoiceCore(
   options: PersistInvoiceOptions = {},
 ) {
   const isScheduled = Boolean(options.scheduled);
-  const invoiceNumber = isScheduled ? options.scheduled!.provisionalNumber : await nextInvoiceNumber(tx, tenantId, tenantSlug, owner.customerId);
+  const invoiceNumber = isScheduled ? options.scheduled!.provisionalNumber : await nextInvoiceNumber(tx, tenantId, tenantSlug, owner.customerId, owner);
   const issueDate = isScheduled ? options.scheduled!.issueDate : new Date();
   const dueDate = isScheduled ? options.scheduled!.dueDate : (options.dueDate ?? dueDateFor(issueDate));
   const status = isScheduled ? "SCHEDULED" : (await invoiceFsm.fire("SCHEDULED", "ISSUE", undefined)).to;
@@ -192,7 +192,7 @@ export async function issueScheduledInvoice(tx: Prisma.TransactionClient, tenant
   const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, include: { lines: true } });
   if (invoice.status !== "SCHEDULED") return invoice;
 
-  const invoiceNumber = await nextInvoiceNumber(tx, tenantId, tenantSlug, invoice.customerId);
+  const invoiceNumber = await nextInvoiceNumber(tx, tenantId, tenantSlug, invoice.customerId, invoice);
   const { to: status } = await invoiceFsm.fire("SCHEDULED", "ISSUE", undefined);
   const issued = await tx.invoice.update({
     where: { id: invoiceId },

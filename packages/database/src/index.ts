@@ -7,6 +7,9 @@ export { withOrgReadContext, InvalidOrganizationIdError } from "./org-context.js
 export { nextInvoiceNumber } from "./invoice-number.js";
 export {
   nextDocumentNumber,
+  nextDocumentNumberWithSeq,
+  contractSeqFor,
+  zonedDate,
   formatDocumentNumber,
   resolveNumbering,
   zonedYearMonth,

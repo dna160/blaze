@@ -12,11 +12,15 @@ import type { Prisma } from "../generated/client/index.js";
  * Tokens:
  *   {BRANCH}   Tenant.branchCode            KBJ
  *   {SLUG}     Tenant.slug, upper-cased     CITY-STORAGE-KEBON-JERUK
+ *   {D} {DD}   day, plain / 2-digit         9 / 09
  *   {M} {MM}   month, plain / 2-digit       11 / 11
  *   {YYYY}     year                         2026
  *   {CUST}     Customer.customerNumber      36
  *   {SEQ}      the counter, plain           40
  *   {SEQ:n}    the counter, zero-padded     {SEQ:6} -> 000040
+ *   {CONTRACT} the sequence number of the contract an invoice belongs to
+ *              (its {SEQ} when it was numbered), {CONTRACT:n} zero-padded;
+ *              0 when the invoice has no contract
  *
  * Month and year are read in the TENANT's timezone, never the server's: an
  * invoice issued at 06:00 WIB on the 1st is 23:00 UTC the previous day, and
@@ -49,11 +53,16 @@ export const LEGACY_NUMBERING: Required<NumberingConfig> = {
   seqReset: "monthly",
 };
 
-/** PRD go-live §6.2 — the City Storage format, e.g. KBJ-11-2026-36-40. */
+/**
+ * City Storage's format (owner, 2026-11-10):
+ *   contract  customer no - DDMMYYYY - contract no - branch code   36-10112026-40-KBJ
+ *   invoice   customer no - DDMMYYYY - contract no - invoice no    36-10112026-40-123
+ * Contract and invoice numbers are separate running counters that never reset.
+ */
 export const CITY_STORAGE_NUMBERING: Required<NumberingConfig> = {
-  contract: "{BRANCH}-{M}-{YYYY}-{CUST}-{SEQ}",
-  invoice: "{BRANCH}-{M}-{YYYY}-{CUST}-{SEQ}",
-  creditNote: "{BRANCH}-CN-{M}-{YYYY}-{CUST}-{SEQ}",
+  contract: "{CUST}-{DD}{MM}{YYYY}-{SEQ}-{BRANCH}",
+  invoice: "{CUST}-{DD}{MM}{YYYY}-{CONTRACT}-{SEQ}",
+  creditNote: "{CUST}-{DD}{MM}{YYYY}-{CONTRACT}-CN{SEQ}",
   seqReset: "never",
 };
 
@@ -85,6 +94,13 @@ export function zonedYearMonth(at: Date, timeZone: string): { year: number; mont
   return { year, month };
 }
 
+/** Year, month and day of `at` as seen in `timeZone`. */
+export function zonedDate(at: Date, timeZone: string): { year: number; month: number; day: number } {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "numeric", day: "numeric" }).formatToParts(at);
+  const n = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+  return { year: n("year"), month: n("month"), day: n("day") };
+}
+
 export function counterScope(reset: SeqReset, ym: { year: number; month: number }): string {
   if (reset === "monthly") return `${ym.year}-${String(ym.month).padStart(2, "0")}`;
   if (reset === "yearly") return String(ym.year);
@@ -98,6 +114,10 @@ export interface FormatContext {
   month: number;
   customerNumber: number | null;
   seq: number;
+  /** Day of month in the tenant's timezone ({D}/{DD}); defaults to 1 when unknown. */
+  day?: number;
+  /** The related contract's sequence number ({CONTRACT}); 0 when there is none. */
+  contractSeq?: number | null;
 }
 
 /** Pure — exported for tests and for the console's "preview" of a format. */
@@ -108,6 +128,12 @@ export function formatDocumentNumber(format: string, ctx: FormatContext): string
         return ctx.branchCode ?? ctx.slug.toUpperCase();
       case "SLUG":
         return ctx.slug.toUpperCase();
+      case "D":
+        return String(ctx.day ?? 1);
+      case "DD":
+        return String(ctx.day ?? 1).padStart(2, "0");
+      case "CONTRACT":
+        return pad ? String(ctx.contractSeq ?? 0).padStart(Number(pad), "0") : String(ctx.contractSeq ?? 0);
       case "M":
         return String(ctx.month);
       case "MM":
@@ -162,8 +188,25 @@ export async function raiseCounter(
  */
 export async function nextDocumentNumber(
   tx: Prisma.TransactionClient,
-  params: { tenantId: string; kind: DocumentKindValue; customerId?: string | null; at?: Date },
+  params: DocumentNumberParams,
 ): Promise<string> {
+  return (await nextDocumentNumberWithSeq(tx, params)).number;
+}
+
+export interface DocumentNumberParams {
+  tenantId: string;
+  kind: DocumentKindValue;
+  customerId?: string | null;
+  at?: Date;
+  /** Fills {CONTRACT} on invoices — the contract's own sequence number. */
+  contractSeq?: number | null;
+}
+
+/** As nextDocumentNumber, also returning the counter value it took (a contract stores it for {CONTRACT}). */
+export async function nextDocumentNumberWithSeq(
+  tx: Prisma.TransactionClient,
+  params: DocumentNumberParams,
+): Promise<{ number: string; seq: number }> {
   // `tenants` is outside RLS (bootstrap registry); `customers` is read in the
   // caller's tenant context, which is the same tenant.
   const tenant = await tx.tenant.findUniqueOrThrow({
@@ -172,7 +215,8 @@ export async function nextDocumentNumber(
   });
   const cfg = resolveNumbering(tenant.numbering);
   const format = cfg[KIND_KEY[params.kind]];
-  const ym = zonedYearMonth(params.at ?? new Date(), tenant.timezone || "Asia/Jakarta");
+  const date = zonedDate(params.at ?? new Date(), tenant.timezone || "Asia/Jakarta");
+  const ym = { year: date.year, month: date.month };
 
   let customerNumber: number | null = null;
   if (format.includes("{CUST}") && params.customerId) {
@@ -181,7 +225,37 @@ export async function nextDocumentNumber(
   }
 
   const seq = await takeCounter(tx, params.tenantId, params.kind, counterScope(cfg.seqReset, ym));
-  return formatDocumentNumber(format, { branchCode: tenant.branchCode, slug: tenant.slug, ...ym, customerNumber, seq });
+  const number = formatDocumentNumber(format, {
+    branchCode: tenant.branchCode,
+    slug: tenant.slug,
+    ...ym,
+    day: date.day,
+    customerNumber,
+    seq,
+    contractSeq: params.contractSeq ?? null,
+  });
+  return { number, seq };
+}
+
+/**
+ * The sequence number of the contract an invoice belongs to (its booking's or
+ * rental order's latest contract), for {CONTRACT}. A contract imported from the
+ * legacy system has no stored sequence; its legacy running number is used.
+ */
+export async function contractSeqFor(
+  tx: Prisma.TransactionClient,
+  owner: { bookingId?: string | null; rentalOrderId?: string | null },
+): Promise<number | null> {
+  if (!owner.bookingId && !owner.rentalOrderId) return null;
+  const contract = await tx.contract.findFirst({
+    where: owner.rentalOrderId ? { rentalOrderId: owner.rentalOrderId } : { bookingId: owner.bookingId! },
+    orderBy: { createdAt: "desc" },
+    select: { contractSeq: true, contractNumber: true },
+  });
+  if (!contract) return null;
+  if (contract.contractSeq !== null) return contract.contractSeq;
+  const m = /^#?\d{1,2}-\d{4}-\d+-(\d+)/.exec(contract.contractNumber ?? "");
+  return m ? Number(m[1]) : null;
 }
 
 /**
@@ -194,13 +268,13 @@ export async function newContractFields(
   tx: Prisma.TransactionClient,
   tenantId: string,
   customerId: string | null,
-): Promise<{ contractNumber: string; termsVersion: number | null }> {
+): Promise<{ contractNumber: string; contractSeq: number; termsVersion: number | null }> {
   const tenant = await tx.tenant.findUniqueOrThrow({ where: { id: tenantId }, select: { organizationId: true } });
   const terms = await tx.contractTerms.findFirst({
     where: { organizationId: tenant.organizationId },
     orderBy: { version: "desc" },
     select: { version: true },
   });
-  const contractNumber = await nextDocumentNumber(tx, { tenantId, kind: "CONTRACT", customerId });
-  return { contractNumber, termsVersion: terms?.version ?? null };
+  const { number: contractNumber, seq: contractSeq } = await nextDocumentNumberWithSeq(tx, { tenantId, kind: "CONTRACT", customerId });
+  return { contractNumber, contractSeq, termsVersion: terms?.version ?? null };
 }

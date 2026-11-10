@@ -469,6 +469,8 @@ export async function applyLegacyImport(prisma: PrismaClient, tenantId: string, 
 
       const contractData = {
         templateVersion: "legacy-booqable",
+        // The legacy running number, so an invoice's {CONTRACT} prints it.
+        contractSeq: legacySequence(r.contractNumber),
         termsVersion: terms?.version ?? null,
         esignProvider: "LEGACY",
         esignStatus: "SIGNED",

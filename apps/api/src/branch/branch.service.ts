@@ -7,7 +7,7 @@ import {
   organizationSystemNumber,
   planLegacyImport,
   resolveNumbering,
-  zonedYearMonth,
+  zonedDate,
   type Prisma,
 } from "@rentos/database";
 import { can, hasOrganizationScope } from "@rentos/domain";
@@ -113,8 +113,9 @@ export class BranchService {
     const t = await this.load(tenantId);
     const flags = (t.featureFlags ?? {}) as Record<string, unknown>;
     const numbering = resolveNumbering(t.numbering);
-    const ym = zonedYearMonth(new Date(), t.timezone || "Asia/Jakarta");
-    const sample = { branchCode: t.branchCode, slug: t.slug, ...ym, customerNumber: 36, seq: 40 };
+    const today = zonedDate(new Date(), t.timezone || "Asia/Jakarta");
+    // Customer 36's 40th contract, and its invoice no. 123 — the same sample everywhere.
+    const sample = { branchCode: t.branchCode, slug: t.slug, ...today, customerNumber: 36, seq: 40, contractSeq: 40 };
     return {
       ...this.publicView(t),
       id: t.id,
@@ -128,7 +129,7 @@ export class BranchService {
       gatewayReady: gatewayReady(),
       numberPreview: {
         contract: formatDocumentNumber(numbering.contract, sample),
-        invoice: formatDocumentNumber(numbering.invoice, sample),
+        invoice: formatDocumentNumber(numbering.invoice, { ...sample, seq: 123 }),
       },
       canEdit: BranchService.canEdit(user),
     };

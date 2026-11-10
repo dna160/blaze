@@ -1,6 +1,6 @@
 import type { Prisma } from "../generated/client/index.js";
 
-import { nextDocumentNumber } from "./document-number.js";
+import { contractSeqFor, nextDocumentNumber } from "./document-number.js";
 
 /**
  * Tax-sequential invoice numbers (PRD §7.2.4), now one kind of document
@@ -17,6 +17,8 @@ export async function nextInvoiceNumber(
   tenantId: string,
   _tenantSlug: string,
   customerId?: string | null,
+  owner?: { bookingId?: string | null; rentalOrderId?: string | null },
 ) {
-  return nextDocumentNumber(tx, { tenantId, kind: "INVOICE", customerId });
+  const contractSeq = owner ? await contractSeqFor(tx, owner) : null;
+  return nextDocumentNumber(tx, { tenantId, kind: "INVOICE", customerId, contractSeq });
 }

@@ -6,14 +6,15 @@ import {
   counterScope,
   formatDocumentNumber,
   resolveNumbering,
+  zonedDate,
   zonedYearMonth,
 } from "../src/document-number.js";
 
 const base = { branchCode: "KBJ", slug: "city-storage-kebon-jeruk", year: 2026, month: 11, customerNumber: 36, seq: 40 };
 
 describe("formatDocumentNumber", () => {
-  it("renders the City Storage format from the PRD example", () => {
-    expect(formatDocumentNumber(CITY_STORAGE_NUMBERING.contract, base)).toBe("KBJ-11-2026-36-40");
+  it("renders the PRD's original example format", () => {
+    expect(formatDocumentNumber("{BRANCH}-{M}-{YYYY}-{CUST}-{SEQ}", base)).toBe("KBJ-11-2026-36-40");
   });
 
   it("keeps the legacy Booqable shape when {BRANCH}- is dropped", () => {
@@ -34,6 +35,25 @@ describe("formatDocumentNumber", () => {
 
   it("leaves unknown tokens alone rather than silently dropping them", () => {
     expect(formatDocumentNumber("{FOO}-{SEQ}", base)).toBe("{FOO}-40");
+  });
+});
+
+describe("City Storage format (owner, 2026-11-10)", () => {
+  const ctx = { ...base, day: 10, month: 11, year: 2026, seq: 40, contractSeq: 40 };
+  it("contract: customer - DDMMYYYY - contract no - branch", () => {
+    expect(formatDocumentNumber(CITY_STORAGE_NUMBERING.contract, ctx)).toBe("36-10112026-40-KBJ");
+  });
+  it("invoice: customer - DDMMYYYY - contract no - invoice no", () => {
+    expect(formatDocumentNumber(CITY_STORAGE_NUMBERING.invoice, { ...ctx, seq: 123 })).toBe("36-10112026-40-123");
+  });
+  it("pads the day and month, and prints 0 for an invoice without a contract", () => {
+    expect(formatDocumentNumber(CITY_STORAGE_NUMBERING.invoice, { ...ctx, day: 1, month: 3, contractSeq: null, seq: 5 })).toBe("36-01032026-0-5");
+  });
+});
+
+describe("zonedDate", () => {
+  it("reads the day in the tenant's timezone", () => {
+    expect(zonedDate(new Date("2026-10-31T23:00:00Z"), "Asia/Jakarta")).toEqual({ year: 2026, month: 11, day: 1 });
   });
 });
 

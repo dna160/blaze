@@ -915,6 +915,9 @@ model Contract {
   /// PRD go-live §6.2 — the number printed as "Contract #", from the tenant's
   /// CONTRACT sequence (or carried over from the legacy system).
   contractNumber      String?      @map("contract_number")
+  /// The CONTRACT counter value this number took — what an invoice's
+  /// {CONTRACT} token prints. Null for contracts imported from the legacy system.
+  contractSeq         Int?         @map("contract_seq")
   /// PRD go-live §7.1 — the ContractTerms.version this contract was rendered
   /// with, so a signed contract always re-renders with the terms that were signed.
   termsVersion        Int?         @map("terms_version")

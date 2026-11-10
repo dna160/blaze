@@ -68,10 +68,11 @@ export function readContractTerms(): string {
   return start >= 0 ? raw.slice(start) : raw;
 }
 
+/** Owner, 2026-11-10 — see CITY_STORAGE_NUMBERING in src/document-number.ts. */
 export const CITY_STORAGE_NUMBERING_FORMAT = {
-  contract: "{BRANCH}-{M}-{YYYY}-{CUST}-{SEQ}",
-  invoice: "{BRANCH}-{M}-{YYYY}-{CUST}-{SEQ}",
-  creditNote: "{BRANCH}-CN-{M}-{YYYY}-{CUST}-{SEQ}",
+  contract: "{CUST}-{DD}{MM}{YYYY}-{SEQ}-{BRANCH}",
+  invoice: "{CUST}-{DD}{MM}{YYYY}-{CONTRACT}-{SEQ}",
+  creditNote: "{CUST}-{DD}{MM}{YYYY}-{CONTRACT}-CN{SEQ}",
   seqReset: "never",
 };
 

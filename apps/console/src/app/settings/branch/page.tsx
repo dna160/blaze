@@ -315,17 +315,18 @@ export default function BranchSettingsPage() {
             description={
               <>
                 Tokens: <code>{"{BRANCH}"}</code> branch code, <code>{"{M}"}</code>/<code>{"{MM}"}</code> month,{" "}
-                <code>{"{YYYY}"}</code> year, <code>{"{CUST}"}</code> customer number, <code>{"{SEQ}"}</code> or{" "}
-                <code>{"{SEQ:4}"}</code> the running number (zero-padded). Contracts and invoices count separately.
+                <code>{"{YYYY}"}</code> year, <code>{"{D}"}</code>/<code>{"{DD}"}</code> day, <code>{"{CUST}"}</code> customer number,{" "}
+                <code>{"{SEQ}"}</code> or <code>{"{SEQ:4}"}</code> the running number (zero-padded), and on invoices{" "}
+                <code>{"{CONTRACT}"}</code> the number of the contract it belongs to. Contracts and invoices count separately.
               </>
             }
           >
             <div className="grid gap-3 md:grid-cols-2">
               <Field label="Contract number format">
-                <input value={form.numbering.contract ?? ""} onChange={(e) => set("numbering", { ...form.numbering, contract: e.target.value })} placeholder="{BRANCH}-{M}-{YYYY}-{CUST}-{SEQ}" className={input} />
+                <input value={form.numbering.contract ?? ""} onChange={(e) => set("numbering", { ...form.numbering, contract: e.target.value })} placeholder="{CUST}-{DD}{MM}{YYYY}-{SEQ}-{BRANCH}" className={input} />
               </Field>
               <Field label="Invoice number format">
-                <input value={form.numbering.invoice ?? ""} onChange={(e) => set("numbering", { ...form.numbering, invoice: e.target.value })} placeholder="{BRANCH}-{M}-{YYYY}-{CUST}-{SEQ}" className={input} />
+                <input value={form.numbering.invoice ?? ""} onChange={(e) => set("numbering", { ...form.numbering, invoice: e.target.value })} placeholder="{CUST}-{DD}{MM}{YYYY}-{CONTRACT}-{SEQ}" className={input} />
               </Field>
               <Field label="Running number restarts">
                 <select

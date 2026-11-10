@@ -1813,6 +1813,17 @@ Demo traffic on the current database therefore sends from the real number — ke
 that org paused — and the production City Storage org must re-pair it (pairing is
 keyed by organization id in `wa.rentos_instances`). Steps: RUNBOOK-GO-LIVE §6.
 
+**Numbering (owner, 2026-11-10):** contract `{CUST}-{DD}{MM}{YYYY}-{SEQ}-{BRANCH}`
+(`36-10112026-40-KBJ`), invoice `{CUST}-{DD}{MM}{YYYY}-{CONTRACT}-{SEQ}`
+(`36-10112026-40-123`). `{CONTRACT}` is the related contract's own sequence
+(`Contract.contractSeq`; legacy contracts use their Booqable running number). Set on
+the live branch via Settings → Branch; the data pack's bootstrap uses the same.
+
+**Live data (2026-11-10):** the Booqable book is imported into the live City Storage
+branch (86 customers, 188 rentals, 48 open invoices, 196 units) with messaging
+paused. Still owed by the branch: deposits held (Booqable has 17 of 188), the five
+units with two active tenants, STORAGE-103/105 sizes, the review lists.
+
 **Still open (P1/P2, not built):** PPh settlement net of withholding and partial
 payments (§8.4 — the PDF breakdown exists behind `Organization.taxConfig.pphWithholdingEnabled`,
 off until finance's worked examples), reports date-range presets + XLSX + AR-aging
