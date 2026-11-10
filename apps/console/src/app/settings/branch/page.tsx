@@ -68,6 +68,7 @@ export default function BranchSettingsPage() {
       bankAccounts: s.bankAccounts.map((b) => ({ ...b, swift: b.swift ?? "" })),
       numbering: { ...s.numbering },
       onlinePaymentsEnabled: s.onlinePaymentsFlag,
+      apiAccessEnabled: s.apiAccessEnabled,
     });
   }
 
@@ -125,6 +126,7 @@ export default function BranchSettingsPage() {
         ...(form.numbering.seqReset ? { seqReset: form.numbering.seqReset } : {}),
       },
       onlinePaymentsEnabled: form.onlinePaymentsEnabled,
+      apiAccessEnabled: form.apiAccessEnabled,
     };
     try {
       fill(await apiFetch<BranchSettings>("/branch/settings", { token: authClient.getToken(), method: "PUT", body }));
@@ -369,6 +371,17 @@ export default function BranchSettingsPage() {
                 {settings.onlinePaymentsEnabled ? "on" : "off"} for customers.
               </p>
             )}
+          </Section>
+
+          <Section title="API access">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={form.apiAccessEnabled} disabled={ro} onChange={(e) => set("apiAccessEnabled", e.target.checked)} />
+              <span>Allow API keys, the read-only external API and outbound webhooks for this branch</span>
+            </label>
+            <p className="text-xs text-brand-700/60">
+              Turns on the API Access page. A key reads this branch&apos;s bookings and invoices (customer data included) and stays
+              valid until revoked — create one per system and revoke any you no longer use.
+            </p>
           </Section>
         </fieldset>
 

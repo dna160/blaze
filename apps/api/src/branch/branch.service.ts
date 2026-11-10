@@ -126,6 +126,7 @@ export class BranchService {
       bankAccounts: (t.bankAccounts ?? []) as BankAccount[],
       numbering: (t.numbering ?? {}) as BranchSettings["numbering"],
       onlinePaymentsFlag: flags.onlinePaymentsEnabled === true,
+      apiAccessEnabled: flags.api_access_enabled === true,
       gatewayReady: gatewayReady(),
       numberPreview: {
         contract: formatDocumentNumber(numbering.contract, sample),
@@ -185,8 +186,13 @@ export class BranchService {
     if (body.facilities !== undefined) data.facilities = body.facilities as Prisma.InputJsonValue;
     if (body.bankAccounts !== undefined) data.bankAccounts = body.bankAccounts as Prisma.InputJsonValue;
     if (body.numbering !== undefined) data.numbering = body.numbering as Prisma.InputJsonValue;
-    if (body.onlinePaymentsEnabled !== undefined) {
-      data.featureFlags = { ...((before.featureFlags ?? {}) as Record<string, unknown>), onlinePaymentsEnabled: body.onlinePaymentsEnabled } as Prisma.InputJsonValue;
+    if (body.onlinePaymentsEnabled !== undefined || body.apiAccessEnabled !== undefined) {
+      data.featureFlags = {
+        ...((before.featureFlags ?? {}) as Record<string, unknown>),
+        ...(body.onlinePaymentsEnabled !== undefined ? { onlinePaymentsEnabled: body.onlinePaymentsEnabled } : {}),
+        // The API Access page: tenant API keys, GET /external/*, outbound webhooks.
+        ...(body.apiAccessEnabled !== undefined ? { api_access_enabled: body.apiAccessEnabled } : {}),
+      } as Prisma.InputJsonValue;
     }
 
     await this.prisma.raw.tenant.update({ where: { id: tenantId }, data });
@@ -209,6 +215,7 @@ export class BranchService {
       bankAccounts: before.bankAccounts,
       numbering: before.numbering,
       onlinePaymentsEnabled: ((before.featureFlags ?? {}) as Record<string, unknown>).onlinePaymentsEnabled ?? false,
+      apiAccessEnabled: ((before.featureFlags ?? {}) as Record<string, unknown>).api_access_enabled ?? false,
     };
     const changes: Record<string, { from: unknown; to: unknown }> = {};
     for (const [key, to] of Object.entries(body)) {

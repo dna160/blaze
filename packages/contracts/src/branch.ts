@@ -69,6 +69,8 @@ export const BranchSettingsSchema = BranchPublicProfileSchema.extend({
   numbering: NumberingSchema,
   /** The branch's own switch (featureFlags.onlinePaymentsEnabled). */
   onlinePaymentsFlag: z.boolean(),
+  /** featureFlags.api_access_enabled — the API Access page: API keys, the read-only external API, outbound webhooks. */
+  apiAccessEnabled: z.boolean(),
   /** Whether this deployment has a real gateway at all (PAYMENT_PROVIDER=xendit in production). */
   gatewayReady: z.boolean(),
   /** A sample of the next numbers, so a format change can be checked before saving. */
@@ -96,6 +98,7 @@ export const UpdateBranchSettingsRequestSchema = z.object({
   bankAccounts: z.array(BankAccountSchema).max(5).optional(),
   numbering: NumberingSchema.optional(),
   onlinePaymentsEnabled: z.boolean().optional(),
+  apiAccessEnabled: z.boolean().optional(),
 });
 export type UpdateBranchSettingsRequest = z.infer<typeof UpdateBranchSettingsRequestSchema>;
 
