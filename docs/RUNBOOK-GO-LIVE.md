@@ -13,8 +13,8 @@ Secrets are referenced **by name only**. Values live in Railway, never in git or
 
 | # | What | Owner | Where it lands |
 |---|---|---|---|
-| B1 | **Unit type per unit.** `kebon-jeruk-units.csv` has `unit_type_slug` for STORAGE-9 only. The unit import refuses every row without a type (171 rows today). | Client (§16 Q5) or the Booqable export | `unit_type_slug` column, then step 5 |
-| B2 | **Booqable export** (customers, orders, invoices, documents) or an API key, and the cut-over date. | Client (§16 Q4) | `migration-*.csv`, step 7 |
+| B1 | **Unit type per unit.** Done for 170 of 172 from Booqable's rental history (2026-11-10, `scripts/booqable/unit_types.py`); **STORAGE-103 and STORAGE-105** were never rented and still need a type. | Client (§16 Q5) | `unit_type_slug` column, then step 5 |
+| B2 | **Booqable data.** Pulled through the API on 2026-11-10 (`scripts/booqable/fetch.py`, `to_migration.py`) and rehearsed clean: 86 customers, 188 unit rentals, 48 open invoices. Still owed: the cut-over date, and the branch's confirmation of the deposits actually held (Booqable records a deposit for only 17 of the 188 rentals). | Client (§16 Q4) | step 7 |
 | B3 | **Staff list** (email, name, role, scope, branch). | Client | `go-live-users.csv`, step 4 |
 | B4 | **Numbering**: keep `KBJ-` in front, or continue exactly as Booqable (`5-2026-36-39`)? | Client (§16 Q1) | Settings → Branch → numbering |
 | B5 | **PKP**: does Kebon Jeruk charge PPN from go-live? Seeded `isPkp=false`. | Finance (§16 Q2) | Settings → Branch |
@@ -193,6 +193,22 @@ per number per cooldown (default 12 h) and not after a human reply. **Leave mess
 paused** until step 8.
 
 ## 7. Migration from Booqable (needs B2)
+
+The data comes straight from Booqable's API (key in the environment only, never in
+git; the output holds customer PII, so keep it out of the repo):
+
+```bash
+BOOQABLE_API_KEY=<key> python3 scripts/booqable/fetch.py ./booqable
+```
+
+```bash
+python3 scripts/booqable/to_migration.py ./booqable packages/database/prisma/data/kebon-jeruk/kebon-jeruk-units.csv ./import
+```
+
+That writes the three migration CSVs, `units-full.csv` (the 172 STORAGE units plus
+Booqable's 6 X-Large and 20 Freestyle stock items) and `REVIEW-*.csv` lists for staff
+(unpaid invoices on ended rentals, unfinalized drafts). Import `units-full.csv` in
+step 5, then continue below. Regenerate the key in Booqable once the migration is done.
 
 Put the three CSVs (templates in the data pack) and the signed contract PDFs in one
 folder. Rehearse on a **staging copy of production** first:

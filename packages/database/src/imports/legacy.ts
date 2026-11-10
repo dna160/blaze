@@ -143,9 +143,14 @@ export function normalizeIdPhone(raw: string | undefined): string | null {
   return e164.length >= 10 && e164.length <= 15 ? `+${e164}` : null;
 }
 
-/** "5-2026-36-39" -> 39. The running counter is the last numeric segment of the legacy format. */
+/**
+ * "5-2026-36-39" -> 39: the running counter is the last segment of the legacy
+ * {month}-{year}-{customer}-{seq} format. Anything else — a placeholder like
+ * "BQ-337", or a per-unit suffix like "10-2026-44-237/STORAGE-9" (which still
+ * reads 237) — never moves the counter by its trailing digits.
+ */
 export function legacySequence(number: string): number | null {
-  const m = /(\d+)\s*$/.exec(number);
+  const m = /^#?\d{1,2}-\d{4}-\d+-(\d+)(?:\D.*)?$/.exec(number.trim());
   return m ? Number(m[1]) : null;
 }
 
