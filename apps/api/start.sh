@@ -148,5 +148,19 @@ if [ -n "$PROMOTE_ADMIN_EMAIL" ]; then
   fi
 fi
 
+# One-off: load the Kebon Jeruk data pack (PRD go-live §5) into this database —
+# the same bootstrap as `pnpm db:seed:production`: organization legal name and
+# system number, branch profile, the 7 unit types, the contract T&C, the logo.
+# It creates no users, customers or units and touches no other organization.
+# Set ONE_OFF_BOOTSTRAP=city-storage, deploy once, then remove it.
+if [ "$ONE_OFF_BOOTSTRAP" = "city-storage" ]; then
+  echo "[entrypoint] Loading the City Storage data pack (one-off)…"
+  if SEED_MODE=production pnpm --filter @rentos/database seed; then
+    echo "[entrypoint] Data pack loaded. Remove ONE_OFF_BOOTSTRAP now."
+  else
+    echo "[entrypoint] Data pack NOT loaded (see the error above). Starting the API anyway."
+  fi
+fi
+
 echo "[entrypoint] Starting API…"
 exec node apps/api/dist/main.js

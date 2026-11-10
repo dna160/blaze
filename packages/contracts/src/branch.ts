@@ -98,3 +98,18 @@ export const UpdateBranchSettingsRequestSchema = z.object({
   onlinePaymentsEnabled: z.boolean().optional(),
 });
 export type UpdateBranchSettingsRequest = z.infer<typeof UpdateBranchSettingsRequestSchema>;
+
+/**
+ * PRD go-live §10 — the legacy (Booqable) migration over HTTP: the same engine
+ * as `pnpm migrate:legacy`. Dry run unless `apply`; refused unless messaging is
+ * paused; org-scoped Admin only. The CSVs are the three migration templates.
+ */
+export const LegacyMigrationRequestSchema = z.object({
+  customersCsv: z.string().min(1).max(1_000_000),
+  rentalsCsv: z.string().min(1).max(1_000_000),
+  openInvoicesCsv: z.string().max(1_000_000),
+  apply: z.boolean().optional(),
+  minContractSeq: z.number().int().min(0).optional(),
+  minInvoiceSeq: z.number().int().min(0).optional(),
+});
+export type LegacyMigrationRequest = z.infer<typeof LegacyMigrationRequestSchema>;

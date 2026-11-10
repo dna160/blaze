@@ -1,6 +1,15 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import type { BankAccount, BranchPublicProfile, BranchSettings, UpdateBranchSettingsRequest } from "@rentos/contracts";
-import { contactKey, formatDocumentNumber, organizationSystemNumber, resolveNumbering, zonedYearMonth, type Prisma } from "@rentos/database";
+import type { BankAccount, BranchPublicProfile, BranchSettings, LegacyMigrationRequest, UpdateBranchSettingsRequest } from "@rentos/contracts";
+import {
+  applyLegacyImport,
+  contactKey,
+  formatDocumentNumber,
+  organizationSystemNumber,
+  planLegacyImport,
+  resolveNumbering,
+  zonedYearMonth,
+  type Prisma,
+} from "@rentos/database";
 import { can, hasOrganizationScope } from "@rentos/domain";
 
 import { AuditService } from "../audit/audit.service.js";
@@ -62,6 +71,38 @@ export class BranchService {
         return b64 ? `data:image/png;base64,${b64}` : null;
       })(),
     };
+  }
+
+  /**
+   * PRD go-live §10 — the Booqable migration, same engine as the CLI. The
+   * engine itself refuses unless the organization's messaging is paused, so no
+   * imported customer can be messaged mid-import. Signed-contract PDFs are not
+   * attached on this path (no files in the request); the CLI attaches them.
+   */
+  async legacyMigration(user: AuthenticatedUser, tenantId: string, body: LegacyMigrationRequest) {
+    if (!BranchService.canEdit(user)) throw new ForbiddenException("Only an organization-scoped Admin can run the legacy migration.");
+    const tenant = await this.load(tenantId);
+    if (user.organizationId !== tenant.organizationId) throw new ForbiddenException("This branch belongs to another organization.");
+    const input = {
+      customersCsv: body.customersCsv,
+      rentalsCsv: body.rentalsCsv,
+      openInvoicesCsv: body.openInvoicesCsv,
+      minContractSeq: body.minContractSeq,
+      minInvoiceSeq: body.minInvoiceSeq,
+    };
+    if (!body.apply) return { applied: false, plan: (await planLegacyImport(this.prisma.raw, tenantId, input)).plan };
+    const result = await applyLegacyImport(this.prisma.raw, tenantId, input);
+    if (result.applied) {
+      await this.audit.record({
+        tenantId,
+        actorUserId: user.id,
+        action: "LEGACY_MIGRATION_APPLIED",
+        entityType: "Tenant",
+        entityId: tenantId,
+        metadata: { counts: result.plan.counts, totals: result.plan.totals } as Record<string, unknown>,
+      });
+    }
+    return { applied: result.applied, plan: result.plan };
   }
 
   async getPublicProfile(tenantId: string): Promise<BranchPublicProfile> {

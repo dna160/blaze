@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Put, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Post, Put, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
-import { UpdateBranchSettingsRequestSchema } from "@rentos/contracts";
+import { LegacyMigrationRequestSchema, UpdateBranchSettingsRequestSchema } from "@rentos/contracts";
 
 import { CurrentTenant, CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
@@ -28,6 +28,17 @@ export class BranchController {
   @UseGuards(JwtAuthGuard, StaffGuard)
   settings(@CurrentUser() user: AuthenticatedUser, @CurrentTenantId() tenantId: string) {
     return this.branch.getSettings(user, tenantId);
+  }
+
+  /** PRD go-live §10 — Booqable migration (dry run unless apply). Org-scoped Admin; messaging must be paused. */
+  @Post("legacy-migration")
+  @UseGuards(JwtAuthGuard, StaffGuard)
+  legacyMigration(
+    @CurrentUser() user: AuthenticatedUser,
+    @CurrentTenantId() tenantId: string,
+    @Body(new ZodValidationPipe(LegacyMigrationRequestSchema)) body: ReturnType<typeof LegacyMigrationRequestSchema.parse>,
+  ) {
+    return this.branch.legacyMigration(user, tenantId, body);
   }
 
   @Put("settings")
