@@ -56,13 +56,55 @@ export class CatalogService {
 
   listPublishedAssetTypes(tenantId: string) {
     return this.prisma.runInTenantContext(tenantId, (tx) =>
-      tx.assetType.findMany({ where: { isPublished: true }, orderBy: { createdAt: "asc" } }),
+      tx.assetType.findMany({ where: { isPublished: true, archivedAt: null }, orderBy: { createdAt: "asc" } }),
     );
   }
 
   /** Staff-only — includes unpublished/draft AssetTypes, unlike the public list above. Backs the catalog setup console page. */
   listAllAssetTypes(tenantId: string) {
-    return this.prisma.runInTenantContext(tenantId, (tx) => tx.assetType.findMany({ orderBy: { createdAt: "asc" } }));
+    return this.prisma.runInTenantContext(tenantId, (tx) => tx.assetType.findMany({ where: { archivedAt: null }, orderBy: { createdAt: "asc" } }));
+  }
+
+  /**
+   * Catalog Setup → Delete (owner, 2026-11-11). A type nothing was ever booked
+   * on is deleted, with its units. One that bookings, rentals, waitlist entries
+   * or swap requests still reference is ARCHIVED instead: unpublished, hidden
+   * from every list and import, its free units retired — so invoices, contracts
+   * and the ledger keep pointing at a real row.
+   */
+  async deleteAssetType(user: AuthenticatedUser, tenantId: string, assetTypeId: string) {
+    const result = await this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const type = await tx.assetType.findUnique({
+        where: { id: assetTypeId },
+        include: { _count: { select: { bookings: true, rentalOrders: true, waitlistEntries: true, swapRequests: true, assets: true } } },
+      });
+      if (!type) throw new NotFoundException("Unit type not found.");
+      const c = type._count;
+      const usedAssets = await tx.asset.count({
+        where: { assetTypeId, OR: [{ bookings: { some: {} } }, { rentalOrders: { some: {} } }, { swapRequestTargets: { some: {} } }] },
+      });
+      const history = c.bookings + c.rentalOrders + c.waitlistEntries + c.swapRequests + usedAssets;
+      if (history === 0) {
+        await tx.asset.deleteMany({ where: { assetTypeId } });
+        await tx.assetType.delete({ where: { id: assetTypeId } });
+        return { action: "deleted" as const, name: type.name, units: c.assets, history };
+      }
+      await tx.assetType.update({ where: { id: assetTypeId }, data: { archivedAt: new Date(), isPublished: false } });
+      const retired = await tx.asset.updateMany({
+        where: { assetTypeId, status: { in: ["AVAILABLE", "MAINTENANCE"] } },
+        data: { status: "RETIRED", statusReason: "Unit type archived" },
+      });
+      return { action: "archived" as const, name: type.name, units: retired.count, history };
+    });
+    await this.audit.record({
+      tenantId,
+      actorUserId: user.id,
+      action: result.action === "deleted" ? "ASSET_TYPE_DELETED" : "ASSET_TYPE_ARCHIVED",
+      entityType: "AssetType",
+      entityId: assetTypeId,
+      metadata: result,
+    });
+    return result;
   }
 
   async getAssetType(tenantId: string, assetTypeId: string) {
@@ -189,7 +231,7 @@ export class CatalogService {
       const location = await tx.location.findUnique({ where: { id: locationId } });
       if (!location) throw new NotFoundException("Location not found.");
       const assetTypes = await tx.assetType.findMany({
-        where: { isPublished: true, bookingModel: "RECURRING_LEASE", assets: { some: { locationId, status: { not: "RETIRED" } } } },
+        where: { isPublished: true, archivedAt: null, bookingModel: "RECURRING_LEASE", assets: { some: { locationId, status: { not: "RETIRED" } } } },
         include: { _count: { select: { assets: { where: { locationId, status: { not: "RETIRED" } } } } } },
         orderBy: { createdAt: "asc" },
       });
@@ -350,6 +392,7 @@ export class CatalogService {
     return this.prisma.runInTenantContext(tenantId, async (tx) => {
       const existing = await tx.assetType.findUnique({ where: { id: assetTypeId } });
       if (!existing) throw new NotFoundException("AssetType not found.");
+      if (existing.archivedAt && patch.isPublished) throw new ConflictException("This unit type was deleted (archived) — it cannot be published again.");
 
       return tx.assetType.update({
         where: { id: assetTypeId },

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import {
   CsvImportRequestSchema,
@@ -169,6 +169,14 @@ export class CatalogController {
     @Body(new ZodValidationPipe(UpdateAssetTypeRequestSchema)) body: ReturnType<typeof UpdateAssetTypeRequestSchema.parse>,
   ) {
     return this.catalog.updateAssetType(tenantId, id, body);
+  }
+
+  /** Catalog Setup → Delete: deleted outright if never used, otherwise archived (hidden, history kept). */
+  @Delete("asset-types/:id")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("manage_users")
+  deleteAssetType(@CurrentTenantId() tenantId: string, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
+    return this.catalog.deleteAssetType(user, tenantId, id);
   }
 
   @Post("assets")

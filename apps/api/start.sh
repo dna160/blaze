@@ -162,5 +162,13 @@ if [ "$ONE_OFF_BOOTSTRAP" = "city-storage" ]; then
   fi
 fi
 
+# One-off repair after the go-live import (owner, 2026-11-11):
+# ONE_OFF_REPAIR=dry prints what it would do and rolls back; =apply commits.
+# See packages/database/scripts/go-live-repair.ts. Remove the variable after.
+if [ "$ONE_OFF_REPAIR" = "dry" ] || [ "$ONE_OFF_REPAIR" = "apply" ]; then
+  echo "[entrypoint] Go-live repair ($ONE_OFF_REPAIR)…"
+  pnpm --filter @rentos/database go-live-repair || echo "[entrypoint] Repair FAILED (see above). Starting the API anyway."
+fi
+
 echo "[entrypoint] Starting API…"
 exec node apps/api/dist/main.js

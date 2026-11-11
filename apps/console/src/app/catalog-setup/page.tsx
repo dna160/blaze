@@ -108,6 +108,7 @@ export default function CatalogSetupPage() {
   const [assetTypes, setAssetTypes] = useState<AssetTypeDto[] | null>(null);
   const [locations, setLocations] = useState<LocationDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -228,6 +229,32 @@ export default function CatalogSetupPage() {
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to update asset type.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Catalog Setup → Delete: deleted if never used, archived (hidden, history kept) otherwise. */
+  async function removeType(at: AssetTypeDto) {
+    const ok = window.confirm(
+      `Delete "${at.name}"?\n\nIf it was never booked it is deleted with its units. If bookings, rentals or invoices use it, it is archived instead: hidden here and on the storefront, its free units retired, history kept.`,
+    );
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await apiFetch<{ action: "deleted" | "archived"; name: string; units: number }>(`/catalog/asset-types/${at.id}`, {
+        token: authClient.getToken(),
+        method: "DELETE",
+      });
+      setNotice(
+        r.action === "deleted"
+          ? `"${r.name}" deleted, with ${r.units} unit(s).`
+          : `"${r.name}" archived: past bookings and invoices still use it. ${r.units} free unit(s) retired.`,
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to delete the unit type.");
     } finally {
       setBusy(false);
     }
@@ -373,6 +400,7 @@ export default function CatalogSetupPage() {
         Create and price asset types, and add individual units — the setup this tenant's catalog runs on.
       </p>
       {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
+      {notice && <p className="mt-4 text-sm text-green-700">{notice}</p>}
 
       {!assetTypes || !locations ? (
         <p className="mt-6">Loading...</p>
@@ -464,12 +492,21 @@ export default function CatalogSetupPage() {
                           {at.isPooled ? " · Pooled" : ""}
                         </p>
                       </div>
-                      <button
-                        onClick={() => startEdit(at)}
-                        className="rounded border border-brand-600/20 px-3 py-1.5 text-sm font-medium hover:bg-brand-700/5"
-                      >
-                        Edit pricing
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => startEdit(at)}
+                          className="rounded border border-brand-600/20 px-3 py-1.5 text-sm font-medium hover:bg-brand-700/5"
+                        >
+                          Edit pricing
+                        </button>
+                        <button
+                          onClick={() => removeType(at)}
+                          disabled={busy}
+                          className="rounded border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

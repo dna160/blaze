@@ -42,7 +42,7 @@ const OCCUPYING = ["RESERVED", "OCCUPIED"];
 
 export async function planUnitImport(tx: Prisma.TransactionClient, tenantId: string, csv: string): Promise<UnitImportPlan> {
   const parsed = parseCsv(csv);
-  const types = await tx.assetType.findMany({ where: { tenantId }, select: { id: true, slug: true } });
+  const types = await tx.assetType.findMany({ where: { tenantId, archivedAt: null }, select: { id: true, slug: true } });
   const typeBySlug = new Map(types.map((t) => [t.slug, t.id]));
   const existing = await tx.asset.findMany({
     where: { tenantId },
@@ -96,7 +96,7 @@ export async function planUnitImport(tx: Prisma.TransactionClient, tenantId: str
 export async function applyUnitImport(tx: Prisma.TransactionClient, tenantId: string, csv: string, opts: { locationId: string | null }): Promise<UnitImportPlan> {
   const plan = await planUnitImport(tx, tenantId, csv);
   if (!plan.canApply) return plan;
-  const types = new Map((await tx.assetType.findMany({ where: { tenantId }, select: { id: true, slug: true } })).map((t) => [t.slug, t.id]));
+  const types = new Map((await tx.assetType.findMany({ where: { tenantId, archivedAt: null }, select: { id: true, slug: true } })).map((t) => [t.slug, t.id]));
   for (const row of plan.rows) {
     if (row.action === "unchanged") continue;
     const assetTypeId = types.get(row.typeSlug!)!;

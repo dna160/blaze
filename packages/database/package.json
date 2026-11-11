@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "promote-admin": "tsx scripts/promote-admin.ts"
+    "promote-admin": "tsx scripts/promote-admin.ts",
+    "go-live-repair": "tsx scripts/go-live-repair.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "5.22.0",

@@ -602,6 +602,10 @@ model AssetType {
   photos           Json         @default("[]")
   isPooled         Boolean      @default(false) @map("is_pooled")
   isPublished      Boolean      @default(false) @map("is_published")
+  /// Owner 2026-11-11 — "deleted" from Catalog Setup while bookings, rentals or
+  /// invoices still reference it: hidden from every catalog list and import,
+  /// never bookable, history intact. A type with no history is deleted outright.
+  archivedAt       DateTime?    @map("archived_at")
   createdAt        DateTime     @default(now()) @map("created_at")
   updatedAt        DateTime     @updatedAt @map("updated_at")
 

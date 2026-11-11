@@ -181,27 +181,32 @@ export async function bootstrapCityStorage(prisma: PrismaClient, opts: { mode: "
   };
   await prisma.tenant.update({ where: { id: tenant.id }, data: { featureFlags: flags as Prisma.InputJsonValue } });
 
-  const LOCATION_ID = "00000000-0000-0000-0000-000000000101";
-  await prisma.location.upsert({
-    where: { id: LOCATION_ID },
-    update: {
-      name: t.location.name,
-      address: t.location.addressLines.join(", "),
-      ...(t.location.latitude !== null && t.location.longitude !== null ? { latitude: t.location.latitude, longitude: t.location.longitude } : {}),
-    },
-    create: {
-      id: LOCATION_ID,
-      tenantId: tenant.id,
-      name: t.location.name,
-      address: t.location.addressLines.join(", "),
-      timezone: t.timezone,
-      // The data pack leaves coordinates to be filled from the Maps pin
-      // (§11). Until then, the approximate Kebon Jeruk point the old seed used keeps
-      // the storefront's branch map usable; Settings → Branch corrects it.
-      latitude: t.location.latitude ?? -6.1944,
-      longitude: t.location.longitude ?? 106.7692,
-    },
-  });
+  // The branch's location, looked up BY TENANT. (A fixed id was used here
+  // once; on a database seeded by the older multi-tenant seed that id belonged
+  // to another branch, whose location this then renamed — 2026-11-10.)
+  const locationFields = {
+    name: t.location.name,
+    address: t.location.addressLines.join(", "),
+    ...(t.location.latitude !== null && t.location.longitude !== null ? { latitude: t.location.latitude, longitude: t.location.longitude } : {}),
+  };
+  const existingLocation = await prisma.location.findFirst({ where: { tenantId: tenant.id }, orderBy: { createdAt: "asc" } });
+  const location = existingLocation
+    ? await prisma.location.update({ where: { id: existingLocation.id }, data: locationFields })
+    : await prisma.location.create({
+        data: {
+          // The well-known id only when it is free, so local seeds stay stable.
+          ...((await prisma.location.findUnique({ where: { id: "00000000-0000-0000-0000-000000000101" } })) ? {} : { id: "00000000-0000-0000-0000-000000000101" }),
+          tenantId: tenant.id,
+          timezone: t.timezone,
+          ...locationFields,
+          // The data pack leaves coordinates to be filled from the Maps pin
+          // (§11). Until then, the approximate Kebon Jeruk point the old seed
+          // used keeps the storefront's branch map usable.
+          latitude: t.location.latitude ?? -6.1944,
+          longitude: t.location.longitude ?? 106.7692,
+        },
+      });
+  const LOCATION_ID = location.id;
 
   const assetTypes = [];
   for (const row of readUnitTypes()) {
