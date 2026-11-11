@@ -3,6 +3,7 @@ import { generateRentalOrderInvoice, markInvoicePaid, newContractFields } from "
 import { monthlyPeriodEnd, rentalOrderFsm } from "@rentos/domain";
 
 import { NotificationsService } from "../notifications/notifications.service.js";
+import { AuditService } from "../audit/audit.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 import { WaitlistService } from "../waitlist/waitlist.service.js";
@@ -19,7 +20,41 @@ export class RentalOrderService {
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
     private readonly waitlist: WaitlistService,
+    private readonly audit: AuditService,
   ) {}
+
+  /**
+   * Staff end a rental now (owner, 2026-11-10 — e.g. demo data, or a tenant
+   * who left early). Fires the FSM's own COMPLETE (ACTIVE/EXPIRING/renewal
+   * states -> COMPLETED), writes the event and an audit row, and releases the
+   * unit. It deliberately does NOT fire the waitlist: ending a rental must not,
+   * as a side effect, issue someone else a contract and invoice — staff offer
+   * the unit from the waitlist themselves. Invoices are left as they are.
+   */
+  async endRental(tenant: ResolvedTenant, id: string, userId: string, reason: string) {
+    const result = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const order = await tx.rentalOrder.findUnique({ where: { id }, include: { asset: { select: { id: true, code: true, status: true } } } });
+      if (!order) throw new NotFoundException("Rental order not found.");
+      const { to } = await rentalOrderFsm.fire(order.status as never, "COMPLETE", { invoicePaid: true, contractSigned: true });
+      await tx.rentalOrder.update({ where: { id }, data: { status: to } });
+      await this.event(tx, tenant.id, id, order.status as never, to, "USER", userId, `Ended by staff: ${reason}`);
+      let released: string | null = null;
+      if (order.asset && (order.asset.status === "OCCUPIED" || order.asset.status === "RESERVED")) {
+        await tx.asset.update({ where: { id: order.asset.id }, data: { status: "AVAILABLE", statusReason: null } });
+        released = order.asset.code;
+      }
+      return { from: order.status, to, released };
+    });
+    await this.audit.record({
+      tenantId: tenant.id,
+      actorUserId: userId,
+      action: "RENTAL_ORDER_ENDED",
+      entityType: "RentalOrder",
+      entityId: id,
+      metadata: { reason, from: result.from, unitReleased: result.released },
+    });
+    return { id, status: result.to, unitReleased: result.released };
+  }
 
   get(tenant: ResolvedTenant, id: string) {
     return this.prisma.runInTenantContext(tenant.id, (tx) =>

@@ -1,4 +1,4 @@
-import { Body, Controller, ForbiddenException, Get, Param, Post, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Param, Post, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
@@ -58,6 +58,21 @@ export class RentalOrderController {
     @Body() body: { assetId: string },
   ) {
     return this.orders.approve(tenant, id, user.id, body.assetId);
+  }
+
+  /** Staff end a rental now and free its unit (no waitlist side effect). Body: { reason }. */
+  @Post(":id/end")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("approve_booking")
+  end(
+    @CurrentTenant() tenant: ResolvedTenant,
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id") id: string,
+    @Body() body: { reason?: string },
+  ) {
+    const reason = body?.reason?.trim();
+    if (!reason) throw new BadRequestException("Say why the rental is being ended.");
+    return this.orders.endRental(tenant, id, user.id, reason.slice(0, 300));
   }
 
   /** H-14 offer (staff/system can trigger manually; the worker triggers it automatically). */
