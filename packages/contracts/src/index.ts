@@ -12,3 +12,4 @@ export * from "./ota-sync.js";
 export * from "./platform-admin.js";
 export * from "./automation.js";
 export * from "./branch.js";
+export * from "./legacy.js";

@@ -58,6 +58,8 @@ async function main() {
     storeFile: async (key, buffer, contentType) => (await store.save({ key, buffer, contentType })).storageKey,
     minContractSeq: a["min-contract-seq"] ? Number(a["min-contract-seq"]) : undefined,
     minInvoiceSeq: a["min-invoice-seq"] ? Number(a["min-invoice-seq"]) : undefined,
+    // --reconcile: the open-invoices file is the complete unpaid list; imported invoices missing from it were settled in Booqable and are voided.
+    reconcileOpenInvoices: a.reconcile === true,
   };
 
   console.log(`Legacy migration into ${tenant.name} (${tenant.slug}) — ${a.apply ? "APPLY" : "dry run"}`);

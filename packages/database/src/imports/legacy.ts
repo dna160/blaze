@@ -49,6 +49,13 @@ export interface LegacyInput {
    */
   minContractSeq?: number;
   minInvoiceSeq?: number;
+  /**
+   * The open-invoices file is the COMPLETE list of what is still unpaid in the
+   * legacy system. An invoice imported earlier that is no longer in it was
+   * settled there since, and is voided here with its opening balance reversed.
+   * Off by default: with a partial file it would void everything left out.
+   */
+  reconcileOpenInvoices?: boolean;
 }
 
 export interface Finding {
@@ -67,6 +74,8 @@ export interface LegacyPlan {
     customers: { create: number; update: number };
     rentals: { create: number; update: number };
     openInvoices: { create: number; update: number };
+    /** Imported earlier, no longer unpaid in the legacy system — voided on apply (reconcileOpenInvoices). */
+    settledInvoices?: number;
   };
   totals: { activeRentals: number; arOutstanding: number; depositsHeld: number; monthlyRent: number };
   maxLegacy: { customerNumber: number; contractSeq: number; invoiceSeq: number };
@@ -169,7 +178,9 @@ function parse(input: LegacyInput, findings: Finding[]) {
     const type = (r.customer_type ?? "INDIVIDUAL").trim().toUpperCase();
     if (type !== "INDIVIDUAL" && type !== "BUSINESS") err("customer_type must be INDIVIDUAL or BUSINESS");
     const phone = normalizeIdPhone(r.phone_e164);
-    if (!phone) err(r.phone_e164 ? `phone "${r.phone_e164}" is not a usable number` : "missing phone");
+    // A missing phone is judged in the plan: an error for a customer with an
+    // active rental, a warning for a past customer kept for the record.
+    if (!phone && r.phone_e164) err(`phone "${r.phone_e164}" is not a usable number`);
     const fullName = (r.full_name ?? "").trim();
     if (!fullName) err("full_name is empty");
     if (type === "BUSINESS" && !(r.company_name ?? "").trim()) err("company_name is required for a BUSINESS customer");
@@ -280,11 +291,23 @@ export async function planLegacyImport(prisma: PrismaClient, tenantId: string, i
     }),
     legacyBookings: await tx.booking.findMany({ where: { legacyBookingNumber: { not: null } }, select: { legacyBookingNumber: true } }),
     invoices: await tx.invoice.findMany({ where: { invoiceNumber: { in: invoices.map((i) => i.number) } }, select: { invoiceNumber: true } }),
+    settled: input.reconcileOpenInvoices ? await findSettledInvoices(tx, invoices.map((i) => i.number)) : [],
   }));
 
   const add = (f: Finding) => findings.push(f);
 
   // Customers: duplicates in file, phone clashes with a different existing customer.
+  const customersWithRental = new Set(rentals.map((r) => r.customerNumber));
+  for (const c of customers) {
+    if (c.phone) continue;
+    add({
+      file: "customers",
+      line: c.line,
+      key: String(c.number),
+      level: customersWithRental.has(c.number) ? "error" : "warning",
+      message: customersWithRental.has(c.number) ? "missing phone" : "no phone on file — imported as a past customer without one",
+    });
+  }
   const custByNumber = new Map<number, CustomerRow>();
   const phones = new Map<string, number>();
   for (const c of customers) {
@@ -298,7 +321,7 @@ export async function planLegacyImport(prisma: PrismaClient, tenantId: string, i
         add({ file: "customers", line: c.line, key: String(c.number), level: "error", message: `phone ${c.phone} already belongs to RentOS customer #${owner.customerNumber}` });
       }
     }
-    const taken = db.customers.find((x) => x.customerNumber === c.number && x.phone !== c.phone);
+    const taken = db.customers.find((x) => x.customerNumber === c.number && (x.phone ?? "") !== c.phone);
     if (taken) add({ file: "customers", line: c.line, key: String(c.number), level: "error", message: `customer number ${c.number} is already used by a different RentOS customer (${taken.phone})` });
   }
 
@@ -314,8 +337,14 @@ export async function planLegacyImport(prisma: PrismaClient, tenantId: string, i
     if (!asset) f("error", `unknown unit code ${r.unitCode} — import units first`);
     else {
       if (r.typeSlug && asset.assetType.slug !== r.typeSlug) f("error", `${r.unitCode} is ${asset.assetType.slug} in RentOS but ${r.typeSlug} in the file`);
-      const holder = db.bookings.find((b) => b.assetId === asset.id && b.legacyBookingNumber !== r.bookingNumber);
-      if (holder) f("error", `unit ${r.unitCode} is already occupied in RentOS (booking ${holder.legacyBookingNumber ?? holder.id.slice(0, 8)}, ${holder.status})`);
+      // Another rental holding the unit. One that is itself in this file is the
+      // legacy system's own double booking (carried over as-is, flagged for the
+      // branch); anything else is a real RentOS rental and blocks the import.
+      const inFile = new Set(rentals.map((x) => x.bookingNumber));
+      const holders = db.bookings.filter((b) => b.assetId === asset.id && b.legacyBookingNumber !== r.bookingNumber);
+      const foreign = holders.find((b) => !b.legacyBookingNumber || !inFile.has(b.legacyBookingNumber));
+      if (foreign) f("error", `unit ${r.unitCode} is already occupied in RentOS (booking ${foreign.legacyBookingNumber ?? foreign.id.slice(0, 8)}, ${foreign.status})`);
+      else if (holders.length > 0) f("warning", `unit ${r.unitCode} has two active tenants in the legacy system (also booking ${holders[0]!.legacyBookingNumber}) — confirm with the branch which one left`);
     }
     const other = unitsInFile.get(r.unitCode);
     if (other && other.start < r.periodEnd && r.start < other.periodEnd) f("error", `overlapping dates with booking ${other.bookingNumber} on the same unit ${r.unitCode}`);
@@ -366,6 +395,12 @@ export async function planLegacyImport(prisma: PrismaClient, tenantId: string, i
     },
     canApply: false,
   };
+  if (input.reconcileOpenInvoices) {
+    plan.counts.settledInvoices = db.settled.length;
+    for (const inv of db.settled) {
+      add({ file: "open-invoices", line: 0, key: inv.invoiceNumber, level: "warning", message: `no longer unpaid in the legacy system — will be voided here (was ${inv.totalAmount.toString()})` });
+    }
+  }
   if (!plan.messagingPaused) {
     findings.unshift({ file: "customers", line: 0, key: "-", level: "error", message: "Messaging is not paused. Pause it (Settings → Messaging) before migrating, so no customer is messaged mid-import." });
   }
@@ -373,19 +408,57 @@ export async function planLegacyImport(prisma: PrismaClient, tenantId: string, i
   return { plan, parsed: { customers, rentals, invoices } };
 }
 
-async function ledgerOnce(
+/**
+ * Imported invoices that are still open here, were opened by this importer,
+ * have no RentOS payment against them, and are absent from `stillOpen`.
+ */
+async function findSettledInvoices(tx: Prisma.TransactionClient, stillOpen: string[]) {
+  const open = await tx.invoice.findMany({
+    where: { status: { in: ["ISSUED", "OVERDUE"] }, invoiceNumber: { notIn: stillOpen }, payments: { none: {} } },
+    select: { id: true, invoiceNumber: true, totalAmount: true },
+  });
+  if (open.length === 0) return [];
+  const imported = await tx.ledgerEntry.findMany({
+    where: { referenceType: "LEGACY_IMPORT", referenceId: { in: open.map((i) => i.id) } },
+    select: { referenceId: true },
+  });
+  const ids = new Set(imported.map((e) => e.referenceId));
+  return open.filter((i) => ids.has(i.id));
+}
+
+/**
+ * Bring the opening balance posted for one imported record to `target`,
+ * whatever earlier runs posted. The ledger is append-only, so a correction is
+ * a new pair of entries for the difference, never an edit: re-running with a
+ * corrected deposit or invoice amount posts only the delta, and re-running
+ * unchanged posts nothing.
+ *   AR:      Dr ACCOUNTS_RECEIVABLE / Cr OPENING_BALANCE  (reversed when lowering)
+ *   DEPOSIT: Dr OPENING_BALANCE / Cr DEPOSIT_LIABILITY    (reversed when lowering)
+ */
+async function ledgerSet(
   tx: Prisma.TransactionClient,
   tenantId: string,
   referenceId: string,
+  kind: "AR" | "DEPOSIT",
+  target: number,
   description: string,
-  entries: Array<{ account: "ACCOUNTS_RECEIVABLE" | "DEPOSIT_LIABILITY" | "OPENING_BALANCE"; entryType: "DEBIT" | "CREDIT"; amount: number }>,
 ) {
-  const exists = await tx.ledgerEntry.findFirst({ where: { referenceType: "LEGACY_IMPORT", referenceId } });
-  if (exists) return;
-  for (const e of entries) {
-    await tx.ledgerEntry.create({
-      data: { tenantId, account: e.account, entryType: e.entryType, amount: e.amount.toFixed(2), referenceType: "LEGACY_IMPORT", referenceId, description },
-    });
+  const account = kind === "AR" ? "ACCOUNTS_RECEIVABLE" : "DEPOSIT_LIABILITY";
+  const rows = await tx.ledgerEntry.findMany({ where: { referenceType: "LEGACY_IMPORT", referenceId, account }, select: { entryType: true, amount: true } });
+  // AR is debit-normal, a liability credit-normal.
+  const sign = (t: string) => ((t === "DEBIT") === (kind === "AR") ? 1 : -1);
+  const posted = rows.reduce((a, r) => a + sign(r.entryType) * Number(r.amount.toString()), 0);
+  const delta = Math.round((target - posted) * 100) / 100;
+  if (Math.abs(delta) < 0.005) return;
+  const up = delta > 0;
+  const amount = Math.abs(delta).toFixed(2);
+  const text = posted === 0 ? description : `${description} — adjusted ${up ? "+" : "−"}${amount}`;
+  const pair: Array<[typeof account | "OPENING_BALANCE", "DEBIT" | "CREDIT"]> =
+    kind === "AR"
+      ? [["ACCOUNTS_RECEIVABLE", up ? "DEBIT" : "CREDIT"], ["OPENING_BALANCE", up ? "CREDIT" : "DEBIT"]]
+      : [["OPENING_BALANCE", up ? "DEBIT" : "CREDIT"], ["DEPOSIT_LIABILITY", up ? "CREDIT" : "DEBIT"]];
+  for (const [acct, entryType] of pair) {
+    await tx.ledgerEntry.create({ data: { tenantId, account: acct, entryType, amount, referenceType: "LEGACY_IMPORT", referenceId, description: text } });
   }
 }
 
@@ -407,7 +480,7 @@ export async function applyLegacyImport(prisma: PrismaClient, tenantId: string, 
       type: c.type,
       fullName: c.fullName,
       companyName: c.companyName,
-      phone: c.phone,
+      phone: c.phone || null,
       email: c.email,
       address: c.address,
       taxId: c.npwp,
@@ -485,12 +558,7 @@ export async function applyLegacyImport(prisma: PrismaClient, tenantId: string, 
       if (deposit) await tx.deposit.update({ where: { id: deposit.id }, data: { amount: r.depositHeld.toFixed(2) } });
       else if (r.depositHeld > 0) await tx.deposit.create({ data: { tenantId, bookingId: booking.id, amount: r.depositHeld.toFixed(2), status: "HELD" } });
 
-      if (r.depositHeld > 0) {
-        await ledgerOnce(tx, tenantId, booking.id, `Opening balance: deposit held, Booqable booking #${r.bookingNumber}`, [
-          { account: "OPENING_BALANCE", entryType: "DEBIT", amount: r.depositHeld },
-          { account: "DEPOSIT_LIABILITY", entryType: "CREDIT", amount: r.depositHeld },
-        ]);
-      }
+      await ledgerSet(tx, tenantId, booking.id, "DEPOSIT", r.depositHeld, `Opening balance: deposit held, Booqable booking #${r.bookingNumber}`);
       return booking.id;
     });
     bookingIds.set(r.bookingNumber, bookingId);
@@ -532,10 +600,20 @@ export async function applyLegacyImport(prisma: PrismaClient, tenantId: string, 
         });
         invoiceId = created.id;
       }
-      await ledgerOnce(tx, tenantId, invoiceId, `Opening balance: Booqable invoice #${inv.number}`, [
-        { account: "ACCOUNTS_RECEIVABLE", entryType: "DEBIT", amount: outstanding },
-        { account: "OPENING_BALANCE", entryType: "CREDIT", amount: outstanding },
-      ]);
+      await ledgerSet(tx, tenantId, invoiceId, "AR", outstanding, `Opening balance: Booqable invoice #${inv.number}`);
+    });
+  }
+
+  // 3b. Invoices settled in the legacy system since an earlier import.
+  if (input.reconcileOpenInvoices) {
+    await withTenantContext(prisma, tenantId, async (tx) => {
+      for (const inv of await findSettledInvoices(tx, parsed.invoices.map((i) => i.number))) {
+        await tx.invoice.update({
+          where: { id: inv.id },
+          data: { status: "VOID", voidedAt: new Date(), voidReason: "Settled in Booqable after the import — see the legacy records" },
+        });
+        await ledgerSet(tx, tenantId, inv.id, "AR", 0, `Opening balance: Booqable invoice #${inv.invoiceNumber}`);
+      }
     });
   }
 

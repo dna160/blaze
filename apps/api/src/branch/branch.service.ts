@@ -89,6 +89,7 @@ export class BranchService {
       openInvoicesCsv: body.openInvoicesCsv,
       minContractSeq: body.minContractSeq,
       minInvoiceSeq: body.minInvoiceSeq,
+      reconcileOpenInvoices: body.reconcileOpenInvoices,
     };
     if (!body.apply) return { applied: false, plan: (await planLegacyImport(this.prisma.raw, tenantId, input)).plan };
     const result = await applyLegacyImport(this.prisma.raw, tenantId, input);

@@ -13,8 +13,8 @@ import { getPrismaClient, withPlatformContext, withTenantContext, type Prisma, t
 export class PrismaService implements OnModuleDestroy {
   readonly raw: PrismaClient = getPrismaClient();
 
-  async runInTenantContext<T>(tenantId: string, fn: (tx: Prisma.TransactionClient) => Promise<T>) {
-    return withTenantContext(this.raw, tenantId, fn);
+  async runInTenantContext<T>(tenantId: string, fn: (tx: Prisma.TransactionClient) => Promise<T>, options?: { timeout?: number; maxWait?: number }) {
+    return withTenantContext(this.raw, tenantId, fn, options);
   }
 
   /** See @rentos/database's withPlatformContext — the one sanctioned way to reach a NULL-tenant_id (platform-admin) User row. */

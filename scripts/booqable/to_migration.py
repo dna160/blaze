@@ -25,6 +25,11 @@ How Booqable maps onto RentOS (verified against the 2026-11-10 export):
 import json, sys, csv, collections, datetime, os
 d, units_typed, out = sys.argv[1], sys.argv[2], sys.argv[3]
 TODAY = sys.argv[4] if len(sys.argv) > 4 else datetime.date.today().isoformat()
+# Re-sync: the migration-rentals.csv that was applied last time. A rental's
+# key is "<first active order>/<unit>", and that order changes when Booqable
+# closes it and a renewal takes over — so a rental already in RentOS keeps the
+# key (and contract number) it was imported under.
+PREV = list(csv.DictReader(open(sys.argv[5]))) if len(sys.argv) > 5 else []
 os.makedirs(out, exist_ok=True)
 L = lambda n: json.load(open(f"{d}/{n}.json"))
 cu = {c["id"]: c for c in L("customers")}; od = {o["id"]: o for o in L("orders")}; lines = L("lines")
@@ -82,6 +87,11 @@ for x in docs:
     if a["document_type"] == "contract": contracts_by_order[a["order_id"]].append(x)
     if a["document_type"] == "invoice": invoices_by_order[a["order_id"]].append(x)
 
+order_customer = {o["attributes"]["number"]: o["attributes"].get("customer_id") for o in od.values()}
+prev_by = {}
+for r in PREV:
+    n = r["legacy_booking_number"].split("/")[0]
+    if n.isdigit(): prev_by[(order_customer.get(int(n)), r["unit_code"])] = r
 rentals, used_contract = [], collections.Counter()
 order_first_row = {}  # order id -> booking number of its first unit row (for open invoices)
 notes = collections.Counter()
@@ -94,6 +104,10 @@ for (cid, unit), items in sorted(chains.items(), key=lambda kv: (cu[kv[0][0]]["a
     cnum = cdocs[-1]["attributes"]["prefix_with_number"] if cdocs else f"BQ-{first['attributes']['number']}"
     if not cdocs: notes["rental without a Booqable contract document"] += 1
     if multi or used_contract[cnum]: cnum = f"{cnum}/{unit}"
+    kept = prev_by.get((cid, unit))
+    if kept:
+        booking, cnum = kept["legacy_booking_number"], kept["legacy_contract_number"]
+        if booking.split("/")[0] != str(first["attributes"]["number"]): notes["rental kept under its earlier key (its first order has since closed)"] += 1
     used_contract[cnum] += 1
     # A free-month promo order has a Rp 0 line; the rent is the latest NON-zero price in the
     # chain, else the unit type's list price from the quotation.
@@ -102,16 +116,7 @@ for (cid, unit), items in sorted(chains.items(), key=lambda kv: (cu[kv[0][0]]["a
     nonzero = [pr for (_, _, pr) in items if pr]
     price = nonzero[-1] if nonzero else LIST.get(type_slug(items[-1][1], 0) or UNIT_TYPE.get(unit, "") or "", 0)
     if not nonzero: notes["rental priced from the list price (only Rp 0 promo orders)"] += 1
-    units_in_first = max(1, len(unit_rows[first["id"]]))
-    # Booqable rarely records the deposit on the order (deposit_type none); the invoice/contract
-    # documents carry it. Take the largest deposit shown on any document of the chain's first order,
-    # else of any order in the chain, split evenly over that order's units.
-    def doc_deposit(oid):
-        vals = [max(x["attributes"].get("deposit_paid_in_cents") or 0, x["attributes"].get("deposit_in_cents") or 0) for x in invoices_by_order[oid] + contracts_by_order[oid]]
-        return max(vals) if vals else 0
-    dep_cents = doc_deposit(first["id"]) or max([doc_deposit(o["id"]) for (o, _, _) in items] + [0]) or (first["attributes"].get("deposit_paid_in_cents") or 0)
-    deposit = round(dep_cents / 100 / units_in_first)
-    if not dep_cents: notes["rental with no deposit on any Booqable document"] += 1
+    deposit = 0  # filled below from Booqable's payment records
     end = max(day(o["attributes"]["stops_at"]) for (o, _, _) in items)
     # Billed through = the end of the latest period that is either paid or carried as an open invoice,
     # so the recurring job bills the NEXT period and nothing twice.
@@ -122,16 +127,61 @@ for (cid, unit), items in sorted(chains.items(), key=lambda kv: (cu[kv[0][0]]["a
         "legacy_booking_number": booking, "legacy_contract_number": cnum, "legacy_customer_number": cu[cid]["attributes"]["number"],
         "unit_code": unit, "unit_type_slug": type_slug(items[-1][1], price) or "", "start_date": day(first["attributes"]["starts_at"]),
         "current_period_end": end, "monthly_price_idr": price, "deposit_held_idr": deposit, "paid_through": billed, "status": "ACTIVE",
-        "signed_contract_pdf": "", "notes": f"Booqable orders {status_note}" + (f"; deposit split over {units_in_first} units" if units_in_first > 1 else ""),
+        "signed_contract_pdf": "", "notes": f"Booqable orders {status_note}",
     })
 
+# Deposits (audit 2026-11-12): what is HELD is what the payment records say was
+# paid as deposit minus what was refunded, per customer, across ALL their orders
+# — most deposits were paid on an earlier, ended order than the current one.
+# Each deposit payment goes to the customer's active rentals of the units on
+# that payment's order; when none of those units is still rented, to the
+# customer's first active rental. Split evenly, the remainder on the first.
+payments = L("payments")
+all_units_by_order = collections.defaultdict(list)
+for s_ in sip:
+    it = si.get(s_["attributes"]["stock_item_id"])
+    if it: all_units_by_order[s_["attributes"]["order_id"]].append(it["attributes"]["identifier"])
+rentals_by_cust = collections.defaultdict(list)
+for r in rentals: rentals_by_cust[r["legacy_customer_number"]].append(r)
+deposit_no_rental = collections.Counter()
+for pmt in sorted(payments, key=lambda x: x["attributes"].get("succeeded_at") or x["attributes"]["created_at"]):
+    a = pmt["attributes"]
+    if a.get("status") != "succeeded" or not a.get("deposit_in_cents"): continue
+    amt = round(a["deposit_in_cents"] / 100) * (1 if a["type"] == "payment_charges" else -1)
+    # Some refunds carry no customer of their own, only the order they belong to.
+    c = cu.get(a["customer_id"]) or cu.get((od.get(a.get("order_id")) or {}).get("attributes", {}).get("customer_id"))
+    if not c: continue
+    mine = rentals_by_cust.get(c["attributes"]["number"], [])
+    if not mine:
+        deposit_no_rental[c["attributes"]["number"]] += amt; continue
+    on_order = set(all_units_by_order.get(a.get("order_id"), []))
+    target = [r for r in mine if r["unit_code"] in on_order] or mine[:1]
+    share, rem = divmod(abs(amt), len(target)); sign = 1 if amt > 0 else -1
+    for i, r in enumerate(target): r["deposit_held_idr"] += sign * (share + (rem if i == 0 else 0))
+for r in rentals:
+    if r["deposit_held_idr"] < 0:  # a refund recorded against units the customer no longer rents
+        notes["rental with a negative deposit after refunds (set to 0, review)"] += 1; r["deposit_held_idr"] = 0
+    if r["deposit_held_idr"]: r["notes"] += f"; deposit Rp {r['deposit_held_idr']:,} per Booqable payments"
+
+# Order notes: staff recorded PPh withholding and payment remarks on orders.
+order_notes = collections.defaultdict(list)
+for n in (L("notes") if os.path.exists(f"{d}/notes.json") else []):
+    o = od.get(n["attributes"].get("owner_id")); body = (n["attributes"].get("body") or "").strip()
+    if o and body and o["attributes"].get("customer_id") in cu:
+        order_notes[cu[o["attributes"]["customer_id"]]["attributes"]["number"]].append(f"#{o['attributes']['number']}: {body}")
+import re as _re
+pph_customers = {num for num, ns in order_notes.items() if any(_re.search(r"\bpot\w*\s+pp", x, _re.I) for x in ns)}
+
 active_customers = {r["legacy_customer_number"] for r in rentals}
+with_orders = {cu[o["attributes"]["customer_id"]]["attributes"]["number"] for o in od.values() if o["attributes"].get("customer_id") in cu and o["attributes"]["status"] != "canceled"}
 props = collections.defaultdict(dict)
 for c in cu.values(): props[c["id"]] = c["attributes"].get("properties") or {}
 customers = []
 for c in sorted(cu.values(), key=lambda c: c["attributes"]["number"]):
     a = c["attributes"]
-    if a["number"] not in active_customers: continue
+    # Everyone who ever rented: active customers, and past customers kept for
+    # the record (their history is in the legacy archive). Empty test records stay out.
+    if a["number"] not in active_customers and a["number"] not in with_orders: continue
     p = props[c["id"]]
     addr = (p.get("main_address") or "").replace("\r", "")
     addr_lines = [l.strip() for l in addr.split("\n") if l.strip() and l.strip().lower() != "indonesia"]
@@ -144,7 +194,9 @@ for c in sorted(cu.values(), key=lambda c: c["attributes"]["number"]):
         "phone_e164": p.get("phone") or p.get("pic_phone") or "", "email": a.get("email") or "",
         "address_line": ", ".join(addr_lines), "city": "", "postal_code": "",
         "ktp_number": "" if business else (p.get("nik_paspor_nib") or ""), "npwp": p.get("npwp") or "", "nib": (p.get("nik_paspor_nib") or "") if business else "",
-        "pph_withheld": "", "notes": f"Booqable customer #{a['number']}" + (f"; PIC phone {p.get('pic_phone')}" if p.get("pic_phone") and business else ""),
+        "pph_withheld": "true" if a["number"] in pph_customers else "",
+        "notes": (f"Booqable customer #{a['number']}" + ("" if a["number"] in active_customers else " (past customer)") + (f"; PIC phone {p.get('pic_phone')}" if p.get("pic_phone") and business else "")
+                  + ("; notes: " + " | ".join(order_notes[a["number"]]) if order_notes.get(a["number"]) else ""))[:900],
     })
 
 open_invoices, outside = [], []
@@ -163,8 +215,10 @@ for oid, invs in invoices_by_order.items():
             continue
         row = {"legacy_invoice_number": a["prefix_with_number"] or str(a["number"]), "legacy_booking_number": order_first_row.get(oid, ""),
                "invoice_date": a["date"], "due_date": a["due_date"] or a["date"], "period_start": day(a["starts_at"]), "period_end": day(a["stops_at"]),
-               "amount_idr": round(a["grand_total_in_cents"] / 100), "amount_paid_idr": round((a["paid_in_cents"] or 0) / 100), "status": "ISSUED",
-               "notes": f"Booqable order #{od[oid]['attributes']['number']} ({od[oid]['attributes']['status']})" if oid in od else "no order"}
+               # Booqable's own "to be paid" (it includes an unpaid deposit, which grand_total does not).
+               "amount_idr": round((a["to_be_paid_in_cents"] + (a["paid_in_cents"] or 0)) / 100), "amount_paid_idr": round((a["paid_in_cents"] or 0) / 100), "status": "ISSUED",
+               "notes": (f"Booqable order #{od[oid]['attributes']['number']} ({od[oid]['attributes']['status']})" if oid in od else "no order")
+                        + (f"; includes unpaid deposit Rp {round((a.get('deposit_to_be_paid_in_cents') or 0) / 100):,}" if (a.get("deposit_to_be_paid_in_cents") or 0) > 0 else "")}
         (open_invoices if row["legacy_booking_number"] else outside).append(row)
 
 def write(name, rows, header):
@@ -196,6 +250,10 @@ print(f"open invoices on active rentals: {len(open_invoices)}  total Rp {sum(r['
 print(f"draft (unfinalized) unpaid invoices, not imported: {len(drafts)}")
 print(f"unpaid invoices on ENDED rentals (for review, not imported): {len(outside)}  total Rp {sum(r['amount_idr']-r['amount_paid_idr'] for r in outside):,}")
 print(f"monthly rent: Rp {sum(r['monthly_price_idr'] for r in rentals):,}   deposits held: Rp {sum(r['deposit_held_idr'] for r in rentals):,}")
+write("REVIEW-deposits-for-customers-without-active-rental.csv", [{"legacy_customer_number": k, "net_deposit_idr": v} for k, v in sorted(deposit_no_rental.items()) if v], ["legacy_customer_number", "net_deposit_idr"])
+print(f"customers flagged as withholding PPh (from order notes): {len(pph_customers & {c['legacy_customer_number'] for c in customers})}")
+print(f"past customers included: {sum(1 for c in customers if c['legacy_customer_number'] not in active_customers)}")
+print(f"deposits for customers with no active rental (review, not imported): Rp {sum(v for v in deposit_no_rental.values()):,}")
 print(f"units file: {len(units)} ({len(units)-172} X-Large/Freestyle added)")
 print(f"max legacy numbers: contract {mx('contract')}, invoice {mx('invoice')}")
 print("notes:", dict(notes))

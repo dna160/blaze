@@ -40,3 +40,39 @@ for res in RESOURCES:
         page += 1
     json.dump(rows, open(os.path.join(out, f"{res}.json"), "w"))
     print(f"{res:22} {len(rows)}")
+
+# Files behind short-lived links: contract signature images (pre-signed S3 URLs
+# that expire within minutes) and product photos. Saved next to the JSON so the
+# archive can embed them — the links die with the Booqable account.
+def download(url, path):
+    try:
+        with urllib.request.urlopen(url, timeout=60) as r:
+            open(path, "wb").write(r.read())
+        return True
+    except Exception:
+        return False
+
+os.makedirs(os.path.join(out, "signatures"), exist_ok=True)
+os.makedirs(os.path.join(out, "photos"), exist_ok=True)
+docs = json.load(open(os.path.join(out, "documents.json")))
+signed = [d for d in docs if d["attributes"].get("signature_url")]
+ok = 0
+for d in signed:
+    path = os.path.join(out, "signatures", d["id"])
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        ok += 1
+        continue
+    url = d["attributes"]["signature_url"]
+    if not download(url, path):
+        # The link expired while paging; ask for a fresh one.
+        try:
+            url = get(f"{B}/documents/{d['id']}")["data"]["attributes"].get("signature_url")
+        except Exception:
+            url = None
+        if not (url and download(url, path)):
+            continue
+    ok += 1
+print(f"{'signatures':22} {ok} of {len(signed)}")
+photos = json.load(open(os.path.join(out, "photos.json"))) if os.path.exists(os.path.join(out, "photos.json")) else []
+print(f"{'photos':22} {sum(1 for p in photos if download(p['attributes'].get('large_url') or p['attributes'].get('original_url'), os.path.join(out, 'photos', p['id'])))} of {len(photos)}")
+

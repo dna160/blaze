@@ -114,5 +114,7 @@ export const LegacyMigrationRequestSchema = z.object({
   apply: z.boolean().optional(),
   minContractSeq: z.number().int().min(0).optional(),
   minInvoiceSeq: z.number().int().min(0).optional(),
+  /** The open-invoices CSV is the complete unpaid list: imported invoices missing from it are voided as settled in the legacy system. */
+  reconcileOpenInvoices: z.boolean().optional(),
 });
 export type LegacyMigrationRequest = z.infer<typeof LegacyMigrationRequestSchema>;

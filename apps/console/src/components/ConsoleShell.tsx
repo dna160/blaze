@@ -21,6 +21,7 @@ const NAV = [
   { href: "/invoices", label: "Finance" },
   { href: "/deposits", label: "Deposits" },
   { href: "/reports", label: "Reports" },
+  { href: "/legacy", label: "Legacy Records" },
   { href: "/api-access", label: "API Access" },
   { href: "/ota-sync", label: "OTA Sync" },
   { href: "/automation", label: "Automation" },

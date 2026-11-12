@@ -1485,3 +1485,43 @@ model OtaBlockedDate {
   @@index([assetId])
   @@map("ota_blocked_dates")
 }
+
+// ---------------------------------------------------------------------------
+// Legacy archive (owner, 2026-11-12)
+// ---------------------------------------------------------------------------
+
+/// A record kept exactly as the legacy system (Booqable) made it: past and
+/// current orders, invoices, payments, contracts with their text and
+/// signature, notes, staff, pricing. Read-only history — it never feeds the
+/// ledger, AR, numbering or any job; RentOS's own books start at the opening
+/// balances. Contracts made from go-live on are RentOS documents; these are
+/// the backlog of what existed before.
+model LegacyRecord {
+  id             String    @id @default(uuid()) @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  /// "booqable"
+  source         String
+  /// CUSTOMER | ORDER | INVOICE | CONTRACT | QUOTE | PAYMENT | NOTE | EMAIL | TEXT | CONFIG
+  kind           String
+  /// The legacy system's own id (or a content hash for TEXT).
+  legacyId       String    @map("legacy_id")
+  /// The number staff know it by: order #, document number, customer #.
+  number         String?
+  /// The RentOS customer this belongs to, when that customer was migrated.
+  customerId     String?   @map("customer_id") @db.Uuid
+  customerNumber Int?      @map("customer_number")
+  customerName   String?   @map("customer_name")
+  occurredAt     DateTime? @map("occurred_at")
+  amount         Decimal?  @db.Decimal(14, 2)
+  status         String?
+  title          String?
+  /// The legacy record itself, as exported, with its lines.
+  data           Json
+  importedAt     DateTime  @default(now()) @map("imported_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@unique([tenantId, source, kind, legacyId])
+  @@index([tenantId, kind, occurredAt])
+  @@index([tenantId, customerNumber])
+  @@map("legacy_records")
+}

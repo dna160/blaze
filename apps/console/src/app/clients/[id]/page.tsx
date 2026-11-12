@@ -386,6 +386,14 @@ export default function ClientDetailPage() {
         <section>
           <h2 className="text-lg font-medium">Documents</h2>
           <p className="text-xs text-brand-700/60">Contracts, invoices, payment proofs and KYC files. Each opens in a new tab; opening a KYC file is logged.</p>
+          {customer.customerNumber !== null && (
+            <p className="mt-1 text-xs">
+              <Link href={`/legacy?customer=${customer.customerNumber}`} className="text-amber-800 underline">
+                Legacy records from Booqable for this customer
+              </Link>{" "}
+              <span className="text-brand-700/60">— past orders, invoices, payments and the original signed contracts.</span>
+            </p>
+          )}
           {docError && <p className="mt-2 text-sm text-red-600">{docError}</p>}
           {!documents ? (
             !docError && <p className="mt-2 text-sm text-brand-700/60">Loading…</p>

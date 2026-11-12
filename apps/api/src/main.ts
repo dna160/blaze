@@ -15,6 +15,10 @@ async function bootstrap() {
     rawBody: true,
   });
 
+  // The legacy-archive import posts batches of ~1.5 MB (contract texts, embedded
+  // signature images); everything else is far below the 100 kB default.
+  app.useBodyParser("json", { limit: "4mb" });
+
   app.enableCors({ origin: (process.env.CORS_ORIGINS ?? "*").split(","), credentials: true });
   app.setGlobalPrefix("api");
 

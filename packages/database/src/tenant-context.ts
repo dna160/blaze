@@ -26,6 +26,8 @@ export async function withTenantContext<T>(
   prisma: PrismaClient,
   tenantId: string,
   fn: (tx: Prisma.TransactionClient) => Promise<T>,
+  /** Longer limits for bulk work (imports); the defaults suit a request. */
+  options?: { timeout?: number; maxWait?: number },
 ): Promise<T> {
   if (!UUID_RE.test(tenantId)) {
     throw new InvalidTenantIdError(tenantId);
@@ -34,5 +36,5 @@ export async function withTenantContext<T>(
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT set_config('app.tenant_id', ${tenantId}, true)`;
     return fn(tx);
-  });
+  }, options);
 }
