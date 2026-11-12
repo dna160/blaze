@@ -1824,6 +1824,18 @@ branch (86 customers, 188 rentals, 48 open invoices, 196 units) with messaging
 paused. Still owed by the branch: deposits held (Booqable has 17 of 188), the five
 units with two active tenants, STORAGE-103/105 sizes, the review lists.
 
+**Booqable migration complete (2026-11-12):** audit in
+`docs/AUDIT-booqable-migration.md`. Live book re-synced (deposits now from
+Booqable payments: Rp 52.67 M; AR Rp 266.03 M; ledger balanced). History is NOT
+rebuilt (owner's call): `LegacyRecord` holds all 1,452 Booqable records as
+exported (`apps/api/src/legacy/`, console `/legacy`), read-only, feeding nothing.
+Opening balances are set by target (`ledgerSet` in `imports/legacy.ts`), so a
+re-sync posts only differences. Staff still use Booqable: re-run fetch →
+to_migration (with the previous rentals CSV) → `--reconcile` → to_archive on
+cut-over day. The last applied rentals CSV is NOT in the repo (PII); without it,
+rental keys can drift when a first order closes — the dry run then reports
+"unit already occupied" instead of importing silently.
+
 **Still open (P1/P2, not built):** PPh settlement net of withholding and partial
 payments (§8.4 — the PDF breakdown exists behind `Organization.taxConfig.pphWithholdingEnabled`,
 off until finance's worked examples), reports date-range presets + XLSX + AR-aging

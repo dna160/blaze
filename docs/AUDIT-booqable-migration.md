@@ -1,5 +1,8 @@
 # Audit — is everything in Booqable now in RentOS? (2026-11-12)
 
+> **Status, later on 2026-11-12: closed.** The gaps below were fixed the same
+> day — see "After the fix" at the end. The table records what the audit found.
+
 **Answer: no.** RentOS holds the *live book* (who rents what today, and what
 they owe). It does not hold Booqable's *history* (ended rentals, paid invoices,
 payments), and three parts of the live book are incomplete or stale.
@@ -21,7 +24,7 @@ data is stored in this file.
 | Invoices — unpaid | 58 (Rp 332.5 million) | 48 (Rp 258.7 million) | 6 on ended rentals (Rp 39.7 million), 3 unfinalized drafts, 1 new since the import. One imported invoice is Rp 1.1 million short: its unpaid deposit was left off. |
 | Invoices — paid | 314 (Rp 2.38 billion) | 0 | Not imported. |
 | Payments | 316 (Rp 2.45 billion; 311 charges, 5 refunds; all manual bank) | 0 | Not imported. |
-| Deposits held | Rp 52.67 million net, 38 active customers hold Rp 49.59 million | Rp 16.22 million on 17 rentals | **Rp 33.4 million under-recorded.** The importer read deposits from the current order only; most were paid on an earlier, ended order of the same customer. Rp 3.08 million is held for customers with no active rental. |
+| Deposits held | Rp 52.67 million net, all of it for 38 customers with an active rental | Rp 16.22 million on 17 rentals | **Rp 36.45 million under-recorded.** The importer read deposits from the current order only; most were paid on an earlier, ended order of the same customer. (First reported as Rp 33.4 million with Rp 3.08 million owed to past customers: three refunds carry no customer of their own, only an order, and were not matched.) |
 | Contracts | 203 (139 signed, 138 with a signature image) | 188 contract rows, numbers kept | No PDF or signature attached. Booqable's API does not serve PDFs; it does give the contract text (HTML) and the signature image, which downloads fine. |
 | Order notes | 48, on 23 customers | 0 | 13 customers' notes record PPh withholding ("Pot PPh 10% = …"); none of the 86 customers has `pphWithheld` set. Others record over/under-payments and split payments. |
 | Extra charges on active orders | 12 lines (padlock, manpower, management fee, late fine) | folded into the invoice total | Line detail lost on the 48 open invoices (one RENT line each). |
@@ -59,3 +62,35 @@ data is stored in this file.
 
 Until 1–2 are done, RentOS's deposits and one invoice are wrong; until 3–5 are
 done, Booqable must be kept (read-only) as the record of the past.
+
+## After the fix (2026-11-12, live City Storage Kebon Jeruk)
+
+Owner's direction: do not rebuild Booqable's history or contracts in RentOS's
+format — keep what Booqable made, as a backlog. Contracts made from go-live on
+are RentOS documents.
+
+| | Booqable | RentOS now |
+|---|---|---|
+| Customers | 99 | 95 as customers (86 active, 9 past); all 99 in the archive (4 are empty test records) |
+| Active unit rentals | 188 | 188, re-synced to today's Booqable |
+| Unpaid invoices on active rentals | 49, Rp 266.03 million | 49, Rp 266.03 million |
+| Deposits held | Rp 52.67 million | Rp 52.67 million on 63 rentals |
+| PPh-withholding customers (from order notes) | 14 | 14 flagged `pphWithheld` |
+| Ledger | — | balanced: AR 266.03 M, deposits 52.67 M, opening balance 213.36 M |
+| Orders (all statuses) | 389 | 389 in the archive, with lines, units and notes |
+| Invoices / contracts / quote | 372 / 203 / 1 | all in the archive; contracts with their text, 139 with the signature image |
+| Payments and refunds | 316 | 316 in the archive |
+| Notes / emails | 48 / 6 | in the archive |
+| Settings (bundles, coupons, pricing, tax, staff, templates, photos) | 12 groups | in the archive |
+
+Console → **Legacy Records** browses the archive; each client page links to
+that customer's records. The archive is read-only and feeds nothing.
+
+Still open, for the branch: STORAGE-103 / STORAGE-105 (size unknown, not
+imported as units), the five units with two active tenants, 6 unpaid invoices
+on ended rentals (Rp 39.7 million) and 4 unfinalized drafts — all visible in
+the archive, none imported as RentOS receivables.
+
+**Before cut-over:** staff are still working in Booqable. Re-run the three
+steps (RUNBOOK-GO-LIVE §7) on cut-over day; every step is idempotent.
+

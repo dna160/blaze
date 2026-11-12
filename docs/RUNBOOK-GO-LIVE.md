@@ -205,6 +205,25 @@ BOOQABLE_API_KEY=<key> python3 scripts/booqable/fetch.py ./booqable
 python3 scripts/booqable/to_migration.py ./booqable packages/database/prisma/data/kebon-jeruk/kebon-jeruk-units.csv ./import
 ```
 
+On a **re-sync** (anything after the first import), pass the rentals file that
+was applied last time as a fifth argument, so each rental keeps the key it was
+imported under, and run the migration with `--reconcile` so invoices settled
+in Booqable since are closed here:
+
+```bash
+python3 scripts/booqable/to_migration.py ./booqable packages/database/prisma/data/kebon-jeruk/kebon-jeruk-units.csv ./import 2026-11-12 ./previous/migration-rentals.csv
+```
+
+The history (every order, invoice, payment, contract with its signature, note
+and setting, kept as Booqable made them) goes into the read-only legacy archive:
+
+```bash
+python3 scripts/booqable/to_archive.py ./booqable ./archive
+```
+
+Each `archive-NNN.json` is posted to `POST /api/legacy/records/import` as an
+org-scoped Admin (idempotent). Console → Legacy Records shows the result.
+
 That writes the three migration CSVs, `units-full.csv` (the 172 STORAGE units plus
 Booqable's 6 X-Large and 20 Freestyle stock items) and `REVIEW-*.csv` lists for staff
 (unpaid invoices on ended rentals, unfinalized drafts). Import `units-full.csv` in
