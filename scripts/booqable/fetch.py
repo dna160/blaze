@@ -20,7 +20,14 @@ def get(url):
         except Exception as e:
             if i == 3: raise
             time.sleep(2 ** i)
-for res in ["customers", "orders", "product_groups", "products", "stock_items", "documents", "payments", "lines", "plannings", "stock_item_plannings", "properties", "default_properties"]:
+RESOURCES = [
+    "customers", "orders", "product_groups", "products", "stock_items", "documents", "payments", "lines", "plannings",
+    "stock_item_plannings", "properties", "default_properties",
+    # Added for the completeness audit (2026-11-12): everything else the account holds.
+    "notes", "emails", "email_templates", "bundles", "bundle_items", "coupons", "tax_rates", "tax_regions", "tax_values",
+    "locations", "employees", "price_structures", "price_tiles", "operating_rules", "photos", "collections", "items",
+]
+for res in RESOURCES:
     rows, page = [], 1
     while True:
         try:
