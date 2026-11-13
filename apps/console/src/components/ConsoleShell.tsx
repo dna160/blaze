@@ -34,10 +34,10 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    id: "units",
-    label: "Units",
+    id: "inventory",
+    label: "Inventory",
     items: [
-      { href: "/assets", label: "Inventory" },
+      { href: "/assets", label: "Storage" },
       { href: "/catalog-setup", label: "Catalog Setup" },
     ],
   },

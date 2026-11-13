@@ -121,7 +121,7 @@ export default function AssetsPage() {
   return (
     <ConsoleShell>
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Inventory</h1>
+        <h1 className="text-2xl font-semibold">Storage</h1>
         <div className="flex gap-2 text-sm">
           <button
             onClick={() => setView("grid")}
