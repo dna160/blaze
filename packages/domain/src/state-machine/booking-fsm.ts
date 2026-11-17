@@ -93,6 +93,11 @@ const RECURRING_LEASE_TRANSITIONS: ReadonlyArray<Transition<BookingStatus, Booki
       (!ctx.contractRequired || ctx.contractSigned) && ctx.firstInvoicePaid && ctx.unitAssigned,
   },
   { from: "APPROVED", event: "PAYMENT_TIMEOUT", to: "LAPSED" },
+  // Staff cancel a booking that was approved but never started (the customer
+  // backed out, or it was a test): the unit is released and its unpaid
+  // invoices are voided by BookingService.reject. A lease that is ACTIVE ends
+  // through notice / term end, never through this.
+  { from: "APPROVED", event: "REJECT", to: "REJECTED" },
   { from: "ACTIVE", event: "CYCLE_INVOICE_ISSUED", to: "RENEWING" },
   { from: "RENEWING", event: "CYCLE_PAYMENT_RECEIVED", to: "ACTIVE" },
   { from: "RENEWING", event: "GRACE_PERIOD_ELAPSED_UNPAID", to: "SUSPENDED" },

@@ -89,6 +89,11 @@ describe("recurringLeaseBookingFsm — PRD v2 waitlist + term end", () => {
     expect((await recurringLeaseBookingFsm.fire("WAITLISTED", "EXPIRE", ctx())).to).toBe("EXPIRED");
   });
 
+  it("lets staff cancel an approved booking that never started, but not a running lease", async () => {
+    expect((await recurringLeaseBookingFsm.fire("APPROVED", "REJECT", ctx())).to).toBe("REJECTED");
+    await expect(recurringLeaseBookingFsm.fire("ACTIVE", "REJECT", ctx())).rejects.toThrow();
+  });
+
   it("a waitlisted booking cannot be approved directly — it must be offered a unit first", async () => {
     await expect(recurringLeaseBookingFsm.fire("WAITLISTED", "APPROVE", ctx())).rejects.toThrow(IllegalTransitionError);
   });

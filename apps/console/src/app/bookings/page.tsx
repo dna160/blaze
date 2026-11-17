@@ -88,6 +88,13 @@ export default function BookingsPage() {
     }
   }
 
+  /** After approval: releases the unit and voids the unpaid proforma. Refused once money has come in. */
+  function cancel(id: string) {
+    const reason = window.prompt("Why is this booking being cancelled? (sent to the customer)");
+    if (!reason) return;
+    act(id, "reject", { reason }, "Cancelled — the unit is free again, the unpaid invoice is void and the customer has been told.");
+  }
+
   function reject(id: string) {
     const reason = window.prompt("Rejection reason (sent to the customer)?");
     if (!reason) return;
@@ -206,6 +213,11 @@ export default function BookingsPage() {
                           <Link href={`/invoices/${b.firstInvoice.id}`} className="rounded bg-brand-700 px-3 py-1.5 text-xs font-medium text-white">
                             Open invoice
                           </Link>
+                        )}
+                        {(col.stage === "KYC" || col.stage === "CONTRACT" || col.stage === "FINANCE") && canApprove && (
+                          <button onClick={() => cancel(b.id)} disabled={busyId === b.id} className="rounded border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 disabled:opacity-50">
+                            Cancel booking
+                          </button>
                         )}
                       </div>
                     </article>

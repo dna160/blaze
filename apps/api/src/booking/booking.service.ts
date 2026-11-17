@@ -8,6 +8,7 @@ import {
   generateTermPaymentSchedule,
   newContractFields,
   recordDepositHeldEntries,
+  recordInvoiceVoidedEntries,
   resolveBlackoutMonths,
   resolveInvoiceLeadDays,
   voidScheduledInvoices,
@@ -814,6 +815,28 @@ export class BookingService {
 
       const fsm = bookingFsmFor(existing.bookingModel);
       const { to } = await fsm.fire(existing.status as never, "REJECT", {} as BookingActivationContext);
+
+      // Cancelling after approval: the booking may already have its contract and
+      // proforma. Money that came in is not ours to wave away — refuse, and let
+      // finance refund it first. Unpaid invoices are voided with the booking, so
+      // no bill is left open (or reminded) for a rental that will not happen.
+      const invoices = await tx.invoice.findMany({ where: { bookingId }, include: { payments: { select: { status: true } } } });
+      const paid = invoices.find((i) => ["PAID", "PARTIALLY_REFUNDED"].includes(i.status) || i.payments.some((p) => p.status === "SUCCEEDED" || p.status === "PENDING"));
+      if (paid) {
+        throw new ConflictException(
+          `Invoice ${paid.invoiceNumber} has a payment recorded or awaiting verification — refund or reject that payment first, then cancel the booking.`,
+        );
+      }
+      for (const invoice of invoices.filter((i) => ["SCHEDULED", "ISSUED", "OVERDUE"].includes(i.status))) {
+        await tx.invoice.update({
+          where: { id: invoice.id },
+          data: { status: "VOID", voidedAt: new Date(), voidedByUserId: approverUserId, voidReason: `Booking cancelled: ${reason}` },
+        });
+        await recordInvoiceVoidedEntries(tx, tenant.id, invoice.id);
+        await tx.auditLog.create({
+          data: { tenantId: tenant.id, actorUserId: approverUserId, action: "INVOICE_VOID", entityType: "Invoice", entityId: invoice.id, metadata: { reason: `Booking cancelled: ${reason}` } },
+        });
+      }
 
       const updated = await tx.booking.update({
         where: { id: bookingId },
