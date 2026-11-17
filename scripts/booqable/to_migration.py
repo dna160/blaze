@@ -123,9 +123,14 @@ for (cid, unit), items in sorted(chains.items(), key=lambda kv: (cu[kv[0][0]]["a
     billed = end
     status_note = "; ".join(sorted({f"#{o['attributes']['number']} {o['attributes']['status']}/{o['attributes']['payment_status']}" for (o, _, _) in items}))
     for (o, _, _) in items: order_first_row.setdefault(o["id"], booking)
+    # The size is the line title of the latest order that has one (a freshly reserved renewal
+    # may not), else what the last sync found. The lease began when its FIRST order did: once
+    # that order closes the chain starts later, so a re-sync keeps the earlier date.
+    slug = next((t for t in (type_slug(title, price) for (_, title, _) in reversed(items)) if t), None) or (kept or {}).get("unit_type_slug") or ""
+    start = min(filter(None, [day(first["attributes"]["starts_at"]), (kept or {}).get("start_date")]))
     rentals.append({
         "legacy_booking_number": booking, "legacy_contract_number": cnum, "legacy_customer_number": cu[cid]["attributes"]["number"],
-        "unit_code": unit, "unit_type_slug": type_slug(items[-1][1], price) or "", "start_date": day(first["attributes"]["starts_at"]),
+        "unit_code": unit, "unit_type_slug": slug, "start_date": start,
         "current_period_end": end, "monthly_price_idr": price, "deposit_held_idr": deposit, "paid_through": billed, "status": "ACTIVE",
         "signed_contract_pdf": "", "notes": f"Booqable orders {status_note}",
     })

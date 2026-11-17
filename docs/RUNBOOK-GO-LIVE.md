@@ -214,6 +214,10 @@ in Booqable since are closed here:
 python3 scripts/booqable/to_migration.py ./booqable packages/database/prisma/data/kebon-jeruk/kebon-jeruk-units.csv ./import 2026-11-12 ./previous/migration-rentals.csv
 ```
 
+A unit that Booqable itself has booked to two tenants (even for overlapping
+dates) is imported as it is and listed as a warning in the dry run: read those
+warnings, they are the branch's to resolve.
+
 The history (every order, invoice, payment, contract with its signature, note
 and setting, kept as Booqable made them) goes into the read-only legacy archive:
 

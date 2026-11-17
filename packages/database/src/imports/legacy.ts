@@ -347,7 +347,12 @@ export async function planLegacyImport(prisma: PrismaClient, tenantId: string, i
       else if (holders.length > 0) f("warning", `unit ${r.unitCode} has two active tenants in the legacy system (also booking ${holders[0]!.legacyBookingNumber}) — confirm with the branch which one left`);
     }
     const other = unitsInFile.get(r.unitCode);
-    if (other && other.start < r.periodEnd && r.start < other.periodEnd) f("error", `overlapping dates with booking ${other.bookingNumber} on the same unit ${r.unitCode}`);
+    // Two rows of this file on one unit for overlapping dates: the legacy system's own double
+    // booking (a tenant moved in before the last one was checked out). Carried over as it is,
+    // like any other unit with two holders above, and flagged for the branch — not refused.
+    if (other && other.start < r.periodEnd && r.start < other.periodEnd) {
+      f("warning", `unit ${r.unitCode} is booked for overlapping dates in the legacy system (also booking ${other.bookingNumber}) — carried over as-is; confirm with the branch who holds it`);
+    }
     unitsInFile.set(r.unitCode, r);
     if (r.depositHeld !== r.monthlyPrice) {
       f("warning", `deposit mismatch: held ${r.depositHeld} vs 1x rent ${r.monthlyPrice} — the held amount is kept as-is`);
