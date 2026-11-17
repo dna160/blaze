@@ -1,6 +1,7 @@
 import {
   generateNextCycleInvoice,
   getPrismaClient,
+  legacyAutomationHold,
   withTenantContext,
   type BookingForInvoicing,
 } from "@rentos/database";
@@ -28,7 +29,14 @@ export async function runGenerateRecurringInvoices(leadDays = DEFAULT_LEAD_DAYS)
       // SCHEDULED invoices issued by issue-scheduled-invoices.job.ts — this
       // anchor-date generator only serves the legacy indefinite leases.
       const activeLeases = await tx.booking.findMany({
-        where: { status: "ACTIVE", bookingModel: "RECURRING_LEASE", anchorDay: { not: null }, termMonths: null },
+        where: {
+          status: "ACTIVE",
+          bookingModel: "RECURRING_LEASE",
+          anchorDay: { not: null },
+          termMonths: null,
+          // Legacy hold: imported rentals are still billed in the old system.
+          ...(legacyAutomationHold(tenant.featureFlags) ? { legacyBookingNumber: null } : {}),
+        },
       });
 
       for (const booking of activeLeases) {

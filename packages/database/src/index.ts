@@ -130,3 +130,4 @@ export {
   type LegacyPlan,
   type Finding as LegacyFinding,
 } from "./imports/legacy.js";
+export { legacyAutomationHold } from "./legacy-hold.js";

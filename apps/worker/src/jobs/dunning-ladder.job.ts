@@ -1,4 +1,4 @@
-import { getPrismaClient, markInvoiceOverdue, withTenantContext, type Prisma } from "@rentos/database";
+import { getPrismaClient, legacyAutomationHold, markInvoiceOverdue, withTenantContext, type Prisma } from "@rentos/database";
 import { recurringLeaseBookingFsm, type BookingActivationContext } from "@rentos/domain";
 
 import { notify, notifyCustomer } from "../notify.js";
@@ -123,6 +123,12 @@ export async function runDunningLadder(): Promise<void> {
   for (const tenant of tenants) {
     await withTenantContext(prisma, tenant.id, async (tx) => {
       const config = await resolveDunningLadderConfig(tx, tenant.id);
+      // Legacy hold: invoices of imported rentals are still collected in the old
+      // system — they keep their status (an unpaid one still turns OVERDUE, for
+      // the AR report) but nobody is reminded and nothing is suspended.
+      const held = legacyAutomationHold(tenant.featureFlags)
+        ? new Set((await tx.invoice.findMany({ where: { status: { in: ["ISSUED", "OVERDUE"] }, booking: { legacyBookingNumber: { not: null } } }, select: { id: true } })).map((i) => i.id))
+        : new Set<string>();
       const issued = await tx.invoice.findMany({ where: { status: "ISSUED" } });
 
       for (const invoice of issued) {
@@ -130,7 +136,7 @@ export async function runDunningLadder(): Promise<void> {
         dueDate.setHours(0, 0, 0, 0);
         const daysUntilDue = daysBetween(dueDate, today) * -1;
 
-        if (config.reminderDaysBeforeDue.includes(daysUntilDue)) {
+        if (config.reminderDaysBeforeDue.includes(daysUntilDue) && !held.has(invoice.id)) {
           const templateKey = `invoice_reminder_h${daysUntilDue}`;
           const customer = await tx.customer.findUniqueOrThrow({ where: { id: invoice.customerId } });
           await remindBoth(tx, tenant, invoice.id, templateKey, customer, {
@@ -148,6 +154,7 @@ export async function runDunningLadder(): Promise<void> {
 
       const overdue = await tx.invoice.findMany({ where: { status: "OVERDUE" } });
       for (const invoice of overdue) {
+        if (held.has(invoice.id)) continue;
         const dueDate = new Date(invoice.dueDate);
         dueDate.setHours(0, 0, 0, 0);
         const daysOverdue = daysBetween(today, dueDate);

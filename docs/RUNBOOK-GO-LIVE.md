@@ -261,6 +261,22 @@ continue above the highest legacy one.
 5. Freeze Booqable.
 6. Review the **SUPPRESSED** notifications (everything that would have gone out while
    paused) and confirm none should be sent; then unpause in Settings → Messaging.
+7. Lift the **legacy hold** (Settings → Branch → Imported rentals) — only now.
+
+### The legacy hold
+
+Importing a legacy book puts the branch on hold (`featureFlags.legacy_automation_hold`):
+RentOS issues no monthly invoice and sends no due / overdue reminder for the
+**imported** rentals and invoices, and suspends nobody over them. That is what
+lets messaging be unpaused before cut-over — to pair the number, test KYC
+requests, take real new bookings — without a customer hearing from two systems
+or being billed twice. Bookings and invoices made in RentOS are not held.
+
+Before lifting it: Booqable is frozen, a last re-sync has run (so nothing paid
+there is still open here), and someone has looked at the overdue list — from
+the next morning (invoices 08:00 WIB, reminders 09:00 WIB) those customers are
+billed and reminded by RentOS, and a rental whose invoice is 14+ days overdue
+can be suspended.
 
 ## 9. Storefront domain (needs B6)
 

@@ -1836,6 +1836,14 @@ cut-over day. The last applied rentals CSV is NOT in the repo (PII); without it,
 rental keys can drift when a first order closes — the dry run then reports
 "unit already occupied" instead of importing silently.
 
+**Legacy hold (2026-11-17):** `featureFlags.legacy_automation_hold`
+(`packages/database/src/legacy-hold.ts`, toggle in Settings → Branch, set
+automatically by the first legacy import). While on, the worker's recurring
+invoice generator skips bookings with `legacyBookingNumber`, and the dunning
+ladder skips invoices of such bookings (they still turn OVERDUE). Meant for a
+branch whose messaging is unpaused for testing while Booqable is still in use;
+lifting it is the cut-over (RUNBOOK §8).
+
 **Still open (P1/P2, not built):** PPh settlement net of withholding and partial
 payments (§8.4 — the PDF breakdown exists behind `Organization.taxConfig.pphWithholdingEnabled`,
 off until finance's worked examples), reports date-range presets + XLSX + AR-aging

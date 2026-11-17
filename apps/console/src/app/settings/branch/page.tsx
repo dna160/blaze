@@ -69,6 +69,7 @@ export default function BranchSettingsPage() {
       numbering: { ...s.numbering },
       onlinePaymentsEnabled: s.onlinePaymentsFlag,
       apiAccessEnabled: s.apiAccessEnabled,
+      legacyAutomationHold: s.legacyAutomationHold,
     });
   }
 
@@ -127,6 +128,7 @@ export default function BranchSettingsPage() {
       },
       onlinePaymentsEnabled: form.onlinePaymentsEnabled,
       apiAccessEnabled: form.apiAccessEnabled,
+      legacyAutomationHold: form.legacyAutomationHold,
     };
     try {
       fill(await apiFetch<BranchSettings>("/branch/settings", { token: authClient.getToken(), method: "PUT", body }));
@@ -381,6 +383,18 @@ export default function BranchSettingsPage() {
             <p className="text-xs text-brand-700/60">
               Turns on the API Access page. A key reads this branch&apos;s bookings and invoices (customer data included) and stays
               valid until revoked — create one per system and revoke any you no longer use.
+            </p>
+          </Section>
+
+          <Section title="Imported rentals (legacy system)">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={form.legacyAutomationHold ?? false} disabled={ro} onChange={(e) => set("legacyAutomationHold", e.target.checked)} />
+              <span>Hold automatic invoices and payment reminders for rentals imported from the legacy system</span>
+            </label>
+            <p className="text-xs text-brand-700/60">
+              While on, RentOS issues no monthly invoice and sends no due or overdue reminder for the rentals and invoices imported
+              from Booqable — they are still billed there. Bookings and invoices made in RentOS are not affected. Turn this off on
+              cut-over day, once Booqable is no longer used: RentOS then bills and reminds those customers itself.
             </p>
           </Section>
         </fieldset>

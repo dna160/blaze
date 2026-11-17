@@ -71,6 +71,12 @@ export const BranchSettingsSchema = BranchPublicProfileSchema.extend({
   onlinePaymentsFlag: z.boolean(),
   /** featureFlags.api_access_enabled — the API Access page: API keys, the read-only external API, outbound webhooks. */
   apiAccessEnabled: z.boolean(),
+  /**
+   * featureFlags.legacy_automation_hold — while true, rentals imported from the
+   * legacy system get no automatic invoice, reminder or suspension from RentOS
+   * (they are still run in the legacy system). Lifting it is the cut-over.
+   */
+  legacyAutomationHold: z.boolean(),
   /** Whether this deployment has a real gateway at all (PAYMENT_PROVIDER=xendit in production). */
   gatewayReady: z.boolean(),
   /** A sample of the next numbers, so a format change can be checked before saving. */
@@ -99,6 +105,7 @@ export const UpdateBranchSettingsRequestSchema = z.object({
   numbering: NumberingSchema.optional(),
   onlinePaymentsEnabled: z.boolean().optional(),
   apiAccessEnabled: z.boolean().optional(),
+  legacyAutomationHold: z.boolean().optional(),
 });
 export type UpdateBranchSettingsRequest = z.infer<typeof UpdateBranchSettingsRequestSchema>;
 

@@ -478,6 +478,14 @@ export async function applyLegacyImport(prisma: PrismaClient, tenantId: string, 
   const terms = await prisma.contractTerms.findFirst({ where: { organizationId: tenant.organizationId }, orderBy: { version: "desc" }, select: { version: true } });
   const location = await withTenantContext(prisma, tenantId, (tx) => tx.location.findFirst({ orderBy: { createdAt: "asc" }, select: { id: true } }));
 
+  // A branch importing a legacy book is still run in the legacy system: unless the
+  // owner already decided either way, put its imported rentals on hold (no automatic
+  // invoice or reminder — see legacy-hold.ts) before the first one lands.
+  const flags = (tenant.featureFlags ?? {}) as Record<string, unknown>;
+  if (flags.legacy_automation_hold === undefined) {
+    await prisma.tenant.update({ where: { id: tenantId }, data: { featureFlags: { ...flags, legacy_automation_hold: true } as Prisma.InputJsonValue } });
+  }
+
   // 1. Customers — keyed by legacy customer number.
   const customerIds = new Map<number, string>();
   for (const c of parsed.customers) {
