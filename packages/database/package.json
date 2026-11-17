@@ -17,7 +17,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "promote-admin": "tsx scripts/promote-admin.ts",
-    "go-live-repair": "tsx scripts/go-live-repair.ts"
+    "go-live-repair": "tsx scripts/go-live-repair.ts",
+    "go-live-wipe": "tsx scripts/go-live-wipe.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "5.22.0",

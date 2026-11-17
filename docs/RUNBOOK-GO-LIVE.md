@@ -278,6 +278,18 @@ the next morning (invoices 08:00 WIB, reminders 09:00 WIB) those customers are
 billed and reminded by RentOS, and a rental whose invoice is 14+ days overdue
 can be suspended.
 
+### Starting over: wiping a branch's client data
+
+`ONE_OFF_WIPE=dry` + `ONE_OFF_WIPE_TENANT=<slug>` on the API service prints
+what would be deleted and rolls back; `apply` commits
+(`packages/database/scripts/go-live-wipe.ts`). It deletes that branch's
+customers, rentals, contracts, invoices, payments, deposits, ledger, message
+history and legacy archive; it keeps units, unit types, the location, staff,
+settings and the number counters. Units go back to AVAILABLE and the unit
+types are **unpublished** — re-publish them in Catalog Setup once the book is
+back, or the storefront would sell units that are physically occupied. Remove
+both variables afterwards. Re-import with §7.
+
 ## 9. Storefront domain (needs B6)
 
 ```sql

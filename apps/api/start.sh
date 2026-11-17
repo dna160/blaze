@@ -170,5 +170,14 @@ if [ "$ONE_OFF_REPAIR" = "dry" ] || [ "$ONE_OFF_REPAIR" = "apply" ]; then
   pnpm --filter @rentos/database go-live-repair || echo "[entrypoint] Repair FAILED (see above). Starting the API anyway."
 fi
 
+# One-off: wipe ONE branch's client data and keep its inventory (owner,
+# 2026-11-17). ONE_OFF_WIPE=dry prints what it would delete and rolls back;
+# =apply commits. ONE_OFF_WIPE_TENANT names the branch — without it nothing
+# runs. See packages/database/scripts/go-live-wipe.ts. Remove both after.
+if [ "$ONE_OFF_WIPE" = "dry" ] || [ "$ONE_OFF_WIPE" = "apply" ]; then
+  echo "[entrypoint] Branch wipe ($ONE_OFF_WIPE, tenant '$ONE_OFF_WIPE_TENANT')…"
+  pnpm --filter @rentos/database go-live-wipe || echo "[entrypoint] Wipe FAILED (see above) — nothing was changed. Starting the API anyway."
+fi
+
 echo "[entrypoint] Starting API…"
 exec node apps/api/dist/main.js
