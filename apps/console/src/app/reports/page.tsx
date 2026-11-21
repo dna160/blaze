@@ -1,286 +1,204 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-
-import type { ArAgingResponse } from "@rentos/contracts";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 
 import { ClientList } from "@/components/ClientList";
 import { ConsoleShell } from "@/components/ConsoleShell";
-import { apiDownload, apiFetch, ApiError } from "@/lib/api";
+import { rangeQuery, ReportRange, useReportRange, type ReportRangeValue } from "@/components/ReportRange";
+import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import { canDo } from "@/lib/capabilities";
+
+import { ArAgingSection } from "./ArAgingSection";
+import { FinancialSummarySection } from "./FinancialSummarySection";
+import { DownloadCsvButton, SectionHeader, Tile } from "./report-ui";
+import { SalesSection } from "./SalesSection";
+
+/**
+ * Reports (PRD §7.2.6, PRD go-live 2 §2). One date-range control at the top;
+ * every section below reads from it, and the range lives in the URL so a
+ * report can be bookmarked and shared.
+ */
 
 interface Occupancy {
   totalAssets: number;
   occupiedAssets: number;
   occupancyRate: number;
 }
-type ArAging = ArAgingResponse;
-
-const HORIZONS = [30, 60, 90] as const;
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 interface BookingFunnel {
   requested: number;
   approved: number;
   active: number;
 }
-interface MonthEndClose {
-  period: { year: number; month: number };
-  revenueRecognized: string;
-  depositsHeld: string;
-  accountsReceivable: string;
-  refunds: string;
-  taxPayable: string;
-}
 
+const TABS = [
+  { id: "penjualan", label: "Penjualan" },
+  { id: "ringkasan", label: "Ringkasan keuangan" },
+  { id: "piutang", label: "Umur piutang" },
+  { id: "ekspor", label: "Ekspor data" },
+  { id: "pelanggan", label: "Pelanggan" },
+] as const;
+type TabId = (typeof TABS)[number]["id"];
 
-function formatIDR(amount: number | string): string {
-  return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(
-    Number(amount),
+const TIME_ZONE = "Asia/Jakarta";
+
+function ExportsSection({ range }: { range: ReportRangeValue }) {
+  const q = rangeQuery(range);
+  const files: Array<{ kind: string; title: string; hint: string }> = [
+    { kind: "invoices", title: "Invoice", hint: "Semua invoice menurut tanggal terbit, dengan nomor kontrak, unit dan deposit." },
+    { kind: "payments", title: "Pembayaran", hint: "Semua pembayaran menurut tanggal bayar, termasuk yang menunggu verifikasi dan yang gagal." },
+    { kind: "ledger", title: "Buku besar", hint: "Setiap catatan debit dan kredit dalam rentang." },
+    { kind: "contracts", title: "Kontrak", hint: "Kontrak yang dibuat dalam rentang, dengan pelanggan, unit dan status tanda tangan." },
+  ];
+  return (
+    <section data-testid="exports-section">
+      <SectionHeader
+        title="Ekspor data"
+        hint="Berkas CSV untuk rentang yang dipilih. Nominal dalam rupiah tanpa pemisah ribuan, tanggal dan jam dalam WIB; bisa dibuka langsung di Google Sheets dan Excel."
+      />
+      <ul className="mt-4 divide-y divide-brand-600/10 rounded-lg border border-brand-600/10 bg-white">
+        {files.map((f) => (
+          <li key={f.kind} className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <div>
+              <p className="font-medium">{f.title}</p>
+              <p className="text-sm text-brand-700/60">{f.hint}</p>
+            </div>
+            <DownloadCsvButton path={`/reports/export/${f.kind}.csv?${q}`} fallbackName={`${f.kind}.csv`} />
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 text-xs text-brand-700/60">
+        Laporan penjualan, ringkasan keuangan, umur piutang dan daftar pelanggan punya tombol unduh sendiri di tab masing-masing. Laporan deposit ada di halaman Deposit.
+      </p>
+    </section>
   );
 }
 
-function monthRange(yearMonth: string): { from: string; to: string } {
-  const [year, month] = yearMonth.split("-").map(Number);
-  const from = new Date(Date.UTC(year!, month! - 1, 1));
-  const to = new Date(Date.UTC(year!, month!, 1));
-  return { from: from.toISOString(), to: to.toISOString() };
-}
-
-/** PRD §7.2.6 P0 basic reporting: occupancy %, AR aging, booking funnel. */
-function currentYearMonth(): string {
-  const now = new Date();
-  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-export default function ReportsPage() {
+function ReportsContent() {
   const router = useRouter();
-  const user = authClient.getUser();
-  const canSeeFinance = canDo(user, "run_reports");
-
-  const [occupancy, setOccupancy] = useState<Occupancy | null>(null);
-  const [arAging, setArAging] = useState<ArAging | null>(null);
-  const [asOf, setAsOf] = useState(todayIso());
-  const [horizon, setHorizon] = useState<(typeof HORIZONS)[number]>(30);
-  const [funnel, setFunnel] = useState<BookingFunnel | null>(null);
-  const [yearMonth, setYearMonth] = useState(currentYearMonth());
-  const [monthEnd, setMonthEnd] = useState<MonthEndClose | null>(null);
-  const [exporting, setExporting] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
+  const pathname = usePathname();
+  const params = useSearchParams();
+  // The session lives in localStorage, which the server render cannot see.
+  const [user, setUser] = useState<ReturnType<typeof authClient.getUser>>(null);
+  const [sessionRead, setSessionRead] = useState(false);
   useEffect(() => {
-    const token = authClient.getToken();
-    if (!token) {
+    if (!authClient.getToken()) {
       router.push("/login");
       return;
     }
-    Promise.all([
-      apiFetch<Occupancy>("/reports/occupancy", { token }),
-      apiFetch<BookingFunnel>("/reports/booking-funnel", { token }),
-    ])
+    setUser(authClient.getUser());
+    setSessionRead(true);
+  }, [router]);
+  const allowed = canDo(user, "run_reports");
+
+  const { range, setRange } = useReportRange({ timeZone: TIME_ZONE, userId: user?.id ?? null });
+  // The URL always carries the range in use (§2.1), also when it came from the
+  // remembered one or the default — so a copied link opens the same report.
+  useEffect(() => {
+    if (!range || (params?.get("from") === range.from && params?.get("to") === range.to)) return;
+    const q = new URLSearchParams(params?.toString() ?? "");
+    q.set("from", range.from);
+    q.set("to", range.to);
+    router.replace(`${pathname}?${q.toString()}`, { scroll: false });
+  }, [range, params, pathname, router]);
+
+  const requested = params?.get("tab");
+  const tab: TabId = TABS.some((t) => t.id === requested) ? (requested as TabId) : "penjualan";
+  function selectTab(next: TabId) {
+    const q = new URLSearchParams(params?.toString() ?? "");
+    q.set("tab", next);
+    router.replace(`${pathname}?${q.toString()}`, { scroll: false });
+  }
+
+  const [occupancy, setOccupancy] = useState<Occupancy | null>(null);
+  const [funnel, setFunnel] = useState<BookingFunnel | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!allowed) return;
+    const token = authClient.getToken();
+    Promise.all([apiFetch<Occupancy>("/reports/occupancy", { token }), apiFetch<BookingFunnel>("/reports/booking-funnel", { token })])
       .then(([o, f]) => {
         setOccupancy(o);
         setFunnel(f);
       })
-      .catch(() => router.push("/login"));
-  }, [router]);
+      .catch((err) => {
+        if (err instanceof ApiError && err.status === 401) router.push("/login");
+        else setError(err instanceof ApiError ? err.message : "Laporan gagal dimuat.");
+      });
+  }, [allowed, router]);
 
-  // PRD v2 §5.2 — AR aging as of any date, with a 30/60/90-day forward horizon.
-  useEffect(() => {
-    const token = authClient.getToken();
-    if (!token || !asOf) return;
-    apiFetch<ArAging>(`/reports/ar-aging?asOf=${asOf}&horizonDays=${horizon}`, { token })
-      .then(setArAging)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load AR aging."));
-  }, [asOf, horizon]);
-
-  useEffect(() => {
-    if (!canSeeFinance) return;
-    const token = authClient.getToken();
-    if (!token) return;
-    const [year, month] = yearMonth.split("-");
-    apiFetch<MonthEndClose>(`/reports/month-end?year=${year}&month=${month}`, { token })
-      .then(setMonthEnd)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load month-end close."));
-  }, [canSeeFinance, yearMonth]);
-
-  async function exportCsv(kind: "invoices" | "payments" | "ledger") {
-    setExporting(kind);
-    setError(null);
-    try {
-      const { from, to } = monthRange(yearMonth);
-      await apiDownload(
-        `/reports/export/${kind}.csv?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
-        authClient.getToken(),
-        `${kind}-${yearMonth}.csv`,
-      );
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Export failed.");
-    } finally {
-      setExporting(null);
-    }
+  if (sessionRead && !allowed) {
+    return (
+      <>
+        <h1 className="text-2xl font-semibold">Laporan</h1>
+        <p className="mt-4 rounded border border-brand-600/10 bg-white p-4 text-sm text-brand-700/80" data-testid="reports-no-access">
+          Akun Anda tidak memiliki akses ke laporan keuangan. Laporan hanya untuk Admin dan Finance.
+        </p>
+      </>
+    );
   }
 
   return (
-    <ConsoleShell>
-      <h1 className="text-2xl font-semibold">Reports</h1>
+    <>
+      <h1 className="text-2xl font-semibold">Laporan</h1>
 
-      <div className="mt-6 grid gap-6 sm:grid-cols-3">
-        <div className="rounded-lg border border-brand-600/10 bg-white p-5">
-          <p className="text-sm text-brand-700/60">Occupancy</p>
-          <p className="mt-2 text-3xl font-semibold">
-            {occupancy ? `${Math.round(occupancy.occupancyRate * 100)}%` : "—"}
-          </p>
-          {occupancy && (
-            <p className="mt-1 text-sm text-brand-700/60">
-              {occupancy.occupiedAssets} / {occupancy.totalAssets} units
-            </p>
-          )}
-        </div>
-        <div className="rounded-lg border border-brand-600/10 bg-white p-5">
-          <p className="text-sm text-brand-700/60">Bookings this cycle</p>
-          <p className="mt-2 text-3xl font-semibold">{funnel?.active ?? "—"}</p>
-          {funnel && (
-            <p className="mt-1 text-sm text-brand-700/60">
-              {funnel.requested} requested · {funnel.approved} approved
-            </p>
-          )}
-        </div>
-        <div className="rounded-lg border border-brand-600/10 bg-white p-5">
-          <p className="text-sm text-brand-700/60">Overdue AR</p>
-          <p className="mt-2 text-3xl font-semibold">{arAging ? formatIDR(arAging.overdue.total) : "—"}</p>
-          {arAging && <p className="mt-1 text-sm text-brand-700/60">{formatIDR(arAging.comingDue.total)} coming due in {arAging.horizonDays} days</p>}
-        </div>
+      <div className="mt-4">{range && <ReportRange value={range} onChange={setRange} timeZone={TIME_ZONE} locale="id" />}</div>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <Tile
+          label="Okupansi saat ini"
+          value={occupancy ? `${Math.round(occupancy.occupancyRate * 100)}%` : "—"}
+          sub={occupancy ? `${occupancy.occupiedAssets} dari ${occupancy.totalAssets} unit terisi` : undefined}
+        />
+        <Tile label="Sewa aktif saat ini" value={funnel?.active ?? "—"} sub={funnel ? `${funnel.requested} permintaan · ${funnel.approved} disetujui` : undefined} />
+      </div>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+
+      <div className="mt-6 flex flex-wrap gap-1 border-b border-brand-600/15" role="tablist" aria-label="Bagian laporan">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            onClick={() => selectTab(t.id)}
+            className={`-mb-px rounded-t border border-b-0 px-4 py-2 text-sm font-medium ${tab === t.id ? "border-brand-600/15 bg-white text-brand-700" : "border-transparent text-brand-700/60 hover:text-brand-700"}`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      <div className="mt-8">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-medium">Accounts receivable aging</h2>
-            <p className="text-sm text-brand-700/60">Pick a date to see what was overdue then and what falls due within the horizon after it.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-brand-700/60">As of</label>
-            <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="rounded border border-brand-600/20 px-2 py-1 text-sm" />
-            <div className="flex gap-1 rounded border border-brand-600/20 p-0.5 text-xs">
-              {HORIZONS.map((h) => (
-                <button key={h} onClick={() => setHorizon(h)} className={`rounded px-2.5 py-1 font-medium ${horizon === h ? "bg-brand-700 text-white" : "hover:bg-brand-700/5"}`}>
-                  Next {h} days
-                </button>
-              ))}
+      <div className="mt-6">
+        {range && tab === "penjualan" && <SalesSection range={range} />}
+        {range && tab === "ringkasan" && <FinancialSummarySection range={range} />}
+        {range && tab === "piutang" && <ArAgingSection range={range} timeZone={TIME_ZONE} />}
+        {range && tab === "ekspor" && <ExportsSection range={range} />}
+        {tab === "pelanggan" && (
+          <section data-testid="clients-section">
+            <SectionHeader
+              title="Pelanggan"
+              hint="Siapa menyewa apa, sejak kapan, dan apakah sehat (sudah bayar), berisiko (jatuh tempo dalam 7 hari), terlambat, atau tidak aktif. Klik pelanggan untuk rinciannya."
+              action={<DownloadCsvButton path="/reports/export/clients.csv" fallbackName="clients.csv" />}
+            />
+            <div className="mt-3">
+              <ClientList compact />
             </div>
-          </div>
-        </div>
-        {arAging && (
-          <div className="mt-3 grid gap-4 lg:grid-cols-2">
-            <div className="overflow-hidden rounded-lg border border-brand-600/10 bg-white">
-              <p className="border-b border-brand-600/10 bg-red-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-red-800">Overdue as of {new Date(arAging.asOf).toLocaleDateString("id-ID")} · {formatIDR(arAging.overdue.total)}</p>
-              <table className="w-full text-sm">
-                <thead className="bg-brand-700/5 text-left">
-                  <tr>
-                    <th className="p-3">Due today</th>
-                    <th className="p-3">1–30 days</th>
-                    <th className="p-3">31–60 days</th>
-                    <th className="p-3">60+ days</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-t border-brand-600/10">
-                    <td className="p-3">{formatIDR(arAging.overdue.current)}</td>
-                    <td className="p-3">{formatIDR(arAging.overdue.d1_30)}</td>
-                    <td className="p-3">{formatIDR(arAging.overdue.d31_60)}</td>
-                    <td className="p-3">{formatIDR(arAging.overdue.d60_plus)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <div className="overflow-hidden rounded-lg border border-brand-600/10 bg-white">
-              <p className="border-b border-brand-600/10 bg-blue-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-blue-800">Coming due in the next {arAging.horizonDays} days · {formatIDR(arAging.comingDue.total)}</p>
-              <table className="w-full text-sm">
-                <thead className="bg-brand-700/5 text-left">
-                  <tr>
-                    <th className="p-3">0–30 days</th>
-                    <th className="p-3">31–60 days</th>
-                    <th className="p-3">61–90 days</th>
-                    <th className="p-3">Beyond horizon</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-t border-brand-600/10">
-                    <td className="p-3">{formatIDR(arAging.comingDue.d0_30)}</td>
-                    <td className="p-3">{arAging.horizonDays >= 31 ? formatIDR(arAging.comingDue.d31_60) : "—"}</td>
-                    <td className="p-3">{arAging.horizonDays >= 61 ? formatIDR(arAging.comingDue.d61_90) : "—"}</td>
-                    <td className="p-3 text-brand-700/60">{formatIDR(arAging.comingDue.beyondHorizon)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <p className="text-xs text-brand-700/50 lg:col-span-2">
-              {arAging.invoiceCount} unpaid invoice{arAging.invoiceCount === 1 ? "" : "s"} · total outstanding {formatIDR(arAging.totalOutstanding)} (includes scheduled payments from term contracts).
-            </p>
-          </div>
+          </section>
         )}
       </div>
+    </>
+  );
+}
 
-      {canSeeFinance && (
-        <div className="mt-8">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-medium">Month-end close</h2>
-            <input
-              type="month"
-              value={yearMonth}
-              onChange={(e) => setYearMonth(e.target.value)}
-              className="rounded border border-brand-600/20 px-2 py-1 text-sm"
-            />
-          </div>
-          <p className="mt-1 text-sm text-brand-700/60">
-            Revenue recognized and refunds are this month's movement; deposits held, AR, and tax payable are the
-            balance as of the end of this month.
-          </p>
-          {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-
-          <div className="mt-4 grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
-            {[
-              { label: "Revenue recognized", value: monthEnd?.revenueRecognized },
-              { label: "Deposits held", value: monthEnd?.depositsHeld },
-              { label: "Accounts receivable", value: monthEnd?.accountsReceivable },
-              { label: "Refunds", value: monthEnd?.refunds },
-              { label: "Tax payable", value: monthEnd?.taxPayable },
-            ].map((tile) => (
-              <div key={tile.label} className="rounded-lg border border-brand-600/10 bg-white p-4">
-                <p className="text-xs text-brand-700/60">{tile.label}</p>
-                <p className="mt-1 text-xl font-semibold">{tile.value !== undefined ? formatIDR(tile.value) : "—"}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            {(["invoices", "payments", "ledger"] as const).map((kind) => (
-              <button
-                key={kind}
-                onClick={() => exportCsv(kind)}
-                disabled={exporting === kind}
-                className="rounded border border-brand-600/20 px-3 py-2 text-sm font-medium hover:bg-brand-700/5 disabled:opacity-50"
-              >
-                {exporting === kind ? "Exporting..." : `Export ${kind}.csv`}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* PRD v2 §5.2 — "Right below Export invoices": the client list with search, filter and status. */}
-      <div className="mt-8">
-        <h2 className="text-lg font-medium">Clients</h2>
-        <p className="mb-3 text-sm text-brand-700/60">
-          Who&apos;s renting what, since when, and whether they&apos;re healthy (paid ahead), risky (due within 7 days), overdue, or inactive. Click a client for details.
-        </p>
-        <ClientList compact />
-      </div>
+export default function ReportsPage() {
+  return (
+    <ConsoleShell>
+      {/* useSearchParams needs a Suspense boundary to build. */}
+      <Suspense fallback={<h1 className="text-2xl font-semibold">Laporan</h1>}>
+        <ReportsContent />
+      </Suspense>
     </ConsoleShell>
   );
 }

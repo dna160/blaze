@@ -1,6 +1,6 @@
 export { Decimal, money, roundMoney, sumMoney } from "./money.js";
 
-export { computeTax, DEFAULT_PPN_RATE, type TaxResult } from "./pricing/tax.js";
+export { computeTax, DEFAULT_PPN_RATE, resolvePpnRate, ppnLabel, effectivePpnRate, type TaxResult } from "./pricing/tax.js";
 export { computeDeposit, type DepositRule } from "./pricing/deposit.js";
 export {
   prorateFirstPeriod,
@@ -46,7 +46,7 @@ export {
   type AvailabilityCheckOptions,
 } from "./availability/blackout.js";
 export { classifyCustomerHealth, type CustomerHealth, type CustomerHealthInput } from "./crm/customer-health.js";
-export { bucketReceivables, type ArAgingBuckets, type ReceivableLike } from "./finance/ar-aging.js";
+export { bucketReceivables, classifyReceivable, AR_AGING_BUCKETS, type ArAgingBucket, type ArAgingBuckets, type ReceivableLike } from "./finance/ar-aging.js";
 
 export type {
   BookingModelStrategy,

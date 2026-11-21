@@ -1,5 +1,5 @@
 import { Decimal, roundMoney, sumMoney } from "../money.js";
-import { computeTax } from "../pricing/tax.js";
+import { computeTax, ppnLabel } from "../pricing/tax.js";
 
 import type { InvoiceDraft, InvoiceLineDraft, PricingConfig, TenantTaxContext } from "./types.js";
 
@@ -30,7 +30,7 @@ export function buildInvoiceDraft(
   const lines = [...extraLines, ...primary];
   if (taxAmount.greaterThan(0)) {
     lines.push({
-      description: "PPN 11%",
+      description: ppnLabel(),
       quantity: new Decimal(1),
       unitPrice: taxAmount,
       amount: taxAmount,

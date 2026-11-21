@@ -1,4 +1,4 @@
-import { alignContractTerms, type ParsedContractTerms } from "@rentos/domain";
+import { alignContractTerms, ppnLabel, type ParsedContractTerms } from "@rentos/domain";
 import PDFDocument from "pdfkit";
 
 /**
@@ -60,6 +60,8 @@ export interface Totals {
   subtotal: string;
   /** Null hides the PPN row entirely (non-PKP — §8.1). */
   taxAmount: string | null;
+  /** "PPN 11%" — the rate this document was charged at (go-live 2 §2.6); defaults to the statutory label. */
+  taxLabel?: string;
   total: string;
   /** Null hides the row. */
   deposit: string | null;
@@ -255,7 +257,7 @@ function linesAndTotals(doc: PDFKit.PDFDocument, y: number, lines: DocLine[], to
   y += 8;
 
   const rows: Array<[string, string, boolean]> = [["Subtotal", fmtMoney(totals.subtotal, totals.currency), false]];
-  if (totals.taxAmount !== null) rows.push(["PPN 11%", fmtMoney(totals.taxAmount, totals.currency), false]);
+  if (totals.taxAmount !== null) rows.push([totals.taxLabel ?? ppnLabel(), fmtMoney(totals.taxAmount, totals.currency), false]);
   rows.push(["Total", fmtMoney(totals.total, totals.currency), true]);
   if (totals.deposit !== null) rows.push(["Security deposit / Deposit jaminan", fmtMoney(totals.deposit, totals.currency), false]);
   if (totals.due !== null) rows.push([labels.due, fmtMoney(totals.due, totals.currency), true]);

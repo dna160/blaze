@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { bucketReceivables } from "../src/finance/ar-aging.js";
+import { bucketReceivables, classifyReceivable } from "../src/finance/ar-aging.js";
 
 const asOf = new Date(2026, 7, 1); // 1 Aug — the owner's example
 const days = (n: number) => new Date(asOf.getTime() + n * 24 * 60 * 60 * 1000);
@@ -45,5 +45,22 @@ describe("bucketReceivables", () => {
     const r = bucketReceivables([], asOf, 60);
     expect(r.totalOutstanding).toBe("0");
     expect(r.invoiceCount).toBe(0);
+  });
+});
+
+describe("classifyReceivable (PRD go-live 2 §2.5)", () => {
+  it("puts an invoice in the bucket its row is listed under", () => {
+    expect(classifyReceivable(0, 30)).toBe("overdue_current");
+    expect(classifyReceivable(1, 30)).toBe("overdue_1_30");
+    expect(classifyReceivable(30, 30)).toBe("overdue_1_30");
+    expect(classifyReceivable(31, 30)).toBe("overdue_31_60");
+    expect(classifyReceivable(60, 30)).toBe("overdue_31_60");
+    expect(classifyReceivable(61, 30)).toBe("overdue_60_plus");
+    expect(classifyReceivable(-1, 30)).toBe("coming_0_30");
+    expect(classifyReceivable(-30, 30)).toBe("coming_0_30");
+    expect(classifyReceivable(-31, 30)).toBe("beyond_horizon");
+    expect(classifyReceivable(-31, 60)).toBe("coming_31_60");
+    expect(classifyReceivable(-61, 90)).toBe("coming_61_90");
+    expect(classifyReceivable(-91, 90)).toBe("beyond_horizon");
   });
 });

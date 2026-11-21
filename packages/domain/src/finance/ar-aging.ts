@@ -28,6 +28,48 @@ export interface ArAgingBuckets {
   invoiceCount: number;
 }
 
+/** Where one unpaid invoice sits in the aging report (PRD go-live 2 §2.5 — the drill-down and `ar-aging.csv`). */
+export type ArAgingBucket =
+  | "overdue_current"
+  | "overdue_1_30"
+  | "overdue_31_60"
+  | "overdue_60_plus"
+  | "coming_0_30"
+  | "coming_31_60"
+  | "coming_61_90"
+  | "beyond_horizon";
+
+export const AR_AGING_BUCKETS: readonly ArAgingBucket[] = [
+  "overdue_current",
+  "overdue_1_30",
+  "overdue_31_60",
+  "overdue_60_plus",
+  "coming_0_30",
+  "coming_31_60",
+  "coming_61_90",
+  "beyond_horizon",
+];
+
+/**
+ * The bucket for an invoice that is `daysPastDue` days past its due date as of
+ * the report date (0 = due that day, negative = not yet due). The ONE rule both
+ * the bucket totals and the invoice rows use, so a bucket always equals the
+ * sum of the rows under it.
+ */
+export function classifyReceivable(daysPastDue: number, horizonDays: number): ArAgingBucket {
+  if (daysPastDue >= 0) {
+    if (daysPastDue === 0) return "overdue_current";
+    if (daysPastDue <= 30) return "overdue_1_30";
+    if (daysPastDue <= 60) return "overdue_31_60";
+    return "overdue_60_plus";
+  }
+  const daysUntilDue = -daysPastDue;
+  if (daysUntilDue > horizonDays) return "beyond_horizon";
+  if (daysUntilDue <= 30) return "coming_0_30";
+  if (daysUntilDue <= 60) return "coming_31_60";
+  return "coming_61_90";
+}
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function daysBetween(later: Date, earlier: Date): number {
@@ -41,21 +83,35 @@ export function bucketReceivables(invoices: readonly ReceivableLike[], asOf: Dat
 
   for (const inv of invoices) {
     const amount = money(inv.totalAmount instanceof Decimal ? inv.totalAmount : inv.totalAmount.toString());
-    const daysPastDue = daysBetween(asOf, inv.dueDate);
     count += 1;
-    if (daysPastDue >= 0) {
-      // Due today or earlier — the classic aging buckets. "current" = due today (0 days past).
-      if (daysPastDue === 0) overdue.current = overdue.current.plus(amount);
-      else if (daysPastDue <= 30) overdue.d1_30 = overdue.d1_30.plus(amount);
-      else if (daysPastDue <= 60) overdue.d31_60 = overdue.d31_60.plus(amount);
-      else overdue.d60_plus = overdue.d60_plus.plus(amount);
-      continue;
+    // Due today or earlier — the classic aging buckets ("current" = due today, 0 days past);
+    // otherwise days until due, against the horizon.
+    switch (classifyReceivable(daysBetween(asOf, inv.dueDate), horizonDays)) {
+      case "overdue_current":
+        overdue.current = overdue.current.plus(amount);
+        break;
+      case "overdue_1_30":
+        overdue.d1_30 = overdue.d1_30.plus(amount);
+        break;
+      case "overdue_31_60":
+        overdue.d31_60 = overdue.d31_60.plus(amount);
+        break;
+      case "overdue_60_plus":
+        overdue.d60_plus = overdue.d60_plus.plus(amount);
+        break;
+      case "coming_0_30":
+        coming.d0_30 = coming.d0_30.plus(amount);
+        break;
+      case "coming_31_60":
+        coming.d31_60 = coming.d31_60.plus(amount);
+        break;
+      case "coming_61_90":
+        coming.d61_90 = coming.d61_90.plus(amount);
+        break;
+      case "beyond_horizon":
+        coming.beyond = coming.beyond.plus(amount);
+        break;
     }
-    const daysUntilDue = -daysPastDue;
-    if (daysUntilDue > horizonDays) coming.beyond = coming.beyond.plus(amount);
-    else if (daysUntilDue <= 30) coming.d0_30 = coming.d0_30.plus(amount);
-    else if (daysUntilDue <= 60) coming.d31_60 = coming.d31_60.plus(amount);
-    else coming.d61_90 = coming.d61_90.plus(amount);
   }
 
   const overdueTotal = overdue.current.plus(overdue.d1_30).plus(overdue.d31_60).plus(overdue.d60_plus);
