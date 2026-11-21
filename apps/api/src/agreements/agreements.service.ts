@@ -88,6 +88,13 @@ export class AgreementsService {
     params: { signedByName: string; signaturePng: string; ip: string | null; userAgent: string | null; actorUserId: string | null },
   ) {
     const actor = params.actorUserId ? "STAFF" : "CUSTOMER";
+    // The method rule first: a customer whose contract is signed at the office is told so, whatever they drew.
+    const contract = await this.prisma.runInTenantContext(tenant.id, (tx) =>
+      tx.contract.findFirst({ where: { bookingId }, orderBy: { createdAt: "desc" } }),
+    );
+    if (!contract) throw new NotFoundException("No contract exists for this booking yet — it's generated on approval.");
+    this.assertSigning("SIGNATURE_PAD", contract, actor);
+
     const match = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(params.signaturePng.trim());
     if (!match) throw new BadRequestException("signaturePng must be a PNG data URL (data:image/png;base64,...).");
     const png = Buffer.from(match[1]!, "base64");
@@ -96,12 +103,6 @@ export class AgreementsService {
     if (!png.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
       throw new BadRequestException("signaturePng is not a PNG image.");
     }
-
-    const contract = await this.prisma.runInTenantContext(tenant.id, (tx) =>
-      tx.contract.findFirst({ where: { bookingId }, orderBy: { createdAt: "desc" } }),
-    );
-    if (!contract) throw new NotFoundException("No contract exists for this booking yet — it's generated on approval.");
-    this.assertSigning("SIGNATURE_PAD", contract, actor);
 
     const { storageKey } = await this.storage.save({
       key: `contracts/${tenant.id}/${bookingId}/signature-${contract.id}-${randomUUID()}.png`,
