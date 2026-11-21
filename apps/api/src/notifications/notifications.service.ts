@@ -150,7 +150,9 @@ export class NotificationsService {
   async notify(params: NotifyParams): Promise<void> {
     // PRD go-live §9.1 — the organization's kill switch. Checked before the
     // QUEUED row exists so a paused send is never mistaken for one in flight.
-    const blocked = await outboundBlock(this.prisma.raw, params.tenantId);
+    // PRD go-live 2 §8.1 — the same call applies the test allowlist, so it is
+    // told who the message is for.
+    const blocked = await outboundBlock(this.prisma.raw, params.tenantId, params.recipient);
     if (blocked) {
       await this.prisma.runInTenantContext(params.tenantId, (tx) =>
         recordSuppressed(tx, {
@@ -163,7 +165,7 @@ export class NotificationsService {
           reason: blocked,
         }),
       );
-      this.logger.log(`${params.templateKey} to ${params.recipient} suppressed — ${blocked}`);
+      this.logger.log(`${params.templateKey} to ${params.recipient} suppressed — ${blocked.message}`);
       return;
     }
 

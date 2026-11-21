@@ -1,7 +1,11 @@
 import { BadGatewayException, BadRequestException, ConflictException, ForbiddenException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import {
+  allowlistBlock,
+  getMessagingAllowlist,
   getMessagingConfigView,
   getMessagingPause,
+  MessagingAllowlistError,
+  setMessagingAllowlist,
   setMessagingPause,
   SUPPRESSED_STATUS,
   messagingConfigKey,
@@ -13,10 +17,12 @@ import {
   waBridgeStatus,
   WaBridgeError,
   withOrgReadContext,
+  type Prisma,
   type ResolvedMessagingConfig,
   type WaBridgeConnection,
   type WaBridgeStatus,
 } from "@rentos/database";
+import { resolveReportRange, ReportRangeError } from "@rentos/contracts";
 import { can, hasOrganizationScope } from "@rentos/domain";
 
 import { AuditService } from "../audit/audit.service.js";
@@ -24,13 +30,19 @@ import { NotificationsService } from "../notifications/notifications.service.js"
 import { PrismaService } from "../prisma/prisma.service.js";
 import type {
   LinkedDeviceStatusResponse,
+  MessagingAllowlist,
   MessagingConfigResponse,
   MessagingPauseRequest,
   MessagingPauseResponse,
   PairLinkedDeviceRequest,
   PairLinkedDeviceResponse,
+  SuppressedMessage,
+  SuppressedMessagesQuery,
+  SuppressedMessagesResponse,
+  SuppressionCodeName,
   TestMessagingRequest,
   TestMessagingResponse,
+  UpdateMessagingAllowlistRequest,
   UpdateMessagingConfigRequest,
 } from "@rentos/contracts";
 
@@ -184,7 +196,158 @@ export class OrganizationService {
     const suppressedCount = await withOrgReadContext(this.prisma.raw, orgId, (tx) =>
       tx.notification.count({ where: { status: SUPPRESSED_STATUS } }),
     );
-    return { ...pause, suppressedCount };
+    // PRD go-live 2 §8.1 — the banner says "Mode uji: hanya N nomor"; the
+    // numbers themselves stay with the org Admin (getMessagingAllowlist).
+    const allowlist = await getMessagingAllowlist(this.prisma.raw, orgId);
+    return { ...pause, suppressedCount, allowlistOnly: allowlist.enabled, allowlistCount: allowlist.numbers.length };
+  }
+
+  // ---------------------------------------------------------------------------
+  // PRD go-live 2 §8.1 — the test allowlist. The organization's, like the pause:
+  // an org-scoped Admin reads and changes it.
+  // ---------------------------------------------------------------------------
+
+  async getMessagingAllowlist(user: AuthenticatedUser): Promise<MessagingAllowlist> {
+    const orgId = this.assertOrgAdmin(user);
+    return getMessagingAllowlist(this.prisma.raw, orgId);
+  }
+
+  async setMessagingAllowlist(user: AuthenticatedUser, body: UpdateMessagingAllowlistRequest): Promise<MessagingAllowlist> {
+    const orgId = this.assertOrgAdmin(user);
+    const before = await getMessagingAllowlist(this.prisma.raw, orgId);
+    let after: MessagingAllowlist;
+    try {
+      after = await setMessagingAllowlist(this.prisma.raw, orgId, body);
+    } catch (err) {
+      if (err instanceof MessagingAllowlistError) throw new BadRequestException(err.message);
+      throw err;
+    }
+    if (user.tenantId) {
+      await this.audit.record({
+        tenantId: user.tenantId,
+        actorUserId: user.id,
+        action: after.enabled ? "MESSAGING_TEST_ALLOWLIST_ON" : "MESSAGING_TEST_ALLOWLIST_OFF",
+        entityType: "Organization",
+        entityId: orgId,
+        metadata: { before, after },
+      });
+    }
+    return after;
+  }
+
+  // ---------------------------------------------------------------------------
+  // PRD go-live 2 §8.2 — the suppressed messages, reviewable. Read-only: nothing
+  // here (or anywhere) re-sends a suppressed message.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * An org-scoped user reads every branch (RLS's org_read policy, like the
+   * banner's count); a branch-scoped one reads their own branch.
+   */
+  private async readSuppressed<T>(user: AuthenticatedUser, fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+    if (user.organizationId && hasOrganizationScope(user.roleAssignments)) {
+      return withOrgReadContext(this.prisma.raw, user.organizationId, fn);
+    }
+    if (!user.tenantId) throw new ForbiddenException("A branch session is required.");
+    return this.prisma.runInTenantContext(user.tenantId, fn);
+  }
+
+  private async branchTimeZone(user: AuthenticatedUser): Promise<{ timeZone: string; branchCode: string | null; slug: string }> {
+    const tenant = user.tenantId
+      ? await this.prisma.raw.tenant.findUnique({ where: { id: user.tenantId }, select: { timezone: true, branchCode: true, slug: true } })
+      : null;
+    return { timeZone: tenant?.timezone || "Asia/Jakarta", branchCode: tenant?.branchCode ?? null, slug: tenant?.slug ?? "branch" };
+  }
+
+  private suppressedWhere(query: SuppressedMessagesQuery, timeZone: string): Prisma.NotificationWhereInput {
+    const where: Prisma.NotificationWhereInput = { status: SUPPRESSED_STATUS };
+    if (query.from && query.to) {
+      try {
+        const range = resolveReportRange({ from: query.from, to: query.to }, timeZone);
+        where.createdAt = { gte: range.start, lt: range.endExclusive };
+      } catch (err) {
+        if (err instanceof ReportRangeError) throw new BadRequestException(err.message);
+        throw err;
+      }
+    }
+    if (query.template) where.templateKey = query.template;
+    // Rows from before the reason code existed were backfilled to PAUSED by the migration.
+    if (query.reason) where.suppressionCode = query.reason;
+    return where;
+  }
+
+  private async loadSuppressed(
+    tx: Prisma.TransactionClient,
+    where: Prisma.NotificationWhereInput,
+    page: { skip: number; take: number } | null,
+  ): Promise<SuppressedMessage[]> {
+    const rows = await tx.notification.findMany({
+      where,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      ...(page ?? {}),
+      select: {
+        id: true,
+        tenantId: true,
+        createdAt: true,
+        templateKey: true,
+        channel: true,
+        recipient: true,
+        recipientRole: true,
+        customerId: true,
+        suppressionCode: true,
+        error: true,
+      },
+    });
+    const customerIds = [...new Set(rows.map((r) => r.customerId).filter((id): id is string => Boolean(id)))];
+    const customers = customerIds.length
+      ? await tx.customer.findMany({ where: { id: { in: customerIds } }, select: { id: true, fullName: true, companyName: true, customerNumber: true } })
+      : [];
+    const byId = new Map(customers.map((c) => [c.id, c]));
+    const tenantIds = [...new Set(rows.map((r) => r.tenantId))];
+    const tenants = tenantIds.length ? await this.prisma.raw.tenant.findMany({ where: { id: { in: tenantIds } }, select: { id: true, name: true } }) : [];
+    const branch = new Map(tenants.map((t) => [t.id, t.name]));
+    return rows.map((r) => {
+      const c = r.customerId ? byId.get(r.customerId) : undefined;
+      return {
+        id: r.id,
+        createdAt: r.createdAt.toISOString(),
+        templateKey: r.templateKey,
+        channel: r.channel,
+        recipient: r.recipient,
+        recipientRole: r.recipientRole,
+        customerId: r.customerId,
+        customerName: c ? c.companyName || c.fullName : null,
+        customerNumber: c?.customerNumber ?? null,
+        branchName: branch.get(r.tenantId) ?? null,
+        reason: ((r.suppressionCode as SuppressionCodeName | null) ?? "PAUSED") as SuppressionCodeName,
+        reasonText: r.error,
+      };
+    });
+  }
+
+  async listSuppressedMessages(user: AuthenticatedUser, query: SuppressedMessagesQuery): Promise<SuppressedMessagesResponse> {
+    const { timeZone } = await this.branchTimeZone(user);
+    const where = this.suppressedWhere(query, timeZone);
+    return this.readSuppressed(user, async (tx) => {
+      const [total, totalEver, templates, items] = await Promise.all([
+        tx.notification.count({ where }),
+        tx.notification.count({ where: { status: SUPPRESSED_STATUS } }),
+        tx.notification.findMany({ where: { status: SUPPRESSED_STATUS }, distinct: ["templateKey"], select: { templateKey: true }, orderBy: { templateKey: "asc" } }),
+        this.loadSuppressed(tx, where, { skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
+      ]);
+      return { items, total, totalEver, page: query.page, pageSize: query.pageSize, templates: templates.map((t) => t.templateKey), timeZone };
+    });
+  }
+
+  /** Every matching row (capped), for the CSV. */
+  async exportSuppressedMessages(
+    user: AuthenticatedUser,
+    query: SuppressedMessagesQuery,
+  ): Promise<{ rows: SuppressedMessage[]; timeZone: string; branch: { branchCode: string | null; slug: string } }> {
+    const { timeZone, branchCode, slug } = await this.branchTimeZone(user);
+    const where = this.suppressedWhere(query, timeZone);
+    const rows = await this.readSuppressed(user, (tx) => this.loadSuppressed(tx, where, { skip: 0, take: 20_000 }));
+    return { rows, timeZone, branch: { branchCode, slug } };
   }
 
   async setMessagingPause(user: AuthenticatedUser, body: MessagingPauseRequest): Promise<MessagingPauseResponse> {
@@ -260,6 +423,17 @@ export class OrganizationService {
       };
     } else {
       config = await resolveMessagingConfig(this.prisma.raw, user.tenantId);
+    }
+
+    // PRD go-live 2 §8.1 — the connection test is the one send the pause lets
+    // through (it proves a pairing before unpausing). The test allowlist still
+    // applies: in test mode a typed-in number that is not on the list gets
+    // nothing, and the admin is told why rather than shown a provider error.
+    if (user.organizationId) {
+      const blocked = await allowlistBlock(this.prisma.raw, user.organizationId, body.to);
+      if (blocked) {
+        return { ok: false, provider: config.provider, providerRef: null, error: `${blocked.message}. Add ${body.to} to the test numbers first, or turn test mode off.` };
+      }
     }
 
     try {

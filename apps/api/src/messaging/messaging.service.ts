@@ -323,7 +323,8 @@ export class MessagingService {
     if (!phone) throw new BadRequestException("A phone number is required.");
 
     // PRD go-live §9.1 — recorded, never sent, and the agent is told why.
-    const blocked = await outboundBlock(this.prisma.raw, tenantId);
+    // PRD go-live 2 §8.1 — or its number is not on the test allowlist.
+    const blocked = await outboundBlock(this.prisma.raw, tenantId, phone);
     if (blocked) {
       await this.prisma.runInTenantContext(tenantId, (tx) =>
         recordSuppressed(tx, {
@@ -335,7 +336,11 @@ export class MessagingService {
           reason: blocked,
         }),
       );
-      throw new ConflictException({ code: "MESSAGING_PAUSED", windowOpenUntil: null, message: `${blocked}. The reply was recorded but not sent.` });
+      throw new ConflictException({
+        code: blocked.code === "NOT_ON_TEST_ALLOWLIST" ? "NOT_ON_TEST_ALLOWLIST" : "MESSAGING_PAUSED",
+        windowOpenUntil: null,
+        message: `${blocked.message}. The reply was recorded but not sent.`,
+      });
     }
 
     const lastInboundAt = await this.prisma.runInTenantContext(tenantId, async (tx) => {

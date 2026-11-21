@@ -1247,10 +1247,13 @@ model Notification {
   recipientRole String    @default("CUSTOMER") @map("recipient_role")
   recipient     String
   payload       Json      @default("{}")
-  /// QUEUED | SENT | FAILED
+  /// QUEUED | SENT | FAILED | SUPPRESSED | RECEIVED
   status        String    @default("QUEUED")
   providerRef   String?   @map("provider_ref")
   error         String?
+  /// PRD go-live 2 §8.2 — set only on a SUPPRESSED row: the stable reason code
+  /// (PAUSED | NOT_ON_TEST_ALLOWLIST | UNKNOWN_TENANT). `error` keeps the text.
+  suppressionCode String? @map("suppression_code")
   sentAt        DateTime? @map("sent_at")
   /// Messaging inbox — when staff opened the thread after this inbound arrived.
   /// Null means unread. Only meaningful on inbound rows.
@@ -1260,6 +1263,8 @@ model Notification {
   @@index([tenantId])
   /// The inbox groups by (tenant, counterpart phone) and orders by time.
   @@index([tenantId, recipient, createdAt])
+  /// The suppressed list and the banner's count read by status.
+  @@index([tenantId, status, createdAt])
   @@map("notifications")
 }
 

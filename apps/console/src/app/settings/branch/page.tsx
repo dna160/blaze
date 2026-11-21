@@ -7,6 +7,7 @@ import type { BankAccount, BranchSettings, UpdateBranchSettingsRequest } from "@
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { notifyBranchSettingsChanged } from "@/lib/branch-test-mode";
 
 /**
  * PRD go-live §5.1 — Settings → Branch: the branch profile printed on every
@@ -70,6 +71,7 @@ export default function BranchSettingsPage() {
       onlinePaymentsEnabled: s.onlinePaymentsFlag,
       apiAccessEnabled: s.apiAccessEnabled,
       legacyAutomationHold: s.legacyAutomationHold,
+      testMode: s.testMode,
     });
   }
 
@@ -129,10 +131,12 @@ export default function BranchSettingsPage() {
       onlinePaymentsEnabled: form.onlinePaymentsEnabled,
       apiAccessEnabled: form.apiAccessEnabled,
       legacyAutomationHold: form.legacyAutomationHold,
+      testMode: form.testMode,
     };
     try {
       fill(await apiFetch<BranchSettings>("/branch/settings", { token: authClient.getToken(), method: "PUT", body }));
       setSaved(true);
+      notifyBranchSettingsChanged();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save.");
     } finally {
@@ -395,6 +399,18 @@ export default function BranchSettingsPage() {
               While on, RentOS issues no monthly invoice and sends no due or overdue reminder for the rentals and invoices imported
               from Booqable — they are still billed there. Bookings and invoices made in RentOS are not affected. Turn this off on
               cut-over day, once Booqable is no longer used: RentOS then bills and reminds those customers itself.
+            </p>
+          </Section>
+
+          <Section title="Mode uji">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={form.testMode ?? false} disabled={ro} onChange={(e) => set("testMode", e.target.checked)} />
+              <span>Cabang ini sedang dalam masa uji — data akan dihapus sebelum go-live</span>
+            </label>
+            <p className="text-xs text-brand-700/60">
+              Selama menyala, setiap halaman konsol menampilkan peringatan bahwa penyewa, kontrak, dan invoice di cabang ini adalah data uji yang
+              akan dihapus sebelum go-live. Ini hanya penanda: tidak mengubah cara sistem bekerja. Matikan setelah data uji dihapus dan data asli
+              diimpor.
             </p>
           </Section>
         </fieldset>
