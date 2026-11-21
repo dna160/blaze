@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { CsvImportPanel } from "@/components/CsvImportPanel";
+import { staffRoleLabel, type StaffPasswordLink } from "@rentos/contracts";
+
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient, isAdmin, isOrgScoped } from "@/lib/auth-client";
 
@@ -18,20 +20,19 @@ interface StaffUser {
   displayName: string | null;
   status: string;
   tenantName: string | null;
+  /** Whether a password exists yet — never the password or its hash (PRD go-live 2 §6.1). */
+  hasPassword?: boolean;
+  mustChangePassword?: boolean;
   roles: { role: BaseRole; scope: RoleScope; tenantIds: string[] }[];
 }
 
-/** The six client role names (docs/RBAC.md §2), from (role × scope). */
-function roleLabel(role: BaseRole, scope: RoleScope): string {
-  const map: Record<string, string> = {
-    "ADMIN|ORGANIZATION": "Super Admin",
-    "ADMIN|TENANT": "Admin",
-    "FINANCE|ORGANIZATION": "Super Finance",
-    "FINANCE|TENANT": "Finance",
-    "SUPERVISOR|TENANT": "Supervisor (SPV)",
-    "STAFF|TENANT": "Staff",
-  };
-  return map[`${role}|${scope}`] ?? `${role} @ ${scope}`;
+/** The client's role names (docs/RBAC.md §2), from (role × scope) — one shared function. */
+const roleLabel = staffRoleLabel;
+
+/** What a new account or a reset hands back: emailed, or the one-time link to pass on. */
+interface PasswordLinkNotice {
+  kind: "created" | "reset";
+  result: StaffPasswordLink;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -66,11 +67,13 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-const emptyForm = { email: "", displayName: "", password: "", role: "STAFF" as BaseRole, scope: "TENANT" as RoleScope };
+const emptyForm = { email: "", displayName: "", role: "STAFF" as BaseRole, scope: "TENANT" as RoleScope };
 
 export default function UsersPage() {
   const router = useRouter();
-  const me = authClient.getUser();
+  // The session lives in localStorage, which the server render cannot see:
+  // read it after mount so the first client render matches the server's.
+  const [me, setMe] = useState<ReturnType<typeof authClient.getUser>>(null);
   const orgScoped = isOrgScoped(me);
 
   const [users, setUsers] = useState<StaffUser[] | null>(null);
@@ -79,6 +82,7 @@ export default function UsersPage() {
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editRole, setEditRole] = useState<{ role: BaseRole; scope: RoleScope }>({ role: "STAFF", scope: "TENANT" });
+  const [linkNotice, setLinkNotice] = useState<PasswordLinkNotice | null>(null);
 
   async function load() {
     const token = authClient.getToken();
@@ -92,7 +96,9 @@ export default function UsersPage() {
   }
 
   useEffect(() => {
-    if (!isAdmin(me)) {
+    const session = authClient.getUser();
+    setMe(session);
+    if (!isAdmin(session)) {
       router.push("/bookings");
       return;
     }
@@ -105,7 +111,9 @@ export default function UsersPage() {
     setBusy(true);
     setError(null);
     try {
-      await apiFetch("/users", { token: authClient.getToken(), method: "POST", body: form });
+      // No password is typed here (PRD go-live 2 §6.1): the new account gets a single-use set-password link.
+      const created = await apiFetch<{ passwordLink: StaffPasswordLink }>("/users", { token: authClient.getToken(), method: "POST", body: form });
+      setLinkNotice({ kind: "created", result: created.passwordLink });
       setForm(emptyForm);
       await load();
     } catch (err) {
@@ -124,6 +132,24 @@ export default function UsersPage() {
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to update role.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendReset(u: StaffUser) {
+    const ok = window.confirm(
+      `Kirim tautan atur ulang kata sandi untuk ${u.displayName ?? u.email}? Kata sandi lamanya langsung tidak berlaku dan semua sesinya dikeluarkan.`,
+    );
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await apiFetch<StaffPasswordLink>(`/users/${u.id}/reset-password`, { token: authClient.getToken(), method: "POST" });
+      setLinkNotice({ kind: "reset", result });
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Tautan atur ulang tidak dapat dibuat.");
     } finally {
       setBusy(false);
     }
@@ -153,6 +179,36 @@ export default function UsersPage() {
           : "You manage users for your branch."}
       </p>
       {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
+
+      {linkNotice && (
+        <div role="status" data-testid="password-link-notice" className="mt-4 rounded-lg border border-green-300 bg-green-50 p-4 text-sm">
+          <div className="flex items-start justify-between gap-3">
+            <p className="font-medium text-green-900">
+              {linkNotice.kind === "created" ? "Akun dibuat untuk " : "Tautan atur ulang dibuat untuk "}
+              {linkNotice.result.displayName ?? linkNotice.result.email} ({linkNotice.result.email}).
+            </p>
+            <button type="button" onClick={() => setLinkNotice(null)} className="text-xs text-green-900/70 hover:underline">
+              Tutup
+            </button>
+          </div>
+          {linkNotice.result.emailed ? (
+            <p className="mt-1 text-green-900/80">
+              Tautan untuk membuat kata sandi sudah dikirim ke email tersebut. Tautan hanya bisa dipakai sekali dan berlaku 72 jam.
+            </p>
+          ) : (
+            <>
+              <p className="mt-1 text-green-900/80">
+                Email tidak terkirim (email belum dikonfigurasi atau pengiriman pesan sedang dijeda). Salin tautan ini dan berikan langsung
+                kepada pemilik akun saja. Tautan hanya bisa dipakai sekali, berlaku 72 jam, dan tidak akan ditampilkan lagi.
+              </p>
+              <div className="mt-2 flex items-center gap-2">
+                <code className="min-w-0 flex-1 truncate rounded border border-green-300 bg-white px-2 py-1 text-xs">{linkNotice.result.link}</code>
+                {linkNotice.result.link && <CopyButton text={linkNotice.result.link} />}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="mt-4">
         <CsvImportPanel<UserImportResult>
@@ -235,7 +291,9 @@ export default function UsersPage() {
       <form onSubmit={createUser} className="mt-6 grid grid-cols-1 gap-3 rounded-lg border border-brand-600/10 bg-white p-4 md:grid-cols-6">
         <input required type="email" placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="rounded border border-brand-600/20 px-3 py-2 text-sm md:col-span-2" />
         <input required placeholder="Display name" value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} className="rounded border border-brand-600/20 px-3 py-2 text-sm md:col-span-2" />
-        <input required type="password" placeholder="Temp password (min 8)" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="rounded border border-brand-600/20 px-3 py-2 text-sm md:col-span-2" />
+        <p className="self-center text-xs text-brand-700/60 md:col-span-2">
+          Tanpa kata sandi: pengguna baru menerima tautan sekali pakai untuk membuat kata sandinya sendiri.
+        </p>
         <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as BaseRole })} className="rounded border border-brand-600/20 px-3 py-2 text-sm md:col-span-2">
           {roleOptions.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
@@ -286,20 +344,35 @@ export default function UsersPage() {
                       <td className="p-3">{u.email}</td>
                       <td className="p-3">{primary ? roleLabel(primary.role, primary.scope) : "—"}</td>
                       {orgScoped && <td className="p-3">{u.tenantName ?? "—"}</td>}
-                      <td className="p-3"><span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_COLORS[u.status] ?? ""}`}>{u.status}</span></td>
+                      <td className="p-3">
+                        <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_COLORS[u.status] ?? ""}`}>{u.status}</span>
+                        {u.hasPassword === false && (
+                          <span className="mt-1 inline-block whitespace-nowrap rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-800">Belum membuat kata sandi</span>
+                        )}
+                        {u.hasPassword !== false && u.mustChangePassword && (
+                          <span className="mt-1 inline-block whitespace-nowrap rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800">Wajib ganti kata sandi</span>
+                        )}
+                      </td>
                       <td className="p-3 text-right">
                         {!isMe && (
                           <div className="flex justify-end gap-2">
                             <button
                               onClick={() => { setEditingId(editingId === u.id ? null : u.id); if (primary) setEditRole({ role: primary.role, scope: primary.scope }); }}
-                              className="rounded border border-brand-600/20 px-3 py-1 text-xs font-medium hover:bg-brand-700/5"
+                              className="whitespace-nowrap rounded border border-brand-600/20 px-3 py-1 text-xs font-medium hover:bg-brand-700/5"
                             >
                               Change role
                             </button>
                             <button
+                              onClick={() => void sendReset(u)}
+                              disabled={busy}
+                              className="whitespace-nowrap rounded border border-brand-600/20 px-3 py-1 text-xs font-medium hover:bg-brand-700/5 disabled:opacity-50"
+                            >
+                              Kirim tautan atur ulang
+                            </button>
+                            <button
                               onClick={() => setStatus(u.id, u.status !== "ACTIVE")}
                               disabled={busy}
-                              className="rounded border border-brand-600/20 px-3 py-1 text-xs font-medium hover:bg-brand-700/5 disabled:opacity-50"
+                              className="whitespace-nowrap rounded border border-brand-600/20 px-3 py-1 text-xs font-medium hover:bg-brand-700/5 disabled:opacity-50"
                             >
                               {u.status === "ACTIVE" ? "Deactivate" : "Activate"}
                             </button>

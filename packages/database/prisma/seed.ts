@@ -52,10 +52,16 @@ async function seedStaffUser(
   roleSpecs: RoleSpec[],
   passwordHash: string = DEMO_PASSWORD_HASH,
 ) {
+  // PRD go-live 2 §6.1 — demo/dev accounts stay usable with the shared demo
+  // password: `mustChangePassword: false` on create AND on re-seed (the
+  // passwords migration forces every account that already existed, and a
+  // re-seed must put the demo ones back). Demo data never reaches a production
+  // database (SEED_MODE=production creates no users), so there every
+  // pre-existing account stays forced.
   const user = await prisma.user.upsert({
     where: { tenantId_email: { tenantId, email } },
-    update: { passwordHash },
-    create: { tenantId, email, displayName, passwordHash, status: "ACTIVE" },
+    update: { passwordHash, mustChangePassword: false },
+    create: { tenantId, email, displayName, passwordHash, status: "ACTIVE", mustChangePassword: false },
   });
   for (const spec of roleSpecs) {
     await prisma.userRole.upsert({

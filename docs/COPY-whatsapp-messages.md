@@ -16,7 +16,7 @@ Generated from the code. Wording changes are made in `packages/domain/src/comms/
 - Nominal ditulis apa adanya dari sistem (mis. `2100000`); bila ingin format `2.100.000`, tuliskan di baris Perubahan.
   Amounts print as the system holds them; say so on the Change line if you want `2.100.000`.
 
-Jumlah pesan / Messages: 25
+Jumlah pesan / Messages: 26
 
 ---
 
@@ -228,7 +228,21 @@ Jumlah pesan / Messages: 25
     **Perubahan / Change:**
 
 
-16. **`booking_rejected`** — untuk pelanggan / to the customer
+16. **`staff_password_reset`** — untuk pelanggan / to the customer
+
+    Subjek email / Email subject: Atur ulang kata sandi console / Reset your console password
+
+    > Halo Risa, admin City Storage Kebon Jeruk mengirim tautan untuk mengatur ulang kata sandi console Anda. Kata sandi lama sudah tidak berlaku. Buat yang baru melalui tautan di bawah (sekali pakai, berlaku 72 jam).
+    > An administrator at City Storage Kebon Jeruk sent you a link to reset your console password. Your old password no longer works. Set a new one with the link below (single use, valid 72 hours).
+    >
+    > https://sewa.citystorage.co.id/m/8f2c1a
+
+    *Data:* `displayName`, `branchName`, `link`
+
+    **Perubahan / Change:**
+
+
+17. **`booking_rejected`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Permintaan booking tidak dapat diproses / Booking request declined
 
@@ -240,7 +254,7 @@ Jumlah pesan / Messages: 25
     **Perubahan / Change:**
 
 
-17. **`booking_expired`** — untuk pelanggan / to the customer
+18. **`booking_expired`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Permintaan booking kedaluwarsa / Booking request expired
 
@@ -254,7 +268,7 @@ Jumlah pesan / Messages: 25
     **Perubahan / Change:**
 
 
-18. **`term_ended`** — untuk pelanggan / to the customer
+19. **`term_ended`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Masa sewa berakhir / Your rental term has ended
 
@@ -268,7 +282,7 @@ Jumlah pesan / Messages: 25
     **Perubahan / Change:**
 
 
-19. **`notice_confirmed`** — untuk pelanggan / to the customer
+20. **`notice_confirmed`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Pemberitahuan berhenti sewa diterima / Termination notice received
 
@@ -282,7 +296,7 @@ Jumlah pesan / Messages: 25
     **Perubahan / Change:**
 
 
-20. **`lease_suspended`** — untuk pelanggan / to the customer
+21. **`lease_suspended`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Akses ditangguhkan / Access suspended — 36-21112026-240-431
 
@@ -296,7 +310,7 @@ Jumlah pesan / Messages: 25
     **Perubahan / Change:**
 
 
-21. **`invoice_reminder_h{n} — n hari sebelum jatuh tempo / n days before the due date`** — untuk pelanggan / to the customer
+22. **`invoice_reminder_h{n} — n hari sebelum jatuh tempo / n days before the due date`** — untuk pelanggan / to the customer
 
     *Contoh untuk satu nilai n; kalimatnya sama untuk setiap n. / One value of n shown; the wording is the same for every n.*
 
@@ -312,7 +326,7 @@ Jumlah pesan / Messages: 25
     **Perubahan / Change:**
 
 
-22. **`invoice_overdue_d{n} — n hari setelah jatuh tempo / n days after the due date`** — untuk pelanggan / to the customer
+23. **`invoice_overdue_d{n} — n hari setelah jatuh tempo / n days after the due date`** — untuk pelanggan / to the customer
 
     *Contoh untuk satu nilai n; kalimatnya sama untuk setiap n. / One value of n shown; the wording is the same for every n.*
 
@@ -328,7 +342,7 @@ Jumlah pesan / Messages: 25
     **Perubahan / Change:**
 
 
-23. **`invoice_reminder_h{n}_admin — salinan untuk admin cabang / the branch admin's copy`** — untuk staf / to staff
+24. **`invoice_reminder_h{n}_admin — salinan untuk admin cabang / the branch admin's copy`** — untuk staf / to staff
 
     *Contoh untuk satu nilai n; kalimatnya sama untuk setiap n. / One value of n shown; the wording is the same for every n.*
 
@@ -342,7 +356,7 @@ Jumlah pesan / Messages: 25
     **Perubahan / Change:**
 
 
-24. **`invoice_overdue_d{n}_admin — salinan untuk admin cabang / the branch admin's copy`** — untuk staf / to staff
+25. **`invoice_overdue_d{n}_admin — salinan untuk admin cabang / the branch admin's copy`** — untuk staf / to staff
 
     *Contoh untuk satu nilai n; kalimatnya sama untuk setiap n. / One value of n shown; the wording is the same for every n.*
 
@@ -356,7 +370,7 @@ Jumlah pesan / Messages: 25
     **Perubahan / Change:**
 
 
-25. **`auto_reply — balasan otomatis saat pelanggan mengirim pesan ke nomor sistem / the automatic reply when a customer writes to the system number`** — untuk pelanggan / to the customer
+26. **`auto_reply — balasan otomatis saat pelanggan mengirim pesan ke nomor sistem / the automatic reply when a customer writes to the system number`** — untuk pelanggan / to the customer
 
     *Teks bawaan; dapat diubah di Pengaturan → Pesan, dan hanya terkirim bila balasan otomatis dinyalakan. / The default text; editable in Settings → Messaging, sent only while the auto-reply is on.*
 

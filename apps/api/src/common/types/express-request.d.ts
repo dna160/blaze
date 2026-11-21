@@ -13,6 +13,12 @@ export interface AuthenticatedUser {
   roles: string[];
   /** BUILD-SPEC C2 — full role × scope assignments; the authoritative RBAC input. */
   roleAssignments: RoleAssignment[];
+  /**
+   * PRD go-live 2 §6.1 — read from the account on every staff request (see
+   * JwtStrategy). True: JwtAuthGuard refuses every route that is not marked
+   * @AllowPendingPasswordChange().
+   */
+  mustChangePassword?: boolean;
 }
 
 declare module "express" {

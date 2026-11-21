@@ -30,6 +30,12 @@ export const SessionUserSchema = z.object({
   /** Base role names (or ["CUSTOMER"]). */
   roles: z.array(z.string()),
   roleAssignments: z.array(RoleAssignmentSchema),
+  /**
+   * PRD go-live 2 §6.1 — true: this session may only change its password. The
+   * API refuses everything else (403, code PASSWORD_CHANGE_REQUIRED) and the
+   * console goes to the change page first.
+   */
+  mustChangePassword: z.boolean().optional(),
 });
 export type SessionUser = z.infer<typeof SessionUserSchema>;
 
@@ -40,14 +46,21 @@ export const ConsoleLoginResponseSchema = z.object({
 export type ConsoleLoginResponse = z.infer<typeof ConsoleLoginResponseSchema>;
 
 /** BUILD-SPEC C2 — staff user creation / role assignment (manage_users, admin only). */
-export const CreateStaffUserRequestSchema = z.object({
-  email: z.string().email(),
-  displayName: z.string().min(1).max(120),
-  password: z.string().min(8),
-  role: BaseRoleSchema,
-  /** ORGANIZATION scope is only grantable by an org-scoped admin (privilege guard, API-enforced). */
-  scope: RoleScopeSchema,
-});
+/**
+ * No password (PRD go-live 2 §6.1): an admin never types, sees or sets another
+ * person's password. The account is created without one and gets a single-use
+ * set-password link. `.strict()` so a client that still sends `password` is
+ * told so (400) instead of having it silently ignored.
+ */
+export const CreateStaffUserRequestSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().email(),
+    displayName: z.string().trim().min(1).max(120),
+    role: BaseRoleSchema,
+    /** ORGANIZATION scope is only grantable by an org-scoped admin (privilege guard, API-enforced). */
+    scope: RoleScopeSchema,
+  })
+  .strict();
 export type CreateStaffUserRequest = z.infer<typeof CreateStaffUserRequestSchema>;
 
 export const UpdateStaffRoleRequestSchema = z.object({
@@ -116,6 +129,54 @@ export const SetStaffPasswordRequestSchema = z.object({
   password: z.string().min(10, "Use at least 10 characters.").max(200),
 });
 export type SetStaffPasswordRequest = z.infer<typeof SetStaffPasswordRequestSchema>;
+
+/** PRD go-live 2 §6.1 — change my own password. The policy itself is `checkPasswordPolicy`. */
+export const ChangeStaffPasswordRequestSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z.string().min(1).max(200),
+});
+export type ChangeStaffPasswordRequest = z.infer<typeof ChangeStaffPasswordRequestSchema>;
+
+/** The error `code` the API sends (HTTP 403) while a session must change its password. */
+export const PASSWORD_CHANGE_REQUIRED = "PASSWORD_CHANGE_REQUIRED";
+
+/**
+ * What a new account or an admin reset hands back (PRD go-live 2 §6.1): the
+ * set-password link went out by email, or — when email is not configured, or
+ * messaging is paused — the link itself, shown once for the admin to pass on.
+ */
+export const StaffPasswordLinkSchema = z.object({
+  id: z.string(),
+  email: z.string(),
+  displayName: z.string().nullable(),
+  emailed: z.boolean(),
+  /** Only when it was not emailed. Never stored; cannot be shown again. */
+  link: z.string().nullable(),
+  /** ISO timestamp — the link stops working then (72 h). */
+  expiresAt: z.string(),
+});
+export type StaffPasswordLink = z.infer<typeof StaffPasswordLinkSchema>;
+
+/**
+ * The client's names for (role × scope) — docs/RBAC.md §2. One function so the
+ * users list, the user menu and the import preview say the same thing. There is
+ * no "finance manager": FINANCE at organization scope is Super Finance. A
+ * SUPERVISOR at organization scope (PRD go-live 2 §6.2) is a supervisor for
+ * every branch.
+ */
+export function staffRoleLabel(role: BaseRoleName | string, scope: RoleScopeName | string): string {
+  const labels: Record<string, string> = {
+    "ADMIN|ORGANIZATION": "Super Admin",
+    "ADMIN|TENANT": "Admin",
+    "FINANCE|ORGANIZATION": "Super Finance",
+    "FINANCE|TENANT": "Finance",
+    "SUPERVISOR|ORGANIZATION": "Supervisor (semua cabang)",
+    "SUPERVISOR|TENANT": "Supervisor (SPV)",
+    "STAFF|ORGANIZATION": "Staff (semua cabang)",
+    "STAFF|TENANT": "Staff",
+  };
+  return labels[`${role}|${scope}`] ?? `${role} @ ${scope}`;
+}
 
 /** PRD go-live §4.4 / §5.3 — CSV imports: dry run unless apply is true. */
 export const CsvImportRequestSchema = z.object({

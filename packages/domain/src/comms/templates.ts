@@ -116,6 +116,13 @@ const TEMPLATES: Record<string, (vars: Vars) => RenderedMessage> = {
     subject: `Pembayaran diterima / Payment received — ${v(vars, "invoiceNumber", "")}`,
     text: `Terima kasih, pembayaran invoice ${v(vars, "invoiceNumber", "")} sebesar Rp ${v(vars, "totalAmount", "")} sudah kami terima.\nThanks — payment for ${v(vars, "invoiceNumber", "")} (Rp ${v(vars, "totalAmount", "")}) is confirmed.\n\n${v(vars, "link")}`,
   }),
+  // PRD go-live 2 §6.1 — an admin sent a reset link (email only; staff, not customers).
+  staff_password_reset: (vars) => ({
+    subject: "Atur ulang kata sandi console / Reset your console password",
+    text:
+      `Halo ${v(vars, "displayName", "")}, admin ${v(vars, "branchName", "City Storage")} mengirim tautan untuk mengatur ulang kata sandi console Anda. Kata sandi lama sudah tidak berlaku. Buat yang baru melalui tautan di bawah (sekali pakai, berlaku 72 jam).\n` +
+      `An administrator at ${v(vars, "branchName", "City Storage")} sent you a link to reset your console password. Your old password no longer works. Set a new one with the link below (single use, valid 72 hours).\n\n${v(vars, "link")}`,
+  }),
   booking_rejected: (vars) => ({
     subject: "Permintaan booking tidak dapat diproses / Booking request declined",
     text: `Mohon maaf, permintaan Anda tidak dapat kami proses. Alasan: ${v(vars, "reason", "-")}.\nSorry, we couldn't process your request. Reason: ${v(vars, "reason", "-")}.`,

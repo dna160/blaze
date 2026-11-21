@@ -26,6 +26,12 @@ export class OptionalJwtAuthGuard extends AuthGuard("jwt") {
     if (req.user?.tenantId && req.tenant?.id && req.user.tenantId !== req.tenant.id) {
       req.user = undefined;
     }
+    // PRD go-live 2 §6.1 — a staff session that must change its password gets
+    // no staff powers anywhere, including on a public route that would merely
+    // have attached it: the request goes ahead as an anonymous one.
+    if (req.user?.kind === "STAFF" && req.user.mustChangePassword) {
+      req.user = undefined;
+    }
     return true;
   }
 

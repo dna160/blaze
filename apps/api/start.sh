@@ -133,8 +133,14 @@ fi
 # PROMOTE_ADMIN_TENANT=<slug>       (required when more than one tenant exists)
 # PROMOTE_ADMIN_PASSWORD=<password> (optional; sets/resets it, required to create)
 #
+# The password set here is a ONE-TIME password (PRD go-live 2 §6.1): it has sat
+# in a deploy variable, so the account must change it at first login and can do
+# nothing else until it has; sessions from before the reset are revoked.
+#
 # Remove these once you are in. Left set, it re-asserts the grant every boot —
-# harmless but it means the account cannot be demoted from the console.
+# the account cannot be demoted from the console, and with
+# PROMOTE_ADMIN_PASSWORD still set every boot puts that password back, signs the
+# account out and forces another change.
 if [ -n "$PROMOTE_ADMIN_EMAIL" ]; then
   echo "[entrypoint] Promoting $PROMOTE_ADMIN_EMAIL to ADMIN x ORGANIZATION…"
   # Never fatal. This is an operator convenience; a bad tenant slug or a missing

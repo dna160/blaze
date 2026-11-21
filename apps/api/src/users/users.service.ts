@@ -1,15 +1,23 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { applyUserImport, hashPasswordToken, planUserImport, withOrgReadContext, withTenantContext } from "@rentos/database";
+import { passwordPolicyError, type StaffPasswordLink } from "@rentos/contracts";
+import {
+  applyUserImport,
+  hashPasswordToken,
+  issuePasswordToken,
+  PASSWORD_LINK_TTL_HOURS,
+  planUserImport,
+  withOrgReadContext,
+  withTenantContext,
+} from "@rentos/database";
 import { can, hasOrganizationScope, type BaseRole, type RoleScope } from "@rentos/domain";
 import { hash } from "bcryptjs";
 
 import { AuditService } from "../audit/audit.service.js";
+import { BCRYPT_COST, passwordChangeMoment } from "../common/password-change.js";
 import { NotificationsService } from "../notifications/notifications.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
-
-const BCRYPT_COST = 10;
 
 /**
  * BUILD-SPEC C2 — staff user & role administration (the "set up the hierarchy"
@@ -83,9 +91,26 @@ export class UsersService {
     if (!row || row.usedAt || row.expiresAt < new Date()) {
       throw new BadRequestException("This link is invalid or has expired. Ask your administrator for a new one.");
     }
+    const account = await withTenantContext(this.prisma.raw, row.tenantId, (tx) =>
+      tx.user.findUnique({ where: { id: row.userId }, select: { email: true, displayName: true, status: true } }),
+    );
+    if (!account || account.status !== "ACTIVE") {
+      throw new BadRequestException("This link is invalid or has expired. Ask your administrator for a new one.");
+    }
+    // PRD go-live 2 §6.1 — the same policy as change-password. Checked before
+    // the token is spent, so a refused password leaves the link usable.
+    const problem = passwordPolicyError(password, account);
+    if (problem) throw new BadRequestException({ code: "PASSWORD_POLICY", message: problem });
+
     const passwordHash = await hash(password, BCRYPT_COST);
     const user = await withTenantContext(this.prisma.raw, row.tenantId, (tx) =>
-      tx.user.update({ where: { id: row.userId }, data: { passwordHash }, select: { email: true, tenant: { select: { slug: true } } } }),
+      tx.user.update({
+        where: { id: row.userId },
+        // The person chose this password themselves: nothing left to force, and
+        // any session from before it (an admin reset revokes them too) is dead.
+        data: { passwordHash, mustChangePassword: false, passwordChangedAt: passwordChangeMoment() },
+        select: { email: true, tenant: { select: { slug: true } } },
+      }),
     );
     await this.prisma.raw.userPasswordToken.update({ where: { id: row.id }, data: { usedAt: new Date() } });
     await this.audit.record({ tenantId: row.tenantId, actorUserId: row.userId, action: "STAFF_PASSWORD_SET", entityType: "User", entityId: row.userId });
@@ -117,10 +142,15 @@ export class UsersService {
         email: true,
         displayName: true,
         status: true,
+        mustChangePassword: true,
+        passwordHash: true, // never returned — reduced to `hasPassword` below
         roles: { select: { role: true, scope: true, tenantIds: true } },
       },
       orderBy: { createdAt: "asc" as const },
     };
+    // What the admin may know about a password: whether one exists yet, and
+    // whether the person still has to change it. Nothing else.
+    const present = <T extends { passwordHash: string | null }>({ passwordHash, ...u }: T) => ({ ...u, hasPassword: passwordHash !== null });
 
     if (hasOrganizationScope(actor.roleAssignments) && actor.organizationId) {
       const [users, tenants] = await withOrgReadContext(this.prisma.raw, actor.organizationId, async (tx) => {
@@ -128,41 +158,123 @@ export class UsersService {
         return [u, await this.prisma.raw.tenant.findMany({ where: { organizationId: actor.organizationId! }, select: { id: true, name: true } })];
       });
       const nameById = new Map(tenants.map((t) => [t.id, t.name]));
-      return users.map((u) => ({ ...u, tenantName: u.tenantId ? nameById.get(u.tenantId) ?? null : null }));
+      return users.map((u) => ({ ...present(u), tenantName: u.tenantId ? nameById.get(u.tenantId) ?? null : null }));
     }
 
     const users = await this.prisma.runInTenantContext(tenant.id, (tx) => tx.user.findMany(shape));
-    return users.map((u) => ({ ...u, tenantName: tenant.name }));
+    return users.map((u) => ({ ...present(u), tenantName: tenant.name }));
   }
 
-  /** Create a staff user in the ACTIVE tenant with one role × scope assignment. */
+  /**
+   * Create a staff user in the ACTIVE tenant with one role × scope assignment.
+   *
+   * PRD go-live 2 §6.1 — no password. An admin never types, sees or sets
+   * someone else's password: the account is created without one (it cannot log
+   * in yet) and gets a single-use set-password link, exactly like an imported
+   * account.
+   */
   async createUser(
     actor: AuthenticatedUser,
     tenant: ResolvedTenant,
-    input: { email: string; displayName: string; password: string; role: BaseRole; scope: RoleScope },
+    input: { email: string; displayName: string; role: BaseRole; scope: RoleScope },
   ) {
     this.assertCanManage(actor, tenant.id);
     this.assertMayGrant(actor, input.scope);
 
-    const passwordHash = await hash(input.password, BCRYPT_COST);
     const tenantIds = input.scope === "TENANT" ? [tenant.id] : [];
 
-    return this.prisma.runInTenantContext(tenant.id, async (tx) => {
+    const user = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
       const clash = await tx.user.findUnique({ where: { tenantId_email: { tenantId: tenant.id, email: input.email } } });
       if (clash) throw new ConflictException("A user with that email already exists in this branch.");
-      const user = await tx.user.create({
+      return tx.user.create({
         data: {
           tenantId: tenant.id,
           email: input.email,
           displayName: input.displayName,
-          passwordHash,
+          passwordHash: null, // cannot log in until the link is used
           status: "ACTIVE",
           roles: { create: { role: input.role, scope: input.scope, tenantIds } },
         },
         select: { id: true, email: true, displayName: true, status: true, roles: { select: { role: true, scope: true, tenantIds: true } } },
       });
-      return user;
     });
+    const passwordLink = await this.sendPasswordLink(tenant, user, "staff_set_password");
+    await this.audit.record({
+      tenantId: tenant.id,
+      actorUserId: actor.id,
+      action: "STAFF_USER_CREATED",
+      entityType: "User",
+      entityId: user.id,
+      metadata: { email: user.email, role: input.role, scope: input.scope, linkEmailed: passwordLink.emailed },
+    });
+    return { ...user, passwordLink };
+  }
+
+  /**
+   * PRD go-live 2 §6.1 — "Kirim tautan atur ulang". The admin does not learn or
+   * choose the password; the person gets a single-use link (72 h).
+   *
+   * A reset means the old password is no longer to be trusted, so it stops
+   * working at once: the hash is cleared, every session of the account is
+   * revoked, any earlier link is cancelled, and `mustChangePassword` stays set
+   * until the person has chosen a new password through the link. Asking again
+   * simply replaces the link.
+   */
+  async sendPasswordReset(actor: AuthenticatedUser, tenant: ResolvedTenant, userId: string): Promise<StaffPasswordLink> {
+    this.assertCanManage(actor, tenant.id);
+    if (actor.id === userId) {
+      throw new BadRequestException("Untuk akun Anda sendiri, gunakan Ganti kata sandi. / For your own account, use Change password.");
+    }
+    const target = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const found = await tx.user.findUnique({ where: { id: userId }, include: { roles: { select: { scope: true } } } });
+      if (!found) throw new NotFoundException("User not found in this branch.");
+      // Same escalation rule as granting: a branch Admin cannot take over an
+      // organization-wide account by resetting it.
+      if (found.roles.some((r) => r.scope === "ORGANIZATION")) this.assertMayGrant(actor, "ORGANIZATION");
+      return tx.user.update({
+        where: { id: userId },
+        data: { passwordHash: null, mustChangePassword: true, passwordChangedAt: passwordChangeMoment() },
+        select: { id: true, email: true, displayName: true },
+      });
+    });
+    const link = await this.sendPasswordLink(tenant, target, "staff_password_reset");
+    await this.audit.record({
+      tenantId: tenant.id,
+      actorUserId: actor.id,
+      action: "STAFF_PASSWORD_RESET_SENT",
+      entityType: "User",
+      entityId: target.id,
+      metadata: { email: target.email, linkEmailed: link.emailed },
+    });
+    return link;
+  }
+
+  /**
+   * Issue a fresh single-use set-password link (cancelling any earlier one) and
+   * deliver it: by email when an email can actually go out, otherwise it is
+   * returned ONCE for the admin to pass on. The raw token is never stored and
+   * never written to a notification row.
+   */
+  private async sendPasswordLink(
+    tenant: ResolvedTenant,
+    user: { id: string; email: string; displayName: string | null },
+    templateKey: "staff_set_password" | "staff_password_reset",
+  ): Promise<StaffPasswordLink> {
+    const token = await issuePasswordToken(this.prisma.raw, user.id, tenant.id);
+    const base = (process.env.CONSOLE_BASE_URL ?? "http://localhost:3001").replace(/\/$/, "");
+    const link = `${base}/set-password?token=${token}&branch=${tenant.slug}`;
+    const expiresAt = new Date(Date.now() + PASSWORD_LINK_TTL_HOURS * 3600_000).toISOString();
+    const emailed = await this.notifications.emailWouldBeDelivered(tenant.id, user.email);
+    if (emailed) {
+      await this.notifications.notify({
+        tenantId: tenant.id,
+        channel: "EMAIL",
+        templateKey,
+        recipient: user.email,
+        variables: { displayName: user.displayName ?? "", branchName: tenant.name, link },
+      });
+    }
+    return { id: user.id, email: user.email, displayName: user.displayName, emailed, link: emailed ? null : link, expiresAt };
   }
 
   /** Replace a user's role assignment (promote/change). Same guards as create. */

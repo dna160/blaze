@@ -56,8 +56,14 @@ applies org-wide (subject to the read-only rule in §4).
 | Admin | `ADMIN` @ TENANT [one] | its branch | its branch |
 | Super Finance | `FINANCE` @ ORGANIZATION | all branches | active branch only (see §4) |
 | Finance | `FINANCE` @ TENANT [one] | its branch | its branch |
-| SPV | `SUPERVISOR` @ TENANT [one] | its branch | its branch |
+| SPV | `SUPERVISOR` @ TENANT [one or more] | its branch(es) | its branch(es) |
+| Supervisor (semua cabang) | `SUPERVISOR` @ ORGANIZATION | all branches | active branch only (see §4) |
 | Staff | `STAFF` @ TENANT [one] | its branch | its branch |
+
+There is no "finance manager": FINANCE at organization scope is **Super Finance**.
+The organization-scoped supervisor was asked for one person on 2026-11-17 (PRD
+go-live 2 §6.2); it is the same SUPERVISOR capabilities, reaching every branch.
+Labels come from one function, `staffRoleLabel` in `packages/contracts/src/auth.ts`.
 
 `PLATFORM_ADMIN` (the vendor/Alexander operator role, `tenantId: null`) is **not** a
 client role and is out of the client capability matrix. It remains the platform
@@ -80,11 +86,26 @@ super-user for cross-org operations and keeps its existing behaviour.
 | Backdate contract or invoice | ✔ | — | ✔ | — |
 | Manual price override | ✔ | — | ✔ | — |
 | Approve deposit refund | ✔ | ✔ | — | — |
-| Run + export reports | ✔ | ✔ | ✔ | — |
+| Run + export reports (`run_reports`) | ✔ | ✔ | **—** | — |
+| Read invoices, deposits, contracts (lists, no capability: any staff) | ✔ | ✔ | ✔ | ✔ |
 | Manage users, pricing config | ✔ | — | — | — |
 | Delete anything | ✔ | — | — | — |
 | Fire waitlist (B10) | ✔ | — | ✔ | — |
 | Read the WhatsApp inbox (`read_messages`, go-live §9.5) | ✔ | — | ✔ | ✔ |
+| Request a booking cancellation / start-date change (`request_booking_change`, go-live 2 §4) | ✔ | — | ✔ | ✔ |
+| Upload KYC documents for a walk-in (`upload_kyc_on_behalf`, go-live 2 §5.1) | ✔ | — | ✔ | ✔ |
+
+**Supervisors do not see reports** (PRD go-live 2 §6.2, 2026-11-17 — the client
+was told so): no Reports item in the console nav, and `/reports/*` including
+every export answers 403. They keep read access to invoices and deposits, which
+are gated on being staff, not on `run_reports`.
+
+**Approving a booking change is not a matrix cell.** City Storage's rule mixes role
+and scope, so it follows `Organization.approvalPolicy` (defaults, PRD go-live 2
+§4.1): a **cancellation** is approved by an ADMIN at ORGANIZATION scope (Super
+Admin) only; a **start-date change** by a SUPERVISOR or ADMIN of either scope who
+covers the branch. The decider is never the requester. Implemented with the change
+requests (§4), not here.
 
 ### The four denials that gate R0
 
@@ -156,6 +177,36 @@ Inbox (PRD go-live §9.5): `read_messages` — ADMIN, SUPERVISOR and STAFF; **no
 FINANCE. Branch-scoped as before. Open with the client (§16 Q6): confirm Finance
 stays out. Matrix row in `packages/domain/src/rbac/capability-matrix.ts`, mirrored in
 `apps/console/src/lib/capabilities.ts`.
+
+## 7. Passwords (PRD go-live 2 §6.1, 2026-11-21)
+
+Nobody sets or sees someone else's password.
+
+| What | Who | How |
+|---|---|---|
+| Create a staff account | `manage_users` | No password field (`POST /users` refuses one). The account gets a single-use set-password link, 72 h: emailed when email is configured and messaging is not paused, otherwise shown once to the admin to hand over. |
+| Reset someone's password ("Kirim tautan atur ulang") | `manage_users`; an organization-wide account only by a Super Admin | `POST /users/:id/reset-password`. The old password stops working at once, every session of the account is signed out, an earlier link is cancelled, a new link is issued as above. Not for your own account. |
+| Change my password | any staff | User menu → Ganti kata sandi; `POST /auth/staff/change-password` with the current password. Every other session of the account is signed out; this one gets a fresh token. 5 wrong guesses at the current password in 15 minutes → 429. |
+| Break-glass admin | operator | `PROMOTE_ADMIN_*` in `apps/api/start.sh`. Its password is one-time: it must be changed at first login. |
+
+Policy (`checkPasswordPolicy`, `packages/contracts/src/password-policy.ts`, used by
+the API and the console): at least 10 characters; not the person's email, its
+local part or their name; not on a short list of common passwords (with trailing
+digits/punctuation stripped: `password2026!` counts). No composition rules.
+
+**Forced change.** `User.mustChangePassword`: set by the `20261121133000_passwords`
+migration on every tenant account that already had a password (all of them were
+typed by someone else), by an admin reset and by the break-glass path. While set,
+login still succeeds, but **`JwtAuthGuard` refuses every route** except those
+marked `@AllowPendingPasswordChange()` — `GET /auth/staff/me` and
+`POST /auth/staff/change-password` — with 403 `PASSWORD_CHANGE_REQUIRED`;
+`OptionalJwtAuthGuard` treats such a session as anonymous. The console routes to
+`/account/password` on that code and after login.
+
+**Session revocation.** Staff JWTs are checked against the account on every request
+(`JwtStrategy`): a suspended account is refused at once, and a token issued before
+`User.passwordChangedAt` is refused (401). The demo seed resets its accounts to
+`mustChangePassword=false`; a production database is never seeded with users.
 
 Document access (client page vault, PRD go-live §7.4): KYC files need
 `approve_booking` or `approve_deposit_refund` (as before) and every open is
