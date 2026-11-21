@@ -24,4 +24,11 @@ describe("console capability mirror", () => {
     expect(canDo({ roles: ["SUPER_ADMIN"] }, "approve_booking")).toBe(false);
     expect(canDo(null, "approve_booking")).toBe(false);
   });
+
+  it("hides Reports from a supervisor and shows it to finance (PRD go-live 2 §6.2)", () => {
+    expect(canDo({ roles: ["SUPERVISOR"] }, "run_reports")).toBe(false);
+    expect(canDo({ roles: ["FINANCE"] }, "run_reports")).toBe(true);
+    expect(canDo({ roles: ["STAFF"] }, "request_booking_change")).toBe(true);
+    expect(canDo({ roles: ["FINANCE"] }, "request_booking_change")).toBe(false);
+  });
 });

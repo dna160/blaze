@@ -71,7 +71,9 @@ const emptyForm = { email: "", displayName: "", role: "STAFF" as BaseRole, scope
 
 export default function UsersPage() {
   const router = useRouter();
-  const me = authClient.getUser();
+  // The session lives in localStorage, which the server render cannot see:
+  // read it after mount so the first client render matches the server's.
+  const [me, setMe] = useState<ReturnType<typeof authClient.getUser>>(null);
   const orgScoped = isOrgScoped(me);
 
   const [users, setUsers] = useState<StaffUser[] | null>(null);
@@ -94,7 +96,9 @@ export default function UsersPage() {
   }
 
   useEffect(() => {
-    if (!isAdmin(me)) {
+    const session = authClient.getUser();
+    setMe(session);
+    if (!isAdmin(session)) {
       router.push("/bookings");
       return;
     }
@@ -343,10 +347,10 @@ export default function UsersPage() {
                       <td className="p-3">
                         <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_COLORS[u.status] ?? ""}`}>{u.status}</span>
                         {u.hasPassword === false && (
-                          <span className="ml-2 rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-800">Belum membuat kata sandi</span>
+                          <span className="mt-1 inline-block whitespace-nowrap rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-800">Belum membuat kata sandi</span>
                         )}
                         {u.hasPassword !== false && u.mustChangePassword && (
-                          <span className="ml-2 rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800">Wajib ganti kata sandi</span>
+                          <span className="mt-1 inline-block whitespace-nowrap rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800">Wajib ganti kata sandi</span>
                         )}
                       </td>
                       <td className="p-3 text-right">
@@ -354,21 +358,21 @@ export default function UsersPage() {
                           <div className="flex justify-end gap-2">
                             <button
                               onClick={() => { setEditingId(editingId === u.id ? null : u.id); if (primary) setEditRole({ role: primary.role, scope: primary.scope }); }}
-                              className="rounded border border-brand-600/20 px-3 py-1 text-xs font-medium hover:bg-brand-700/5"
+                              className="whitespace-nowrap rounded border border-brand-600/20 px-3 py-1 text-xs font-medium hover:bg-brand-700/5"
                             >
                               Change role
                             </button>
                             <button
                               onClick={() => void sendReset(u)}
                               disabled={busy}
-                              className="rounded border border-brand-600/20 px-3 py-1 text-xs font-medium hover:bg-brand-700/5 disabled:opacity-50"
+                              className="whitespace-nowrap rounded border border-brand-600/20 px-3 py-1 text-xs font-medium hover:bg-brand-700/5 disabled:opacity-50"
                             >
                               Kirim tautan atur ulang
                             </button>
                             <button
                               onClick={() => setStatus(u.id, u.status !== "ACTIVE")}
                               disabled={busy}
-                              className="rounded border border-brand-600/20 px-3 py-1 text-xs font-medium hover:bg-brand-700/5 disabled:opacity-50"
+                              className="whitespace-nowrap rounded border border-brand-600/20 px-3 py-1 text-xs font-medium hover:bg-brand-700/5 disabled:opacity-50"
                             >
                               {u.status === "ACTIVE" ? "Deactivate" : "Activate"}
                             </button>
