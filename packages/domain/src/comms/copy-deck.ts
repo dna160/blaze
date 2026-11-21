@@ -145,8 +145,8 @@ export function renderCopyDeckMarkdown(options: { autoReplyText?: string | null;
   const out: string[] = [
     "# Teks pesan WhatsApp & email — untuk ditinjau / Message wording — for review",
     "",
-    "Dibuat otomatis dari kode (`pnpm wa:templates copy --format md`) — jangan disunting langsung di repo; lihat cara mengembalikan perubahan di bawah.",
-    "Generated from the code — do not hand-edit this file in the repository.",
+    "Dibuat otomatis dari kode dengan `pnpm wa:templates copy --format md`. Perubahan kalimat dikerjakan di `packages/domain/src/comms/templates.ts`, lalu file ini dibuat ulang.",
+    "Generated from the code. Wording changes are made in `packages/domain/src/comms/templates.ts`, and this file is then regenerated.",
     ...(options.generatedOn ? ["", `Tanggal / Generated: ${options.generatedOn}`] : []),
     "",
     "**Cara meninjau / How to review**",
@@ -170,18 +170,19 @@ export function renderCopyDeckMarkdown(options: { autoReplyText?: string | null;
   entries.forEach((e, i) => {
     out.push(`${i + 1}. **\`${e.title}\`** — ${e.audience === "staff" ? "untuk staf / to staff" : "untuk pelanggan / to the customer"}`);
     out.push("");
-    if (e.note) out.push(`   *${e.note}*`, "");
-    if (e.subject) out.push(`   Subjek email / Email subject: ${e.subject}`, "");
+    // Four spaces: enough to stay inside the list item once the numbers reach two digits.
+    if (e.note) out.push(`    *${e.note}*`, "");
+    if (e.subject) out.push(`    Subjek email / Email subject: ${e.subject}`, "");
     out.push(
       quote(e.text)
         .split("\n")
-        .map((l) => `   ${l}`)
+        .map((l) => `    ${l}`)
         .join("\n"),
     );
     out.push("");
-    out.push(`   *Data:* ${e.variables.length ? e.variables.map((n) => `\`${n}\``).join(", ") : "—"}`);
+    out.push(`    *Data:* ${e.variables.length ? e.variables.map((n) => `\`${n}\``).join(", ") : "—"}`);
     out.push("");
-    out.push("   **Perubahan / Change:**");
+    out.push("    **Perubahan / Change:**");
     out.push("");
     out.push("");
   });
