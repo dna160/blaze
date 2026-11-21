@@ -138,7 +138,23 @@ export {
   type DurationTier,
   type PriceComposition,
 } from "./pricing/discounts.js";
-export { renderMessage, buildMagicLinkUrl, type RenderedMessage } from "./comms/templates.js";
+export {
+  renderMessage,
+  buildMagicLinkUrl,
+  messageTemplateKeys,
+  DYNAMIC_MESSAGE_TEMPLATE_KEYS,
+  type RenderedMessage,
+} from "./comms/templates.js";
+export {
+  copyDeckEntries,
+  copyDeckProblems,
+  renderCopyDeckMarkdown,
+  sampleValue,
+  templateVariables,
+  isStaffFacing,
+  MESSAGE_SAMPLE_VALUES,
+  type CopyDeckEntry,
+} from "./comms/copy-deck.js";
 export {
   allWhatsAppTemplates,
   buildWhatsAppTemplatePayload,

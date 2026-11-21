@@ -6,6 +6,17 @@
  *   pnpm wa:templates status    # what Meta currently holds, and what's missing
  *   pnpm wa:templates diagnose  # is this the right WABA, and may this token manage it?
  *   pnpm wa:templates demo      # send one of every APPROVED template to one number
+ *   pnpm wa:templates copy --format md   # the copy deck for the client to mark up
+ *
+ * `copy` (PRD go-live 2 §8.3) renders EVERY message the system can send — each
+ * key of comms/templates.ts in both languages with realistic sample values,
+ * plus the auto-reply — as one numbered Markdown list with a blank
+ * "Perubahan / Change:" line under each, and writes it to
+ * docs/COPY-whatsapp-messages.md (`--out <path>` to write elsewhere,
+ * `--stdout` to print, `--auto-reply-file <path>` to show an organization's
+ * saved auto-reply text instead of the default). It needs no credentials. It
+ * exits non-zero when the wording check finds a problem (a demo-tenant name,
+ * the product's internal name in customer copy, an unfilled placeholder).
  *
  * `demo` exists to show someone what the system says to a customer. `--name`
  * addresses the messages to them rather than to the sample customer. It needs
@@ -29,7 +40,11 @@ import {
   type WhatsAppTemplateSpec,
 } from "../src/comms/whatsapp-templates.js";
 
+import { copyDeckEntries, copyDeckProblems, renderCopyDeckMarkdown } from "../src/comms/copy-deck.js";
+
 import { checkCredential, describeGraphError, graphJson, graphPost, GRAPH } from "./graph.js";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
 /**
  * Meta requires a sample value per `{{n}}` at submission — a template with
@@ -487,6 +502,42 @@ async function demo(argv: string[]): Promise<void> {
   if (failed) process.exitCode = 1;
 }
 
+/** PRD go-live 2 §8.3 — the copy deck. Offline: no credentials, no network. */
+function copy(argv: string[]): void {
+  const flag = (name: string): string | undefined => {
+    const i = argv.indexOf(name);
+    return i >= 0 ? argv[i + 1] : undefined;
+  };
+  const format = flag("--format") ?? "md";
+  if (format !== "md") {
+    console.error(`Unknown --format "${format}". Only "md" (Markdown) is supported.`);
+    process.exitCode = 1;
+    return;
+  }
+  const autoReplyFile = flag("--auto-reply-file");
+  const autoReplyText = autoReplyFile ? readFileSync(path.resolve(process.env.INIT_CWD ?? process.cwd(), autoReplyFile), "utf8") : null;
+  const markdown = renderCopyDeckMarkdown({ autoReplyText });
+
+  if (argv.includes("--stdout")) {
+    process.stdout.write(markdown);
+  } else {
+    // The script runs with packages/domain as its cwd (pnpm --filter); the deck belongs to the repo's docs/.
+    const out = flag("--out")
+      ? path.resolve(process.env.INIT_CWD ?? process.cwd(), flag("--out")!)
+      : path.resolve(__dirname, "../../../docs/COPY-whatsapp-messages.md");
+    mkdirSync(path.dirname(out), { recursive: true });
+    writeFileSync(out, markdown);
+    console.log(`Wrote ${copyDeckEntries({ autoReplyText }).length} messages to ${out}`);
+  }
+
+  const problems = copyDeckProblems({ autoReplyText });
+  if (problems.length > 0) {
+    console.error(`\nWording problems (${problems.length}):`);
+    for (const p of problems) console.error(`  - ${p}`);
+    process.exitCode = 1;
+  }
+}
+
 // Wrapped rather than top-level await: @rentos/domain is CommonJS, so tsx
 // transforms this file to CJS where top-level await is a syntax error.
 async function main(): Promise<void> {
@@ -495,6 +546,7 @@ async function main(): Promise<void> {
   if (mode === "status") return status(rest);
   if (mode === "diagnose") return diagnose(rest);
   if (mode === "demo") return demo(rest);
+  if (mode === "copy") return copy(rest);
   if (mode === "payload") {
     // Offline: the exact JSON each creation POST would carry.
     for (const spec of allWhatsAppTemplates()) {

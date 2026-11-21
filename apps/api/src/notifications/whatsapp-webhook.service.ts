@@ -353,7 +353,7 @@ export class WhatsAppWebhookService {
 
       const text = await this.renderAutoReplyText(reply.text, orgTenantIds, soleBranchTenantId);
 
-      const blocked = await outboundBlock(this.prisma.raw, tenantId);
+      const blocked = await outboundBlock(this.prisma.raw, tenantId, to);
       if (blocked) {
         await this.prisma.runInTenantContext(tenantId, (tx) =>
           recordSuppressed(tx, { tenantId, channel: "WHATSAPP", templateKey: "auto_reply", recipient: to, payload: { text }, reason: blocked }),
