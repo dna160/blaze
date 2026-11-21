@@ -71,6 +71,8 @@ export interface DepositReportRow {
   receivedInRange: string;
   appliedInRange: string;
   refundedInRange: string;
+  /** Legacy re-sync corrections of this deposit inside the range (signed). */
+  adjustedInRange: string;
 }
 
 export interface DepositReportTotals {

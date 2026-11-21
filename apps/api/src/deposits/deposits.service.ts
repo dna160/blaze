@@ -56,6 +56,7 @@ export const DEPOSIT_CSV_COLUMNS = [
   "received_in_range",
   "applied_in_range",
   "refunded_in_range",
+  "adjusted_in_range",
 ] as const;
 
 /**
@@ -228,6 +229,7 @@ export class DepositsService {
         receivedInRange: str(received),
         appliedInRange: str(applied),
         refundedInRange: str(refunded),
+        adjustedInRange: str(adjusted),
       });
     }
 
@@ -291,6 +293,7 @@ export class DepositsService {
       received_in_range: csvAmount(r.receivedInRange),
       applied_in_range: csvAmount(r.appliedInRange),
       refunded_in_range: csvAmount(r.refundedInRange),
+      adjusted_in_range: csvAmount(r.adjustedInRange),
     }));
     return { filename: report.exportFilename, csv: toCsv(rows, DEPOSIT_CSV_COLUMNS) };
   }

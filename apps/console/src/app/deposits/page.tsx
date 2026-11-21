@@ -335,7 +335,7 @@ function DepositsReport() {
                         <div className="text-xs text-brand-700/60">{d.unitTypeName}</div>
                       </td>
                       <td className="p-2.5 text-right">{formatIDR(d.amount)}</td>
-                      <td className="p-2.5">{formatInstant(d.receivedAt, report.timeZone)}</td>
+                      <td className="whitespace-nowrap p-2.5">{formatInstant(d.receivedAt, report.timeZone)}</td>
                       <td className="p-2.5 text-right">{Number(d.appliedAmount) > 0 ? formatIDR(d.appliedAmount) : "—"}</td>
                       <td className="p-2.5 text-right">
                         {formatIDR(d.remaining)}
@@ -347,12 +347,12 @@ function DepositsReport() {
                           <div className="mt-1 text-xs text-brand-700/60">Diminta {formatInstant(d.refundRequestedAt, report.timeZone)}</div>
                         )}
                       </td>
-                      <td className="p-2.5">{formatCalendarDate(d.leaseEnd)}</td>
+                      <td className="whitespace-nowrap p-2.5">{formatCalendarDate(d.leaseEnd)}</td>
                       <td className="p-2.5">
                         {formatCalendarDate(d.refundDue)}
                         {d.refundOverdue && <div className="mt-0.5 inline-block rounded bg-red-600 px-1.5 py-0.5 text-xs font-medium text-white">Terlambat</div>}
                       </td>
-                      <td className="p-2.5">{formatInstant(d.refundedAt, report.timeZone)}</td>
+                      <td className="whitespace-nowrap p-2.5">{formatInstant(d.refundedAt, report.timeZone)}</td>
                       <td className="max-w-[10rem] break-all p-2.5 text-xs">{d.payoutRef ?? "—"}</td>
                       <td className="p-2.5 text-right">
                         <div className="flex flex-col items-end gap-1.5">
