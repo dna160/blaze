@@ -12,6 +12,7 @@ import { SignedScanUpload } from "@/components/SignedScanUpload";
 import { apiFetch, apiFetchBlob, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import { canDo } from "@/lib/capabilities";
+import { hasMessage, useT } from "@/lib/i18n";
 
 /** The contract row as the API returns it — ContractDto plus the go-live fields (PRD go-live §6.2, §7.2). */
 type ContractRow = ContractDto & {
@@ -33,12 +34,10 @@ interface BookingWithRelations extends BookingDto {
 function formatIDR(amount: string | number): string {
   return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(amount));
 }
-function fmtDate(value: string | null | undefined): string {
-  return value ? new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : "—";
-}
 
 /** Staff-side booking detail — contract status + upload-on-customer's-behalf for a paper contract collected in person (PRD §5.3). */
 export default function BookingDetailPage() {
+  const { t, s, intl } = useT();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [booking, setBooking] = useState<BookingWithRelations | null>(null);
@@ -54,6 +53,9 @@ export default function BookingDetailPage() {
   const [signMethod, setSignMethod] = useState<"ONLINE" | "OFFLINE">("ONLINE");
 
   const [changeReload, setChangeReload] = useState(0);
+
+  const fmtDate = (value: string | null | undefined) =>
+    value ? new Date(value).toLocaleDateString(intl, { day: "numeric", month: "short", year: "numeric" }) : "—";
 
   async function load() {
     const token = authClient.getToken();
@@ -92,7 +94,7 @@ export default function BookingDetailPage() {
       setNotice(success);
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Action failed.");
+      setError(err instanceof ApiError ? err.message : t("booking.actionFailed"));
     } finally {
       setStayActionBusy(false);
     }
@@ -105,7 +107,7 @@ export default function BookingDetailPage() {
       const blob = await apiFetchBlob(`/contracts/${contract.id}/document`, token);
       window.open(URL.createObjectURL(blob), "_blank", "noopener");
     } catch {
-      setError("Could not open the agreement PDF.");
+      setError(t("booking.openPdfFailed"));
     }
   }
 
@@ -117,7 +119,7 @@ export default function BookingDetailPage() {
       const blob = await apiFetchBlob(`/contracts/${contract.id}/file`, token);
       window.open(URL.createObjectURL(blob), "_blank", "noopener");
     } catch {
-      setError("Could not open the signed contract.");
+      setError(t("booking.openSignedFailed"));
     }
   }
 
@@ -129,10 +131,10 @@ export default function BookingDetailPage() {
     setError(null);
     try {
       await apiFetch(`/contracts/${contract.id}/confirm`, { token, method: "POST", body: {} });
-      setNotice("Contract confirmed — the signed PDF now carries the CONFIRMED stamp.");
+      setNotice(t("booking.confirmed"));
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not confirm the contract.");
+      setError(err instanceof ApiError ? err.message : t("booking.confirmFailed"));
     } finally {
       setConfirming(false);
     }
@@ -152,10 +154,10 @@ export default function BookingDetailPage() {
     setNotice(null);
     try {
       await apiFetch(`/contracts/${contract.id}/sign-method`, { token, method: "POST", body: { signMethod: next } });
-      setNotice(next === "OFFLINE" ? "Diubah ke tanda tangan di kantor — pelanggan diberi tahu batas waktunya." : "Diubah ke tanda tangan online di portal.");
+      setNotice(next === "OFFLINE" ? t("booking.toOffline") : t("booking.toOnline"));
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Gagal mengubah cara tanda tangan.");
+      setError(err instanceof ApiError ? err.message : t("booking.signMethodFailed"));
     } finally {
       setStayActionBusy(false);
     }
@@ -170,7 +172,7 @@ export default function BookingDetailPage() {
       await apiFetch(`/bookings/${id}/${action}`, { token, method: "POST" });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : `Failed to ${action.replace("-", " ")}.`);
+      setError(err instanceof ApiError ? err.message : t("booking.stayFailed", { action }));
     } finally {
       setStayActionBusy(false);
     }
@@ -179,7 +181,7 @@ export default function BookingDetailPage() {
   if (!booking) {
     return (
       <ConsoleShell>
-        <p>Loading...</p>
+        <p>{t("common.loading")}</p>
       </ConsoleShell>
     );
   }
@@ -189,11 +191,13 @@ export default function BookingDetailPage() {
 
   const isTermLease = booking.bookingModel === "RECURRING_LEASE" && Boolean(booking.termMonths);
   const stage = pipeline?.pipelineStage;
+  const stageLabel = (st: string) => (hasMessage(`booking.stage.${st}`) ? t(`booking.stage.${st}`) : st.replace("_", " "));
+  const actorLabel = (a: string) => (hasMessage(`booking.actor.${a}`) ? t(`booking.actor.${a}`) : a.toLowerCase());
 
   return (
     <ConsoleShell>
       <Link href="/bookings" className="text-sm text-brand-700/60 hover:underline">
-        ← Workbench
+        {t("booking.back")}
       </Link>
       <h1 className="mt-1 text-2xl font-semibold">
         <Link href={`/clients/${booking.customer.id}`} className="hover:underline">
@@ -201,67 +205,68 @@ export default function BookingDetailPage() {
         </Link>
       </h1>
       <p className="mt-1 text-sm text-brand-700/60">
-        {booking.assetType.name} {booking.asset ? `— unit ${booking.asset.code}` : "— no unit assigned"}
+        {booking.assetType.name} — {booking.asset ? t("booking.unit", { code: booking.asset.code }) : t("booking.noUnit")}
         {booking.location ? ` · ${booking.location.name}` : ""} · {fmtDate(booking.startDate)}
         {booking.endDate ? ` → ${fmtDate(booking.endDate)}` : ""}
-        {booking.termMonths ? ` · ${booking.termMonths}-month term` : ""} · Status: {booking.status}
+        {booking.termMonths ? <> · {t("booking.termMonths", { months: booking.termMonths })}</> : null} · {t("booking.statusLine", { status: s(booking.status) })}
         {contract?.contractNumber ? (
           <>
             {" · "}
-            <span className="font-medium text-brand-700">Contract #{contract.contractNumber}</span>
+            <span className="font-medium text-brand-700">{t("booking.contractNo", { number: contract.contractNumber })}</span>
           </>
         ) : null}
       </p>
       <p className="text-xs text-brand-700/50">
-        {booking.customer.phone ?? "no phone"} · {booking.customer.email ?? "no email"} · messages via {booking.customer.preferredChannel === "EMAIL" ? "email" : "WhatsApp"} · KYC {booking.customer.kycStatus}
+        {booking.customer.phone ?? t("booking.noPhone")} · {booking.customer.email ?? t("booking.noEmail")} ·{" "}
+        {booking.customer.preferredChannel === "EMAIL" ? t("booking.viaEmail") : t("booking.viaWhatsapp")} · {t("booking.kyc", { status: s(booking.customer.kycStatus) })}
       </p>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       {notice && <p className="mt-2 text-sm text-green-700">{notice}</p>}
 
       {isTermLease && pipeline && stage && stage !== "ACTIVE" && stage !== "CLOSED" && (
         <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">
-          <h2 className="font-medium">Pipeline — {stage.replace("_", " ")}</h2>
+          <h2 className="font-medium">{t("booking.pipeline", { stage: stageLabel(stage) })}</h2>
           <p className="mt-1 text-sm text-brand-700/60">{pipeline.stageDetail}</p>
           <div className="mt-3 flex flex-wrap gap-2">
             {stage === "WAITLIST" && (
-              <button onClick={() => pipelineAction("offer-unit", "Unit offered — the customer has been told.")} disabled={stayActionBusy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-                Offer unit
+              <button onClick={() => pipelineAction("offer-unit", t("booking.unitOffered"))} disabled={stayActionBusy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+                {t("booking.offerUnit")}
               </button>
             )}
             {stage === "APPROVAL" && (
-              <button onClick={() => pipelineAction("approve", "Approved — the customer has been asked to verify their identity.")} disabled={stayActionBusy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-                Approve
+              <button onClick={() => pipelineAction("approve", t("booking.approvedMsg"))} disabled={stayActionBusy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+                {t("booking.approve")}
               </button>
             )}
             {stage === "KYC" && (
-              <button onClick={() => pipelineAction("request-kyc", "KYC request sent.")} disabled={stayActionBusy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-                {booking.kycRequestedAt ? "Re-send KYC request" : "Request KYC"}
+              <button onClick={() => pipelineAction("request-kyc", t("booking.kycSent"))} disabled={stayActionBusy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+                {booking.kycRequestedAt ? t("booking.resendKyc") : t("booking.requestKyc")}
               </button>
             )}
             {stage === "CONTRACT" && (
               <div className="flex flex-wrap items-center gap-3" data-testid="sign-method-choice">
                 <fieldset className="flex items-center gap-3 text-sm">
-                  <legend className="sr-only">Cara tanda tangan</legend>
-                  <span className="text-brand-700/60">Tanda tangan:</span>
+                  <legend className="sr-only">{t("booking.signHow")}</legend>
+                  <span className="text-brand-700/60">{t("booking.signLabel")}</span>
                   <label className="flex items-center gap-1">
-                    <input type="radio" name="signMethod" checked={signMethod === "ONLINE"} onChange={() => setSignMethod("ONLINE")} /> Online di portal
+                    <input type="radio" name="signMethod" checked={signMethod === "ONLINE"} onChange={() => setSignMethod("ONLINE")} /> {t("booking.signOnline")}
                   </label>
                   <label className="flex items-center gap-1">
-                    <input type="radio" name="signMethod" checked={signMethod === "OFFLINE"} onChange={() => setSignMethod("OFFLINE")} /> Di kantor (kertas)
+                    <input type="radio" name="signMethod" checked={signMethod === "OFFLINE"} onChange={() => setSignMethod("OFFLINE")} /> {t("booking.signOffline")}
                   </label>
                 </fieldset>
                 <button
-                  onClick={() => pipelineAction("generate-contract", signMethod === "OFFLINE" ? "Kontrak + proforma dibuat; pelanggan diminta tanda tangan di kantor." : "Contract + proforma generated and sent.", { signMethod })}
+                  onClick={() => pipelineAction("generate-contract", signMethod === "OFFLINE" ? t("booking.generatedOffline") : t("booking.generatedOnline"), { signMethod })}
                   disabled={stayActionBusy}
                   className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                 >
-                  Generate contract + proforma
+                  {t("booking.generate")}
                 </button>
               </div>
             )}
             {stage === "FINANCE" && pipeline.firstInvoice && (
               <Link href={`/invoices/${pipeline.firstInvoice.id}`} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white">
-                Open proforma {pipeline.firstInvoice.invoiceNumber}
+                {t("booking.openProforma", { number: pipeline.firstInvoice.invoiceNumber })}
               </Link>
             )}
           </div>
@@ -270,16 +275,16 @@ export default function BookingDetailPage() {
 
       {invoices.length > 0 && (
         <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">
-          <h2 className="font-medium">{isTermLease ? "Payment schedule" : "Invoices"}</h2>
+          <h2 className="font-medium">{isTermLease ? t("booking.schedule") : t("booking.invoices")}</h2>
           <table className="mt-2 w-full text-sm">
             <thead className="text-left text-xs text-brand-700/60">
               <tr>
                 <th className="py-1">#</th>
-                <th className="py-1">Invoice</th>
-                <th className="py-1">Period</th>
-                <th className="py-1">Due</th>
-                <th className="py-1">Status</th>
-                <th className="py-1 text-right">Amount</th>
+                <th className="py-1">{t("common.invoice")}</th>
+                <th className="py-1">{t("common.period")}</th>
+                <th className="py-1">{t("common.dueDate")}</th>
+                <th className="py-1">{t("common.status")}</th>
+                <th className="py-1 text-right">{t("common.amount")}</th>
               </tr>
             </thead>
             <tbody>
@@ -289,9 +294,9 @@ export default function BookingDetailPage() {
                   <td className="py-1">
                     <Link href={`/invoices/${inv.id}`} className="hover:underline">
                       {inv.invoiceNumber.startsWith("SCHEDULED/") ? (
-                        <span className="text-brand-700/50">numbered when issued</span>
+                        <span className="text-brand-700/50">{t("booking.numberedWhenIssued")}</span>
                       ) : (
-                        `Invoice #${inv.invoiceNumber}`
+                        t("booking.invoiceNo", { number: inv.invoiceNumber })
                       )}
                     </Link>
                   </td>
@@ -299,7 +304,7 @@ export default function BookingDetailPage() {
                     {inv.periodStart && inv.periodEnd ? `${fmtDate(inv.periodStart)} – ${fmtDate(inv.periodEnd)}` : "—"}
                   </td>
                   <td className="py-1">{fmtDate(inv.dueDate)}</td>
-                  <td className="py-1">{inv.status}</td>
+                  <td className="py-1">{s(inv.status)}</td>
                   <td className="py-1 text-right">{formatIDR(inv.totalAmount)}</td>
                 </tr>
               ))}
@@ -309,8 +314,8 @@ export default function BookingDetailPage() {
       )}
 
       <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5" data-testid="booking-change-requests">
-        <h2 className="font-medium">Permintaan perubahan</h2>
-        <p className="mt-1 text-xs text-brand-700/60">Pembatalan disetujui Super Admin; perubahan tanggal mulai disetujui supervisor atau admin.</p>
+        <h2 className="font-medium">{t("booking.changeRequests")}</h2>
+        <p className="mt-1 text-xs text-brand-700/60">{t("booking.changeRequestsHint")}</p>
         {canDo(authClient.getUser(), "request_booking_change") && ["PENDING_APPROVAL", "NEEDS_INFO", "APPROVED"].includes(booking.status) && (
           <div className="mt-3">
             <ChangeRequestActions bookingId={booking.id} onChanged={() => { setChangeReload((n) => n + 1); load(); }} />
@@ -323,27 +328,27 @@ export default function BookingDetailPage() {
 
       {booking.bookingModel === "NIGHTLY" && (booking.status === "PAID" || booking.status === "CHECKED_IN") && (
         <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">
-          <h2 className="font-medium">Stay</h2>
+          <h2 className="font-medium">{t("booking.stay")}</h2>
           {booking.status === "PAID" ? (
             <>
-              <p className="mt-2 text-sm text-brand-700/60">Paid in full — ready for the guest to check in.</p>
+              <p className="mt-2 text-sm text-brand-700/60">{t("booking.paidReadyCheckIn")}</p>
               <button
                 onClick={() => performStayAction("check-in")}
                 disabled={stayActionBusy}
                 className="mt-3 rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
               >
-                {stayActionBusy ? "Checking in..." : "Check in"}
+                {stayActionBusy ? t("booking.checkingIn") : t("booking.checkIn")}
               </button>
             </>
           ) : (
             <>
-              <p className="mt-2 text-sm text-brand-700/60">Guest is checked in. Check out to close this stay.</p>
+              <p className="mt-2 text-sm text-brand-700/60">{t("booking.checkedInNote")}</p>
               <button
                 onClick={() => performStayAction("check-out")}
                 disabled={stayActionBusy}
                 className="mt-3 rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
               >
-                {stayActionBusy ? "Checking out..." : "Check out"}
+                {stayActionBusy ? t("booking.checkingOut") : t("booking.checkOut")}
               </button>
             </>
           )}
@@ -356,43 +361,40 @@ export default function BookingDetailPage() {
           booking.status === "RETURNED" ||
           booking.status === "INSPECTION") && (
           <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">
-            <h2 className="font-medium">Order</h2>
+            <h2 className="font-medium">{t("booking.order")}</h2>
             {booking.status === "PAID" && (
               <>
-                <p className="mt-2 text-sm text-brand-700/60">Paid in full — ready for pickup.</p>
+                <p className="mt-2 text-sm text-brand-700/60">{t("booking.paidReadyPickup")}</p>
                 <button
                   onClick={() => performStayAction("pickup")}
                   disabled={stayActionBusy}
                   className="mt-3 rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                 >
-                  {stayActionBusy ? "Recording pickup..." : "Mark picked up"}
+                  {stayActionBusy ? t("booking.recordingPickup") : t("booking.markPickedUp")}
                 </button>
               </>
             )}
             {booking.status === "PICKED_UP" && (
               <>
-                <p className="mt-2 text-sm text-brand-700/60">Equipment is out with the customer.</p>
+                <p className="mt-2 text-sm text-brand-700/60">{t("booking.outWithCustomer")}</p>
                 <button
                   onClick={() => performStayAction("return")}
                   disabled={stayActionBusy}
                   className="mt-3 rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                 >
-                  {stayActionBusy ? "Recording return..." : "Mark returned"}
+                  {stayActionBusy ? t("booking.recordingReturn") : t("booking.markReturned")}
                 </button>
               </>
             )}
             {booking.status === "INSPECTION" && (
               <>
-                <p className="mt-2 text-sm text-brand-700/60">
-                  Returned — under inspection. Apply any damage deductions via the deposit before closing, if
-                  needed.
-                </p>
+                <p className="mt-2 text-sm text-brand-700/60">{t("booking.inspectionNote")}</p>
                 <button
                   onClick={() => performStayAction("complete-inspection")}
                   disabled={stayActionBusy}
                   className="mt-3 rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                 >
-                  {stayActionBusy ? "Closing..." : "Complete inspection"}
+                  {stayActionBusy ? t("booking.closing") : t("booking.completeInspection")}
                 </button>
               </>
             )}
@@ -402,27 +404,28 @@ export default function BookingDetailPage() {
       {contract && (
         <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">
           <h2 className="font-medium">
-            Rental agreement{contract.contractNumber ? ` — Contract #${contract.contractNumber}` : ""}
+            {t("booking.agreement")}
+            {contract.contractNumber ? <> — {t("booking.contractNo", { number: contract.contractNumber })}</> : null}
             {contract.confirmedAt && (
               <span className="ml-2 rounded border-2 border-green-700 px-2 py-0.5 text-xs font-bold tracking-wide text-green-700">CONFIRMED</span>
             )}
           </h2>
           {contract.unsignedDocumentUrl && (
             <button onClick={openContractPdf} className="mt-1 text-sm text-accent-500 underline">
-              Open generated agreement (PDF)
+              {t("booking.openGenerated")}
             </button>
           )}
           {contract.signedAt ? (
             <div className="mt-2 space-y-2 text-sm">
               <p className="text-green-700">
-                Signed by {contract.signedByName} on {new Date(contract.signedAt).toLocaleDateString("id-ID")}
-                {contract.esignProvider === "SIGNATURE_PAD" ? " on the portal signature pad" : contract.esignProvider === "LEGACY" ? " (imported from Booqable)" : ""}.
-                {contract.confirmedAt ? ` Confirmed ${new Date(contract.confirmedAt).toLocaleDateString("id-ID")}.` : ""}
+                {t("booking.signedBy", { name: contract.signedByName, date: new Date(contract.signedAt).toLocaleDateString(intl) })}
+                {contract.esignProvider === "SIGNATURE_PAD" ? t("booking.viaPad") : contract.esignProvider === "LEGACY" ? t("booking.viaLegacy") : ""}.
+                {contract.confirmedAt ? <> {t("booking.confirmedOn", { date: new Date(contract.confirmedAt).toLocaleDateString(intl) })}</> : null}
               </p>
               <div className="flex flex-wrap items-center gap-3">
                 {contract.documentUrl && (
                   <button onClick={openSignedContract} className="text-accent-500 underline">
-                    Open signed contract (PDF)
+                    {t("booking.openSigned")}
                   </button>
                 )}
                 {!contract.confirmedAt && canConfirm && (
@@ -431,25 +434,20 @@ export default function BookingDetailPage() {
                     disabled={confirming}
                     className="rounded bg-brand-700 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
                   >
-                    {confirming ? "Confirming…" : "Confirm contract"}
+                    {confirming ? t("booking.confirming") : t("booking.confirmContract")}
                   </button>
                 )}
               </div>
             </div>
           ) : esignPending ? (
-            <p className="mt-2 text-sm text-amber-700">
-              Sent for e-signature via {contract.esignProvider} — waiting for the signature to complete.
-            </p>
+            <p className="mt-2 text-sm text-amber-700">{t("booking.esignPending", { provider: contract.esignProvider })}</p>
           ) : (
             <div className="mt-2 space-y-1 text-sm" data-testid="sign-method-status">
               {contract.signMethod === "OFFLINE" ? (
-                <p className="text-amber-800">
-                  Tanda tangan di kantor (kertas) — batas {contract.signDeadlineAt ? fmtDate(contract.signDeadlineAt) : "—"}. Setelah batas waktu, pemesanan
-                  dibatalkan otomatis dan unit dilepas.
-                </p>
+                <p className="text-amber-800">{t("booking.offlineDeadline", { date: contract.signDeadlineAt ? fmtDate(contract.signDeadlineAt) : "—" })}</p>
               ) : (
                 <p className="text-brand-700/60">
-                  Tanda tangan online di portal ({contract.esignAvailable ? "layanan tanda tangan elektronik" : "kotak tanda tangan"}) — menunggu pelanggan.
+                  {t("booking.onlineWaiting", { how: contract.esignAvailable ? t("booking.esignService") : t("booking.signaturePad") })}
                 </p>
               )}
               {booking.status === "APPROVED" && (
@@ -459,7 +457,7 @@ export default function BookingDetailPage() {
                   disabled={stayActionBusy}
                   className="text-xs text-accent-500 underline disabled:opacity-50"
                 >
-                  {contract.signMethod === "OFFLINE" ? "Ubah ke tanda tangan online" : "Ubah ke tanda tangan di kantor"}
+                  {contract.signMethod === "OFFLINE" ? t("booking.switchToOnline") : t("booking.switchToOffline")}
                 </button>
               )}
             </div>
@@ -467,7 +465,7 @@ export default function BookingDetailPage() {
 
           {canUploadContract && (
             <div className="mt-4 border-t border-brand-600/10 pt-4">
-              <SignedScanUpload bookingId={id} isCompany={booking.customer.type === "BUSINESS"} onDone={() => { setNotice("Kontrak bertanda tangan disimpan."); void load(); }} />
+              <SignedScanUpload bookingId={id} isCompany={booking.customer.type === "BUSINESS"} onDone={() => { setNotice(t("booking.scanSaved")); void load(); }} />
             </div>
           )}
         </div>
@@ -481,17 +479,17 @@ export default function BookingDetailPage() {
 
       {booking.events.length > 0 && (
         <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">
-          <h2 className="font-medium">Timeline</h2>
+          <h2 className="font-medium">{t("booking.timeline")}</h2>
           <ul className="mt-2 space-y-1 text-xs">
             {booking.events.map((e) => (
               <li key={e.id} className="flex justify-between gap-3 border-t border-brand-600/10 py-1">
                 <span>
-                  {e.fromStatus ? `${e.fromStatus} → ` : ""}
-                  <span className="font-medium">{e.toStatus}</span>
+                  {e.fromStatus ? `${s(e.fromStatus)} → ` : ""}
+                  <span className="font-medium">{s(e.toStatus)}</span>
                   {e.reason ? ` — ${e.reason}` : ""}
                 </span>
                 <span className="shrink-0 text-brand-700/50">
-                  {e.actorType.toLowerCase()} · {new Date(e.createdAt).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  {actorLabel(e.actorType)} · {new Date(e.createdAt).toLocaleString(intl, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
                 </span>
               </li>
             ))}
