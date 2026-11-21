@@ -174,8 +174,14 @@ fi
 # 2026-11-17). ONE_OFF_WIPE=dry prints what it would delete and rolls back;
 # =apply commits. ONE_OFF_WIPE_TENANT names the branch — without it nothing
 # runs. See packages/database/scripts/go-live-wipe.ts. Remove both after.
+#
+# ONE_OFF_WIPE_RESET_COUNTERS=1 (PRD go-live 2 §7.1) additionally puts the
+# contract / invoice / customer number counters back, for the wipe that ENDS
+# the client's test period — run the final Booqable import straight after.
+# Optional: ONE_OFF_WIPE_MIN_CONTRACT_SEQ / _MIN_INVOICE_SEQ /
+# _MIN_CUSTOMER_NUMBER pin Booqable's highest numbers. Remove these too.
 if [ "$ONE_OFF_WIPE" = "dry" ] || [ "$ONE_OFF_WIPE" = "apply" ]; then
-  echo "[entrypoint] Branch wipe ($ONE_OFF_WIPE, tenant '$ONE_OFF_WIPE_TENANT')…"
+  echo "[entrypoint] Branch wipe ($ONE_OFF_WIPE, tenant '$ONE_OFF_WIPE_TENANT', reset counters: ${ONE_OFF_WIPE_RESET_COUNTERS:-no})…"
   pnpm --filter @rentos/database go-live-wipe || echo "[entrypoint] Wipe FAILED (see above) — nothing was changed. Starting the API anyway."
 fi
 
