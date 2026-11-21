@@ -7,6 +7,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { authClient, isAdmin } from "@/lib/auth-client";
 import { canDo } from "@/lib/capabilities";
 import { useMessagingPause } from "@/lib/messaging-pause";
+import { useChangeRequestSummary } from "@/lib/change-requests";
 import { usePendingApprovalCount } from "@/lib/pending-approvals";
 import { useUnreadMessageCount } from "@/lib/unread-messages";
 
@@ -20,6 +21,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Operations",
     items: [
       { href: "/bookings", label: "Approval Workbench" },
+      { href: "/change-requests", label: "Permintaan" },
       { href: "/swap-requests", label: "Swap Requests" },
       { href: "/messaging", label: "Messages" },
     ],
@@ -96,6 +98,8 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
   useEffect(() => setUser(authClient.getUser()), [pathname]);
   const pendingApprovals = usePendingApprovalCount();
   const unreadMessages = useUnreadMessageCount();
+  // PRD go-live 2 §4.1 — requests this user could decide.
+  const pendingChangeRequests = useChangeRequestSummary().pendingForMe;
   const pause = useMessagingPause();
 
   const groups = NAV_GROUPS.map((group) => ({
@@ -134,7 +138,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
   }
 
   function badgeFor(href: string) {
-    return href === "/bookings" ? pendingApprovals : href === "/messaging" ? unreadMessages : 0;
+    return href === "/bookings" ? pendingApprovals : href === "/messaging" ? unreadMessages : href === "/change-requests" ? pendingChangeRequests : 0;
   }
 
   function logout() {

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { PipelineBookingDto, PipelineStageValue } from "@rentos/contracts";
 
+import { ChangeRequestActions } from "@/components/ChangeRequests";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
@@ -42,6 +43,7 @@ export default function BookingsPage() {
   const canApprove = canDo(user, "approve_booking"); // approve, reject, request KYC
   const canOfferUnit = canDo(user, "fire_waitlist");
   const canGenerateContract = canDo(user, "create_booking");
+  const canRequestChange = canDo(user, "request_booking_change");
   const [bookings, setBookings] = useState<PipelineBookingDto[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -86,13 +88,6 @@ export default function BookingsPage() {
     } finally {
       setBusyId(null);
     }
-  }
-
-  /** After approval: releases the unit and voids the unpaid proforma. Refused once money has come in. */
-  function cancel(id: string) {
-    const reason = window.prompt("Why is this booking being cancelled? (sent to the customer)");
-    if (!reason) return;
-    act(id, "reject", { reason }, "Cancelled — the unit is free again, the unpaid invoice is void and the customer has been told.");
   }
 
   function reject(id: string) {
@@ -214,12 +209,13 @@ export default function BookingsPage() {
                             Open invoice
                           </Link>
                         )}
-                        {(col.stage === "KYC" || col.stage === "CONTRACT" || col.stage === "FINANCE") && canApprove && (
-                          <button onClick={() => cancel(b.id)} disabled={busyId === b.id} className="rounded border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 disabled:opacity-50">
-                            Cancel booking
-                          </button>
-                        )}
                       </div>
+                      {/* PRD go-live 2 §4 — after approval a booking is cancelled or re-dated by request + approval, never directly. */}
+                      {(col.stage === "KYC" || col.stage === "CONTRACT" || col.stage === "FINANCE") && canRequestChange && (
+                        <div className="mt-2 border-t border-brand-600/10 pt-2">
+                          <ChangeRequestActions bookingId={b.id} compact onChanged={() => load()} />
+                        </div>
+                      )}
                     </article>
                   ))}
                 </div>
