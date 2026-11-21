@@ -27,6 +27,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/bookings", label: "Approval Workbench" },
       { href: "/change-requests", label: "Permintaan" },
+      { href: "/rental-orders", label: "Pesanan sewa" },
       { href: "/swap-requests", label: "Swap Requests" },
       { href: "/messaging", label: "Messages" },
     ],
