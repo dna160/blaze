@@ -26,7 +26,14 @@ export type Capability =
   | "manage_users" // manage users, pricing config, feature flags, onboarding
   | "delete_any"
   | "fire_waitlist" // B10 — release a unit to the waitlist queue
-  | "read_messages"; // PRD go-live §9.5 — the WhatsApp inbox (branch-scoped)
+  | "read_messages" // PRD go-live §9.5 — the WhatsApp inbox (branch-scoped)
+  // PRD go-live 2 §4 — ask for a booking to be cancelled or its start date
+  // moved. APPROVING is not a matrix cell: it follows Organization.approvalPolicy
+  // (see rbac/approval-policy.ts), because City Storage's rule mixes role and scope.
+  | "request_booking_change"
+  // PRD go-live 2 §5.1 — upload a walk-in customer's KYC documents for them.
+  // Verifying still needs approve_booking.
+  | "upload_kyc_on_behalf";
 
 export const ALL_CAPABILITIES: readonly Capability[] = [
   "approve_booking",
@@ -42,6 +49,8 @@ export const ALL_CAPABILITIES: readonly Capability[] = [
   "delete_any",
   "fire_waitlist",
   "read_messages",
+  "request_booking_change",
+  "upload_kyc_on_behalf",
 ];
 
 /**
@@ -65,6 +74,8 @@ export const CAPABILITY_MATRIX: Readonly<Record<BaseRole, ReadonlySet<Capability
     "delete_any",
     "fire_waitlist",
     "read_messages",
+    "request_booking_change",
+    "upload_kyc_on_behalf",
   ]),
   FINANCE: new Set<Capability>([
     // Finance records and verifies payments and approves deposit refunds, and
@@ -84,9 +95,12 @@ export const CAPABILITY_MATRIX: Readonly<Record<BaseRole, ReadonlySet<Capability
     "void_invoice",
     "backdate",
     "price_override",
-    "run_reports",
+    // No run_reports (PRD go-live 2 §6.2): City Storage's supervisors do not
+    // see the Finance reports. They still read invoices and deposits.
     "fire_waitlist",
     "read_messages",
+    "request_booking_change",
+    "upload_kyc_on_behalf",
   ]),
   STAFF: new Set<Capability>([
     // Front-desk. Can create and take payment, nothing that needs judgement.
@@ -95,6 +109,9 @@ export const CAPABILITY_MATRIX: Readonly<Record<BaseRole, ReadonlySet<Capability
     "create_booking",
     "record_payment",
     "read_messages",
+    "request_booking_change",
+    // §12 Q6 default: staff may upload for a walk-in; only approvers verify.
+    "upload_kyc_on_behalf",
   ]),
 };
 

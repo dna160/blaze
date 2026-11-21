@@ -32,11 +32,15 @@ describe("RBAC capability matrix (BUILD-SPEC C2, docs/RBAC.md §3) — cell by c
     backdate: [true, false, true, false],
     price_override: [true, false, true, false],
     approve_deposit_refund: [true, true, false, false],
-    run_reports: [true, true, true, false],
+    // PRD go-live 2 §6.2 — supervisors do not see Finance reports.
+    run_reports: [true, true, false, false],
     manage_users: [true, false, false, false],
     delete_any: [true, false, false, false],
     fire_waitlist: [true, false, true, false],
     read_messages: [true, false, true, true],
+    // PRD go-live 2 §4 / §5.1 — request (not approve) a booking change; upload KYC for a walk-in.
+    request_booking_change: [true, false, true, true],
+    upload_kyc_on_behalf: [true, false, true, true],
   };
 
   const roles = [admin, finance, spv, staff];

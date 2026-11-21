@@ -304,6 +304,18 @@ model Organization {
   messagingPausedAt       DateTime? @map("messaging_paused_at")
   /// PRD go-live §8.2 — { pphRates: { PPH_4_2_FINAL: 0.10, PPH_23: 0.02 } }.
   taxConfig               Json      @default("{}") @map("tax_config")
+  /// PRD go-live 2 §8.1 — while `messagingAllowlistOnly` is true, nothing
+  /// outbound reaches a number that is not on `messagingAllowlist` (E.164
+  /// strings): the client's test period, when the branch holds test renters
+  /// and, later, re-imported real customers.
+  messagingAllowlist      Json      @default("[]") @map("messaging_allowlist")
+  messagingAllowlistOnly  Boolean   @default(false) @map("messaging_allowlist_only")
+  /// PRD go-live 2 §4.1 — who may approve which booking change request. Empty
+  /// means the defaults in packages/domain (cancel: org-scoped ADMIN; date
+  /// change: SUPERVISOR or ADMIN covering the branch).
+  approvalPolicy          Json      @default("{}") @map("approval_policy")
+  /// PRD go-live 2 §9.2 — `{ consoleName }`: the product name the console shows.
+  branding                Json      @default("{}")
   createdAt               DateTime  @default(now()) @map("created_at")
   updatedAt               DateTime  @updatedAt @map("updated_at")
 
@@ -428,6 +440,13 @@ model User {
   passwordHash String?    @map("password_hash")
   displayName  String?    @map("display_name")
   status       String     @default("ACTIVE")
+  /// PRD go-live 2 §6.1 — true: the next login goes to the change-password
+  /// page before anything else (typed/spoken passwords, admin resets).
+  mustChangePassword Boolean   @default(false) @map("must_change_password")
+  /// When the password last changed; a session issued before it is revoked.
+  passwordChangedAt  DateTime? @map("password_changed_at")
+  /// PRD go-live 2 §9.1 — console language, "id" (default) or "en".
+  locale             String    @default("id")
   roles        UserRole[]
   createdAt    DateTime   @default(now()) @map("created_at")
   updatedAt    DateTime   @updatedAt @map("updated_at")

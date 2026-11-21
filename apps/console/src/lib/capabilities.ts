@@ -29,7 +29,9 @@ export type ConsoleCapability =
   | "manage_users"
   | "delete_any"
   | "fire_waitlist"
-  | "read_messages";
+  | "read_messages"
+  | "request_booking_change"
+  | "upload_kyc_on_behalf";
 
 export const CONSOLE_CAPABILITY_MATRIX: Readonly<Record<ConsoleBaseRole, readonly ConsoleCapability[]>> = {
   ADMIN: [
@@ -46,6 +48,8 @@ export const CONSOLE_CAPABILITY_MATRIX: Readonly<Record<ConsoleBaseRole, readonl
     "delete_any",
     "fire_waitlist",
     "read_messages",
+    "request_booking_change",
+    "upload_kyc_on_behalf",
   ],
   FINANCE: ["record_payment", "verify_payment", "approve_deposit_refund", "run_reports"],
   SUPERVISOR: [
@@ -55,11 +59,12 @@ export const CONSOLE_CAPABILITY_MATRIX: Readonly<Record<ConsoleBaseRole, readonl
     "void_invoice",
     "backdate",
     "price_override",
-    "run_reports",
     "fire_waitlist",
     "read_messages",
+    "request_booking_change",
+    "upload_kyc_on_behalf",
   ],
-  STAFF: ["create_booking", "record_payment", "read_messages"],
+  STAFF: ["create_booking", "record_payment", "read_messages", "request_booking_change", "upload_kyc_on_behalf"],
 };
 
 interface SessionRoles {

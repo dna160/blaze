@@ -13,3 +13,4 @@ export * from "./platform-admin.js";
 export * from "./automation.js";
 export * from "./branch.js";
 export * from "./legacy.js";
+export * from "./report-range.js";
