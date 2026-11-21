@@ -63,13 +63,22 @@ async function main() {
       throw new Error(`User ${email} does not exist on ${tenant.slug}; PROMOTE_ADMIN_PASSWORD is required to create it.`);
     }
 
+    // PRD go-live 2 §6.1 — this is the break-glass path, and the one place a
+    // password is still set by someone other than its owner (it sits in a
+    // deploy variable, so an operator has seen it). So it is a one-time
+    // password: the account must change it at first login, and any session
+    // from before the reset is revoked (see JwtStrategy / passwordChangedAt,
+    // stored one second ahead on a second boundary).
+    const passwordFields = passwordHash
+      ? { passwordHash, mustChangePassword: true, passwordChangedAt: new Date((Math.floor(Date.now() / 1000) + 1) * 1000) }
+      : {};
     const user = existing
       ? await prisma.user.update({
           where: { id: existing.id },
-          data: { status: "ACTIVE", ...(passwordHash ? { passwordHash } : {}) },
+          data: { status: "ACTIVE", ...passwordFields },
         })
       : await prisma.user.create({
-          data: { tenantId: tenant.id, email, displayName: email.split("@")[0]!, passwordHash: passwordHash!, status: "ACTIVE" },
+          data: { tenantId: tenant.id, email, displayName: email.split("@")[0]!, status: "ACTIVE", ...passwordFields, passwordHash: passwordHash! },
         });
 
     // ORGANIZATION scope with an empty tenantIds reaches every branch in the org —
@@ -84,7 +93,7 @@ async function main() {
     // eslint-disable-next-line no-console
     console.log(
       `Granted ADMIN x ORGANIZATION to ${email} on tenant "${tenant.slug}" (${tenant.name})` +
-        `${existing ? "" : " — user created"}${passwordHash ? ", password set" : ""}.`,
+        `${existing ? "" : " — user created"}${passwordHash ? ", one-time password set (must be changed at first login)" : ""}.`,
     );
   }
 }

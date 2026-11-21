@@ -43,21 +43,21 @@ async function main() {
   const check = (label: string, ok: boolean) => { results.push(`${ok ? "✅" : "❌"} ${label}`); if (!ok) pass = false; };
 
   // 1. Super Admin creates a TENANT staff user.
-  const s1 = await users.createUser(superAdmin, tenantA, { email: "clerk@a.test", displayName: "Clerk", password: "pw12345678", role: "STAFF", scope: "TENANT" });
+  const s1 = await users.createUser(superAdmin, tenantA, { email: "clerk@a.test", displayName: "Clerk", role: "STAFF", scope: "TENANT" });
   check("super admin creates TENANT staff (tenantIds=[A])", s1.roles[0]?.scope === "TENANT" && s1.roles[0]?.tenantIds[0] === A);
 
   // 2. Super Admin grants an ORGANIZATION-scoped role.
-  const s2 = await users.createUser(superAdmin, tenantA, { email: "hofin@a.test", displayName: "HO Finance", password: "pw12345678", role: "FINANCE", scope: "ORGANIZATION" });
+  const s2 = await users.createUser(superAdmin, tenantA, { email: "hofin@a.test", displayName: "HO Finance", role: "FINANCE", scope: "ORGANIZATION" });
   check("super admin grants ORGANIZATION role", s2.roles[0]?.scope === "ORGANIZATION");
 
   // 3. Branch Admin is BLOCKED from granting an ORGANIZATION role.
   let blocked = false;
-  try { await users.createUser(branchAdmin, tenantA, { email: "sneaky@a.test", displayName: "Sneaky", password: "pw12345678", role: "ADMIN", scope: "ORGANIZATION" }); }
+  try { await users.createUser(branchAdmin, tenantA, { email: "sneaky@a.test", displayName: "Sneaky", role: "ADMIN", scope: "ORGANIZATION" }); }
   catch { blocked = true; }
   check("branch admin BLOCKED from granting ORGANIZATION role (no escalation)", blocked);
 
   // 4. Branch Admin CAN create a TENANT user.
-  const s4 = await users.createUser(branchAdmin, tenantA, { email: "clerk2@a.test", displayName: "Clerk 2", password: "pw12345678", role: "SUPERVISOR", scope: "TENANT" });
+  const s4 = await users.createUser(branchAdmin, tenantA, { email: "clerk2@a.test", displayName: "Clerk 2", role: "SUPERVISOR", scope: "TENANT" });
   check("branch admin creates TENANT supervisor", s4.roles[0]?.role === "SUPERVISOR");
 
   // 5. Super Admin lists across the ORG (sees Branch B's user); branch admin sees only A.

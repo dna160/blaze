@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { CreateStaffUserRequestSchema, CsvImportRequestSchema, UpdateStaffRoleRequestSchema } from "@rentos/contracts";
 
@@ -57,6 +57,17 @@ export class UsersController {
     @Body(new ZodValidationPipe(UpdateStaffRoleRequestSchema)) body: ReturnType<typeof UpdateStaffRoleRequestSchema.parse>,
   ) {
     return this.users.updateUserRole(user, tenant, id, body);
+  }
+
+  /**
+   * PRD go-live 2 §6.1 — "Kirim tautan atur ulang": a single-use set-password
+   * link for this user (72 h). The old password stops working and the user's
+   * sessions are revoked. The admin never sees or sets the password.
+   */
+  @Post(":id/reset-password")
+  @HttpCode(200)
+  resetPassword(@CurrentUser() user: AuthenticatedUser, @CurrentTenant() tenant: ResolvedTenant, @Param("id") id: string) {
+    return this.users.sendPasswordReset(user, tenant, id);
   }
 
   @Patch(":id/status")

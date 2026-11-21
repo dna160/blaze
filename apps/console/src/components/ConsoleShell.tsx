@@ -4,13 +4,16 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { UserMenu } from "@/components/UserMenu";
+import { CHANGE_PASSWORD_PATH } from "@/lib/api";
 import { authClient, isAdmin } from "@/lib/auth-client";
-import { canDo } from "@/lib/capabilities";
+import { canDo, type ConsoleCapability } from "@/lib/capabilities";
 import { useMessagingPause } from "@/lib/messaging-pause";
 import { usePendingApprovalCount } from "@/lib/pending-approvals";
 import { useUnreadMessageCount } from "@/lib/unread-messages";
 
-type NavItem = { href: string; label: string; adminOnly?: boolean };
+/** `capability`: shown only to a session that holds it (the page's API is gated on the same one). */
+type NavItem = { href: string; label: string; adminOnly?: boolean; capability?: ConsoleCapability };
 type NavGroup = { id: string; label: string; items: NavItem[] };
 
 /** The sidebar, by what staff come to do. Each group is a dropdown. */
@@ -47,7 +50,8 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/invoices", label: "Invoices" },
       { href: "/deposits", label: "Deposits" },
-      { href: "/reports", label: "Reports" },
+      // PRD go-live 2 §6.2 — reports are Finance's and Admin's; a supervisor does not see them.
+      { href: "/reports", label: "Reports", capability: "run_reports" },
     ],
   },
   {
@@ -94,6 +98,11 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
   // see: read it after mount so the first client render matches the server's.
   const [user, setUser] = useState<ReturnType<typeof authClient.getUser>>(null);
   useEffect(() => setUser(authClient.getUser()), [pathname]);
+  // PRD go-live 2 §6.1 — an account that must change its password sees nothing
+  // of the console until it has (the API refuses every other call regardless).
+  useEffect(() => {
+    if (user?.mustChangePassword) router.replace(CHANGE_PASSWORD_PATH);
+  }, [user, router]);
   const pendingApprovals = usePendingApprovalCount();
   const unreadMessages = useUnreadMessageCount();
   const pause = useMessagingPause();
@@ -101,7 +110,10 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
   const groups = NAV_GROUPS.map((group) => ({
     ...group,
     items: group.items.filter(
-      (item) => (!item.adminOnly || isAdmin(user)) && (item.href !== "/messaging" || canDo(user, "read_messages")),
+      (item) =>
+        (!item.adminOnly || isAdmin(user)) &&
+        (!item.capability || canDo(user, item.capability)) &&
+        (item.href !== "/messaging" || canDo(user, "read_messages")),
     ),
   })).filter((group) => group.items.length > 0);
 
@@ -210,9 +222,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
       <div className="flex-1">
         <header className="flex items-center justify-between border-b border-brand-600/10 bg-white px-6 py-3">
           <span className="text-sm text-brand-700/70">{user?.displayName ?? user?.email}</span>
-          <button onClick={logout} className="text-sm text-brand-700/70 hover:text-accent-500">
-            Log out
-          </button>
+          <UserMenu user={user} onLogout={logout} />
         </header>
         {pause?.paused && (
           <div role="alert" className="border-b border-red-700 bg-red-600 px-6 py-2 text-sm text-white">

@@ -1,6 +1,10 @@
 import { ForbiddenException, Injectable, type CanActivate, type ExecutionContext } from "@nestjs/common";
+import { Reflector } from "@nestjs/core";
 import { AuthGuard } from "@nestjs/passport";
+import { PASSWORD_CHANGE_REQUIRED } from "@rentos/contracts";
 import type { Request } from "express";
+
+import { ALLOW_PENDING_PASSWORD_CHANGE_KEY } from "../decorators/allow-pending-password-change.decorator.js";
 
 /**
  * Every authenticated route in this API needs two things checked, not
@@ -26,9 +30,20 @@ import type { Request } from "express";
  * A null `req.user.tenantId` (platform admin, no tenant scope — see
  * User.tenantId's doc comment) skips the check by design; that role
  * isn't wired into any controller yet (Phase 4).
+ *
+ * PRD go-live 2 §6.1 — a third check lives here for the same reason (a route
+ * cannot forget it): a staff account that must change its password may do
+ * nothing else. JwtStrategy reads the flag from the account on every request;
+ * this guard refuses every route not marked @AllowPendingPasswordChange()
+ * with 403 + code PASSWORD_CHANGE_REQUIRED, which the console turns into a
+ * redirect to the change-password page.
  */
 @Injectable()
 export class JwtAuthGuard extends AuthGuard("jwt") implements CanActivate {
+  constructor(private readonly reflector: Reflector) {
+    super();
+  }
+
   override async canActivate(context: ExecutionContext): Promise<boolean> {
     const authenticated = await super.canActivate(context);
     if (!authenticated) return false;
@@ -36,6 +51,18 @@ export class JwtAuthGuard extends AuthGuard("jwt") implements CanActivate {
     const req = context.switchToHttp().getRequest<Request>();
     if (req.user?.tenantId && req.tenant?.id && req.user.tenantId !== req.tenant.id) {
       throw new ForbiddenException("Session tenant does not match the request domain.");
+    }
+    if (req.user?.kind === "STAFF" && req.user.mustChangePassword) {
+      const allowed = this.reflector.getAllAndOverride<boolean | undefined>(ALLOW_PENDING_PASSWORD_CHANGE_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]);
+      if (!allowed) {
+        throw new ForbiddenException({
+          code: PASSWORD_CHANGE_REQUIRED,
+          message: "Anda harus mengganti kata sandi sebelum melanjutkan. / You must change your password before continuing.",
+        });
+      }
     }
     return true;
   }

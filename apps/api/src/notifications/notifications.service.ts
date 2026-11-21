@@ -147,6 +147,18 @@ export class NotificationsService {
     await this.notify({ tenantId: params.tenantId, customerId: customer.id, channel, templateKey: params.templateKey, recipient, variables });
   }
 
+  /**
+   * PRD go-live 2 §6.1 — would an email to this branch's staff actually leave
+   * the building? False when no real email provider is configured
+   * (EMAIL_PROVIDER unset: the console-log adapter) or the organization's
+   * messaging is paused. The caller then shows a set-password link to the
+   * admin instead of "sending" it into a log or the suppressed queue.
+   */
+  async emailWouldBeDelivered(tenantId: string): Promise<boolean> {
+    if (this.email.name === "CONSOLE_LOG") return false;
+    return (await outboundBlock(this.prisma.raw, tenantId)) === null;
+  }
+
   async notify(params: NotifyParams): Promise<void> {
     // PRD go-live §9.1 — the organization's kill switch. Checked before the
     // QUEUED row exists so a paused send is never mistaken for one in flight.
