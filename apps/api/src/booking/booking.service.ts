@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { assetFsm, termEndDate } from "@rentos/domain";
 import {
+  checkStorageAssetFree,
   computePooledAvailableCount,
   createHeldDeposit,
   syncDepositRefundDue,
@@ -8,6 +9,7 @@ import {
   findAvailablePooledAsset,
   findAvailableStorageAsset,
   generateTermPaymentSchedule,
+  listAvailableStorageAssets,
   newContractFields,
   recordDepositHeldEntries,
   recordInvoiceVoidedEntries,
@@ -17,7 +19,7 @@ import {
   type Prisma,
 } from "@rentos/database";
 import type { CreateBookingResponse, PipelineBookingDto } from "@rentos/contracts";
-import { isKycVerified } from "@rentos/contracts";
+import { isKycVerified, zonedDateString, type SignedContractHandling } from "@rentos/contracts";
 
 import { AuditService } from "../audit/audit.service.js";
 import { CrmService } from "../crm/crm.service.js";
@@ -45,6 +47,43 @@ const DEFAULT_RESERVATION_TTL_HOURS = 48;
 
 /** Booking models whose invoice math needs both ends of the window (nights/days x rate) — see BookingWindow.endDate. */
 const BOOKING_MODELS_REQUIRING_END_DATE = new Set(["NIGHTLY", "DURATION_ORDER"]);
+
+/**
+ * PRD go-live 2 §4.3 — a start date can move only before the rental is ACTIVE:
+ * awaiting approval, or approved (KYC / contract / awaiting first payment).
+ */
+export const START_DATE_CHANGEABLE_STATUSES: readonly string[] = ["PENDING_APPROVAL", "NEEDS_INFO", "APPROVED"];
+
+/** Statuses from which a booking can still be closed (the FSM's REJECT). ACTIVE leases end through notice or term end. */
+export const CANCELLABLE_STATUSES: readonly string[] = ["WAITLISTED", "PENDING_APPROVAL", "APPROVED"];
+
+/** §4.2 — the message staff see when money has moved (the refund options are P1). */
+export const PAYMENT_BLOCKS_CHANGE_MESSAGE = "Ada pembayaran — proses refund manual dulu";
+
+export interface ChangeStartDateParams {
+  newStartDate: Date;
+  /** Move to this unit (same type and branch) at the same time. */
+  assetId?: string | null;
+  /** Required when the contract is already signed. */
+  signedContract?: SignedContractHandling;
+  reason: string;
+  changeRequestId?: string;
+}
+
+export interface ChangeStartDateResult {
+  bookingId: string;
+  previousStartDate: string;
+  newStartDate: string;
+  newEndDate: string | null;
+  previousAssetCode: string | null;
+  assetCode: string | null;
+  unitChanged: boolean;
+  voidedInvoices: Array<{ id: string; invoiceNumber: string; status: string; totalAmount: string }>;
+  issuedInvoices: Array<{ id: string; invoiceNumber: string; status: string; totalAmount: string; periodStart: string | null; periodEnd: string | null; dueDate: string }>;
+  contract: { id: string; contractNumber: string | null; version: number; signed: "NOT_SIGNED" | "RESIGN_REQUIRED" | "RECONFIRM_REQUIRED" } | null;
+}
+
+const isoDay = (d: Date | null | undefined): string | null => (d ? d.toISOString().slice(0, 10) : null);
 
 /** Pipeline columns the workbench shows (PRD v2 §5.1) — everything before activation. */
 const PIPELINE_STATUSES = ["WAITLISTED", "PENDING_APPROVAL", "NEEDS_INFO", "APPROVED"] as const;
@@ -810,34 +849,112 @@ export class BookingService {
     return booking;
   }
 
+  /**
+   * Staff decline a request that was never approved (awaiting approval, or on
+   * the waitlist). An APPROVED booking is NOT closed here any more (PRD
+   * go-live 2 §4): cancelling it takes a change request and an approval — see
+   * `cancelBooking`, which ChangeRequestService calls once it is approved.
+   */
   async reject(tenant: ResolvedTenant, bookingId: string, approverUserId: string, reason: string) {
-    const booking = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
+    return this.closeBooking(tenant, bookingId, approverUserId, reason, { allowApproved: false });
+  }
+
+  /**
+   * PRD go-live 2 §4.2 — what an APPROVED cancellation request does: void the
+   * unpaid invoices with their ledger reversal, release the unit, tell the
+   * customer; 409 when money has moved. Only ChangeRequestService calls this,
+   * after the approval policy and the maker-checker rule have been checked.
+   */
+  async cancelBooking(tenant: ResolvedTenant, bookingId: string, actorUserId: string, reason: string, changeRequestId?: string) {
+    return this.closeBooking(tenant, bookingId, actorUserId, reason, { allowApproved: true, changeRequestId });
+  }
+
+  /**
+   * Why this booking cannot be cancelled right now, or null. Asked when a
+   * cancellation is REQUESTED (so staff hear it at once, not from the approver)
+   * and again, inside the closing transaction, when it is approved.
+   */
+  async cancellationBlocker(tenantId: string, bookingId: string): Promise<string | null> {
+    return this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const booking = await tx.booking.findUnique({ where: { id: bookingId }, select: { status: true } });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      if (!CANCELLABLE_STATUSES.includes(booking.status)) {
+        return `Booking berstatus ${booking.status} — hanya booking yang belum aktif yang bisa dibatalkan.`;
+      }
+      const paid = await this.findInvoiceWithMoney(tx, bookingId);
+      return paid ? `${PAYMENT_BLOCKS_CHANGE_MESSAGE} (invoice ${paid.invoiceNumber}).` : null;
+    });
+  }
+
+  /** An invoice of this booking that money has touched: paid, or a payment recorded / awaiting verification. */
+  private async findInvoiceWithMoney(tx: Prisma.TransactionClient, bookingId: string) {
+    const invoices = await tx.invoice.findMany({ where: { bookingId }, include: { payments: { select: { status: true } } } });
+    return (
+      invoices.find(
+        (i) => ["PAID", "PARTIALLY_REFUNDED", "REFUNDED", "CREDITED"].includes(i.status) || i.payments.some((p) => p.status === "SUCCEEDED" || p.status === "PENDING"),
+      ) ?? null
+    );
+  }
+
+  /** Void one unpaid invoice of a booking that is being cancelled or re-dated: status, ledger reversal, audit row. */
+  private async voidUnpaidInvoice(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    invoice: { id: string; status: string; invoiceNumber: string },
+    actorUserId: string,
+    voidReason: string,
+  ) {
+    await tx.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        status: "VOID",
+        voidedAt: new Date(),
+        voidedByUserId: actorUserId,
+        voidReason,
+        // A SCHEDULED invoice only carries a provisional number (SCHEDULED/<booking>/<n>),
+        // unique per tenant: free it, or the re-issued schedule could not reuse the slot.
+        ...(invoice.status === "SCHEDULED" ? { invoiceNumber: `${invoice.invoiceNumber}/VOID-${invoice.id.slice(0, 8).toUpperCase()}` } : {}),
+      },
+    });
+    // Reverses exactly what was posted at issue — nothing, for a SCHEDULED invoice.
+    await recordInvoiceVoidedEntries(tx, tenantId, invoice.id);
+    await tx.auditLog.create({
+      data: { tenantId, actorUserId, action: "INVOICE_VOID", entityType: "Invoice", entityId: invoice.id, metadata: { reason: voidReason } },
+    });
+  }
+
+  private async closeBooking(
+    tenant: ResolvedTenant,
+    bookingId: string,
+    actorUserId: string,
+    reason: string,
+    options: { allowApproved: boolean; changeRequestId?: string },
+  ) {
+    const { booking, wasApproved } = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
       const existing = await tx.booking.findUnique({ where: { id: bookingId } });
       if (!existing) throw new NotFoundException("Booking not found.");
+      if (existing.status === "APPROVED" && !options.allowApproved) {
+        throw new ConflictException({
+          code: "CANCELLATION_NEEDS_APPROVAL",
+          message: "Booking ini sudah disetujui — pembatalan harus diajukan dan disetujui (Ajukan pembatalan).",
+        });
+      }
 
       const fsm = bookingFsmFor(existing.bookingModel);
       const { to } = await fsm.fire(existing.status as never, "REJECT", {} as BookingActivationContext);
 
       // Cancelling after approval: the booking may already have its contract and
       // proforma. Money that came in is not ours to wave away — refuse, and let
-      // finance refund it first. Unpaid invoices are voided with the booking, so
-      // no bill is left open (or reminded) for a rental that will not happen.
-      const invoices = await tx.invoice.findMany({ where: { bookingId }, include: { payments: { select: { status: true } } } });
-      const paid = invoices.find((i) => ["PAID", "PARTIALLY_REFUNDED"].includes(i.status) || i.payments.some((p) => p.status === "SUCCEEDED" || p.status === "PENDING"));
+      // finance refund it first (the refund options are PRD go-live 2 §4.2, P1).
+      // Unpaid invoices are voided with the booking, so no bill is left open (or
+      // reminded) for a rental that will not happen.
+      const paid = await this.findInvoiceWithMoney(tx, bookingId);
       if (paid) {
-        throw new ConflictException(
-          `Invoice ${paid.invoiceNumber} has a payment recorded or awaiting verification — refund or reject that payment first, then cancel the booking.`,
-        );
+        throw new ConflictException({ code: "PAYMENT_EXISTS", message: `${PAYMENT_BLOCKS_CHANGE_MESSAGE} (invoice ${paid.invoiceNumber}).` });
       }
-      for (const invoice of invoices.filter((i) => ["SCHEDULED", "ISSUED", "OVERDUE"].includes(i.status))) {
-        await tx.invoice.update({
-          where: { id: invoice.id },
-          data: { status: "VOID", voidedAt: new Date(), voidedByUserId: approverUserId, voidReason: `Booking cancelled: ${reason}` },
-        });
-        await recordInvoiceVoidedEntries(tx, tenant.id, invoice.id);
-        await tx.auditLog.create({
-          data: { tenantId: tenant.id, actorUserId: approverUserId, action: "INVOICE_VOID", entityType: "Invoice", entityId: invoice.id, metadata: { reason: `Booking cancelled: ${reason}` } },
-        });
+      const unpaid = await tx.invoice.findMany({ where: { bookingId, status: { in: ["SCHEDULED", "ISSUED", "OVERDUE"] } } });
+      for (const invoice of unpaid) {
+        await this.voidUnpaidInvoice(tx, tenant.id, invoice, actorUserId, `Booking cancelled: ${reason}`);
       }
 
       const updated = await tx.booking.update({
@@ -855,11 +972,12 @@ export class BookingService {
           fromStatus: existing.status,
           toStatus: to,
           actorType: "USER",
-          actorId: approverUserId,
+          actorId: actorUserId,
           reason,
+          ...(options.changeRequestId ? { metadata: { changeRequestId: options.changeRequestId } } : {}),
         },
       });
-      return updated;
+      return { booking: updated, wasApproved: existing.status === "APPROVED" };
     });
 
     const customer = await this.crm.getById(tenant.id, booking.customerId);
@@ -867,18 +985,344 @@ export class BookingService {
       tenantId: tenant.id,
       tenantSlug: tenant.slug,
       customer,
-      templateKey: "booking_rejected",
+      // An approved booking that is called off is a cancellation, not a declined request.
+      templateKey: wasApproved ? "booking_cancelled" : "booking_rejected",
       variables: { reason },
     });
     await this.audit.record({
       tenantId: tenant.id,
-      actorUserId: approverUserId,
-      action: "BOOKING_REJECTED",
+      actorUserId,
+      action: wasApproved ? "BOOKING_CANCELLED" : "BOOKING_REJECTED",
       entityType: "Booking",
       entityId: bookingId,
-      metadata: { reason },
+      metadata: { reason, ...(options.changeRequestId ? { changeRequestId: options.changeRequestId } : {}) },
     });
     return booking;
+  }
+
+  /**
+   * Why this booking's start date cannot be moved right now, or null — the
+   * checks that do not depend on the new date. Asked at request time and
+   * again inside `changeStartDate`.
+   */
+  async startDateChangeBlocker(tenantId: string, bookingId: string): Promise<string | null> {
+    return this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const booking = await tx.booking.findUnique({ where: { id: bookingId }, select: { status: true, bookingModel: true, termMonths: true } });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      return this.startDateChangeBlockerFor(tx, bookingId, booking);
+    });
+  }
+
+  private async startDateChangeBlockerFor(
+    tx: Prisma.TransactionClient,
+    bookingId: string,
+    booking: { status: string; bookingModel: string; termMonths: number | null },
+  ): Promise<string | null> {
+    if (!START_DATE_CHANGEABLE_STATUSES.includes(booking.status)) {
+      return `Booking berstatus ${booking.status} — tanggal mulai hanya bisa diubah sebelum sewa aktif.`;
+    }
+    if (booking.bookingModel !== "RECURRING_LEASE" || !booking.termMonths) {
+      return "Tanggal mulai hanya bisa diubah untuk sewa berjangka (1, 3, 6 atau 12 bulan).";
+    }
+    const paid = await this.findInvoiceWithMoney(tx, bookingId);
+    return paid ? `${PAYMENT_BLOCKS_CHANGE_MESSAGE} (invoice ${paid.invoiceNumber}).` : null;
+  }
+
+  /**
+   * Keep the files of a contract version that is about to be re-rendered:
+   * copy them to `…-v<n>.pdf` and point that version's entry in
+   * `previousVersions` at the copies.
+   */
+  private async archiveContractVersionFiles(tenantId: string, contractId: string, version: number) {
+    const contract = await this.prisma.runInTenantContext(tenantId, (tx) => tx.contract.findUniqueOrThrow({ where: { id: contractId } }));
+    const versions = (Array.isArray(contract.previousVersions) ? contract.previousVersions : []) as Array<Record<string, unknown>>;
+    const entry = versions.find((v) => v.version === version);
+    if (!entry) return;
+    let changed = false;
+    for (const field of ["unsignedDocumentUrl", "documentUrl"] as const) {
+      const key = entry[field];
+      if (typeof key !== "string" || !key) continue;
+      const bytes = await this.documents.readBytes(key);
+      if (!bytes) continue;
+      entry[field] = await this.documents.store(key.replace(/\.pdf$/i, "") + `-v${version}.pdf`, bytes);
+      changed = true;
+    }
+    if (changed) {
+      await this.prisma.runInTenantContext(tenantId, (tx) => tx.contract.update({ where: { id: contractId }, data: { previousVersions: versions as Prisma.InputJsonValue } }));
+    }
+  }
+
+  /** Units of the booking's type and branch that are free for it from `newStartDate` — its own hold left out. */
+  async unitsFreeForStartDate(tenant: ResolvedTenant, bookingId: string, newStartDate: Date) {
+    const blackoutMonths = resolveBlackoutMonths(tenant.featureFlags);
+    return this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const booking = await tx.booking.findUnique({ where: { id: bookingId } });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      if (!booking.termMonths) throw new BadRequestException("Tanggal mulai hanya bisa diubah untuk sewa berjangka.");
+      const units = await listAvailableStorageAssets(
+        tx,
+        booking.assetTypeId,
+        booking.locationId ?? undefined,
+        { startDate: newStartDate, termMonths: booking.termMonths },
+        { blackoutMonths, customerId: booking.customerId, extendsBookingId: booking.extendsBookingId ?? undefined, excludeBookingId: booking.id },
+      );
+      return {
+        newStartDate: isoDay(newStartDate)!,
+        currentUnitFree: units.some((u) => u.id === booking.assetId),
+        units: units.map((u) => ({ id: u.id, code: u.code, current: u.id === booking.assetId })),
+      };
+    });
+  }
+
+  /**
+   * PRD go-live 2 §4.3 — move a booking's start (check-in) date. Called by
+   * ChangeRequestService once the request is approved.
+   *
+   *  1. `startDate` moves and the term end moves with it.
+   *  2. The unit is re-checked for the new window, blackout included (the
+   *     booking's own hold left out). Not free -> 409 UNIT_NOT_FREE carrying
+   *     the units that are; nothing changes, so the request stays pending and
+   *     the requester can pick another unit (`assetId`).
+   *  3. Unpaid issued / scheduled invoices are voided (ledger reversal) and
+   *     the schedule is issued again for the new periods — same amounts, new
+   *     numbers from the branch's counters.
+   *  4. A generated contract becomes a new version. If it was signed, the
+   *     request says which: RESIGN (the signature is dropped, the customer
+   *     signs the new version) or RECONFIRM (the signature stays, the staff
+   *     confirmation is cleared and has to be given again).
+   *  5. The customer is told: `booking_date_changed`.
+   */
+  async changeStartDate(tenant: ResolvedTenant, bookingId: string, actorUserId: string, params: ChangeStartDateParams): Promise<ChangeStartDateResult> {
+    const blackoutMonths = resolveBlackoutMonths(tenant.featureFlags);
+    const leadDays = resolveInvoiceLeadDays(tenant.featureFlags);
+    const newStart = params.newStartDate;
+    const newStartIso = isoDay(newStart)!;
+    if (newStartIso < zonedDateString(new Date(), tenant.timezone || "Asia/Jakarta")) {
+      throw new BadRequestException("Tanggal mulai yang baru tidak boleh sebelum hari ini.");
+    }
+
+    const outcome = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const booking = await tx.booking.findUnique({ where: { id: bookingId }, include: { customer: true, asset: true } });
+      if (!booking) throw new NotFoundException("Booking not found.");
+      const blocker = await this.startDateChangeBlockerFor(tx, bookingId, booking);
+      if (blocker) throw new ConflictException({ code: blocker.startsWith(PAYMENT_BLOCKS_CHANGE_MESSAGE) ? "PAYMENT_EXISTS" : "START_DATE_NOT_CHANGEABLE", message: blocker });
+      const termMonths = booking.termMonths!;
+      const previousStartIso = isoDay(booking.startDate)!;
+      const targetAssetId = params.assetId ?? booking.assetId;
+      const unitChanged = Boolean(params.assetId && params.assetId !== booking.assetId);
+      if (newStartIso === previousStartIso && !unitChanged) throw new BadRequestException("Tanggal mulai yang baru sama dengan yang sekarang.");
+      if (!targetAssetId) throw new BadRequestException("Booking ini belum punya unit — tawarkan unit dulu.");
+
+      // 2. The unit, for the new window.
+      const target = await tx.asset.findUnique({ where: { id: targetAssetId } });
+      if (!target) throw new NotFoundException("Unit tidak ditemukan.");
+      if (target.assetTypeId !== booking.assetTypeId || (booking.locationId && target.locationId !== booking.locationId)) {
+        throw new BadRequestException("Unit pengganti harus bertipe dan bercabang sama dengan booking ini.");
+      }
+      const availability = await checkStorageAssetFree(
+        tx,
+        { id: target.id, assetTypeId: target.assetTypeId, locationId: booking.locationId },
+        { startDate: newStart, termMonths },
+        { blackoutMonths, customerId: booking.customerId, extendsBookingId: booking.extendsBookingId ?? undefined, excludeBookingId: booking.id },
+      );
+      if (!availability.free) {
+        throw new ConflictException({
+          code: "UNIT_NOT_FREE",
+          message: `Unit ${target.code} tidak tersedia untuk ${termMonths} bulan mulai ${newStartIso}. Pilih unit lain atau tanggal lain.`,
+          unit: { id: target.id, code: target.code },
+          freeUnits: availability.freeUnits,
+        });
+      }
+
+      // 4 (check first, change later). A signed contract needs a decision.
+      const contract = await tx.contract.findFirst({ where: { bookingId }, orderBy: { createdAt: "desc" } });
+      const contractGenerated = Boolean(contract && (booking.contractGeneratedAt || contract.unsignedDocumentUrl || contract.documentUrl));
+      const contractSigned = Boolean(contract?.signedAt);
+      if (contractSigned && !params.signedContract) {
+        throw new BadRequestException({
+          code: "SIGNED_CONTRACT_DECISION_REQUIRED",
+          message: "Kontrak sudah ditandatangani — pilih: tanda tangan ulang, atau konfirmasi ulang oleh staf.",
+        });
+      }
+
+      // 1. The dates (and the unit, when it changes).
+      const newEnd = termEndDate(newStart, termMonths);
+      if (unitChanged && booking.assetId) await this.releaseAsset(tx, booking.assetId, bookingId);
+      const updated = await tx.booking.update({ where: { id: bookingId }, data: { startDate: newStart, endDate: newEnd, assetId: target.id } });
+      if (unitChanged) await this.softReserveAsset(tx, target.id);
+      // A deposit's refund falls due from the lease end, which just moved (PRD go-live 2 §3.1).
+      await syncDepositRefundDue(tx, bookingId);
+
+      // 3. The proforma and the schedule.
+      const voidReason = `Tanggal mulai diubah ${previousStartIso} -> ${newStartIso}: ${params.reason}`;
+      const unpaid = await tx.invoice.findMany({ where: { bookingId, status: { in: ["SCHEDULED", "ISSUED", "OVERDUE"] } }, orderBy: { scheduleIndex: "asc" } });
+      for (const invoice of unpaid) await this.voidUnpaidInvoice(tx, tenant.id, invoice, actorUserId, voidReason);
+      let reissued: Awaited<ReturnType<typeof generateTermPaymentSchedule>> | null = null;
+      if (unpaid.length > 0) {
+        reissued = await generateTermPaymentSchedule(
+          tx,
+          tenant.id,
+          tenant.slug,
+          tenant.isPkp,
+          {
+            id: updated.id,
+            bookingModel: updated.bookingModel,
+            customerId: updated.customerId,
+            startDate: updated.startDate,
+            endDate: updated.endDate,
+            anchorDay: updated.anchorDay,
+            rateTier: updated.rateTier,
+            termMonths,
+            priceSnapshot: updated.priceSnapshot,
+          },
+          { leadDays },
+        );
+        // Each voided invoice points at the one that replaced it (same slot of the schedule).
+        const replacement = new Map<number | null, string>([[0, reissued.proforma.id], ...reissued.cycles.map((c) => [c.scheduleIndex, c.id] as [number | null, string])]);
+        for (const old of unpaid) {
+          const by = replacement.get(old.scheduleIndex ?? 0);
+          if (by) await tx.invoice.update({ where: { id: old.id }, data: { supersededByInvoiceId: by } });
+        }
+      }
+
+      // 4. The contract: a new version of the same agreement (same number).
+      let contractOutcome: ChangeStartDateResult["contract"] = null;
+      if (contract && contractGenerated) {
+        const previous = Array.isArray(contract.previousVersions) ? (contract.previousVersions as Prisma.JsonArray) : [];
+        const archived = {
+          version: contract.version,
+          replacedAt: new Date().toISOString(),
+          reason: voidReason,
+          startDate: previousStartIso,
+          unsignedDocumentUrl: contract.unsignedDocumentUrl,
+          documentUrl: contract.documentUrl,
+          signedAt: contract.signedAt?.toISOString() ?? null,
+          signedByName: contract.signedByName,
+          confirmedAt: contract.confirmedAt?.toISOString() ?? null,
+        };
+        const resign = contractSigned && params.signedContract === "RESIGN";
+        const reconfirm = contractSigned && params.signedContract === "RECONFIRM";
+        await tx.contract.update({
+          where: { id: contract.id },
+          data: {
+            version: contract.version + 1,
+            previousVersions: [...previous, archived] as Prisma.InputJsonValue,
+            ...(resign
+              ? {
+                  // The customer signs the new version: the old signature does not carry over.
+                  signedAt: null,
+                  signedByName: null,
+                  signatureImageKey: null,
+                  signatureIp: null,
+                  signatureUserAgent: null,
+                  esignStatus: null,
+                  esignEnvelopeId: null,
+                  documentUrl: null,
+                  confirmedAt: null,
+                  confirmedByUserId: null,
+                }
+              : {}),
+            // The signature stands; staff confirm the re-dated agreement again.
+            ...(reconfirm ? { confirmedAt: null, confirmedByUserId: null } : {}),
+          },
+        });
+        contractOutcome = {
+          id: contract.id,
+          contractNumber: contract.contractNumber,
+          version: contract.version + 1,
+          signed: resign ? "RESIGN_REQUIRED" : reconfirm ? "RECONFIRM_REQUIRED" : "NOT_SIGNED",
+        };
+      }
+
+      await tx.bookingEvent.create({
+        data: {
+          tenantId: tenant.id,
+          bookingId,
+          fromStatus: booking.status,
+          toStatus: booking.status,
+          actorType: "USER",
+          actorId: actorUserId,
+          reason: `Tanggal mulai diubah ${previousStartIso} -> ${newStartIso}${unitChanged ? `, unit ${booking.asset?.code ?? "-"} -> ${target.code}` : ""}: ${params.reason}`,
+          metadata: { ...(params.changeRequestId ? { changeRequestId: params.changeRequestId } : {}), previousStartDate: previousStartIso, newStartDate: newStartIso },
+        },
+      });
+
+      const invoiceRow = (i: { id: string; invoiceNumber: string; status: string; totalAmount: Prisma.Decimal; periodStart: Date | null; periodEnd: Date | null; dueDate: Date }) => ({
+        id: i.id,
+        invoiceNumber: i.invoiceNumber,
+        status: i.status,
+        totalAmount: i.totalAmount.toString(),
+        periodStart: isoDay(i.periodStart),
+        periodEnd: isoDay(i.periodEnd),
+        dueDate: isoDay(i.dueDate)!,
+      });
+      const result: ChangeStartDateResult = {
+        bookingId,
+        previousStartDate: previousStartIso,
+        newStartDate: newStartIso,
+        newEndDate: isoDay(newEnd),
+        previousAssetCode: booking.asset?.code ?? null,
+        assetCode: target.code,
+        unitChanged,
+        voidedInvoices: unpaid.map((i) => ({ id: i.id, invoiceNumber: i.invoiceNumber, status: i.status, totalAmount: i.totalAmount.toString() })),
+        issuedInvoices: reissued ? [invoiceRow(reissued.proforma), ...reissued.cycles.map(invoiceRow)] : [],
+        contract: contractOutcome,
+      };
+      return { result, customer: booking.customer, previousStart: booking.startDate, proforma: reissued?.proforma ?? null };
+    });
+
+    // PDFs are rendered outside the DB transaction (I/O to storage), as in generateContractAndProforma.
+    if (outcome.result.contract) {
+      // regenerateContract writes to the same storage keys, so the superseded
+      // version's files are copied aside first — the signed one above all.
+      await this.archiveContractVersionFiles(tenant.id, outcome.result.contract.id, outcome.result.contract.version - 1);
+      await this.documents.regenerateContract(tenant.id, outcome.result.contract.id);
+    }
+    if (outcome.proforma) {
+      const proformaKey = await this.documents.store(
+        `invoices/${tenant.id}/${outcome.proforma.id}/proforma.pdf`,
+        await this.documents.invoicePdf(tenant.id, outcome.proforma.id),
+      );
+      await this.prisma.runInTenantContext(tenant.id, (tx) => tx.invoice.update({ where: { id: outcome.proforma!.id }, data: { documentUrl: proformaKey } }));
+    }
+
+    const signed = outcome.result.contract?.signed;
+    const next = outcome.proforma
+      ? {
+          id: `Tagihan baru ${outcome.proforma.invoiceNumber} sudah diterbitkan, jatuh tempo ${formatDateId(outcome.proforma.dueDate)}; tagihan lama tidak berlaku.`,
+          en: `A new invoice ${outcome.proforma.invoiceNumber} has been issued, due ${isoDay(outcome.proforma.dueDate)}; the earlier one no longer applies.`,
+        }
+      : { id: "Tidak ada tagihan yang berubah.", en: "No invoice has changed." };
+    const sign =
+      signed === "RESIGN_REQUIRED"
+        ? { id: " Mohon tanda tangani ulang perjanjian sewa yang baru.", en: " Please sign the updated rental agreement." }
+        : signed === "RECONFIRM_REQUIRED"
+          ? { id: " Perjanjian sewa Anda diperbarui dengan tanggal baru.", en: " Your rental agreement has been updated with the new date." }
+          : { id: "", en: "" };
+    await this.notifications.notifyCustomer({
+      tenantId: tenant.id,
+      tenantSlug: tenant.slug,
+      customer: outcome.customer,
+      templateKey: "booking_date_changed",
+      variables: {
+        customerName: outcome.customer.fullName ?? "Pelanggan",
+        assetCode: outcome.result.assetCode ?? "",
+        previousStartDate: formatDateId(outcome.previousStart),
+        newStartDate: formatDateId(newStart),
+        nextStep: `${next.id}${sign.id}`,
+        nextStepEn: `${next.en}${sign.en}`,
+      },
+      link: { purpose: "BOOKING", next: `/portal/bookings/${bookingId}` },
+    });
+    await this.audit.record({
+      tenantId: tenant.id,
+      actorUserId,
+      action: "BOOKING_START_DATE_CHANGED",
+      entityType: "Booking",
+      entityId: bookingId,
+      metadata: { ...outcome.result, reason: params.reason, ...(params.changeRequestId ? { changeRequestId: params.changeRequestId } : {}) },
+    });
+    return outcome.result;
   }
 
   /**

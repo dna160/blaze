@@ -236,6 +236,19 @@ enum SwapRequestStatus {
   REJECTED
 }
 
+/// PRD go-live 2 §4 — what a booking change request asks for.
+enum ChangeRequestType {
+  CANCEL
+  CHANGE_START_DATE
+}
+
+enum ChangeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
 /// Platform-level (RentOS's own SaaS revenue from a tenant), not to be
 /// confused with a tenant's own Invoice model — see PlatformInvoice's own
 /// doc comment. Static pricing/limits per plan live in code
@@ -728,6 +741,7 @@ model Booking {
   invoices     Invoice[]
   deposits     Deposit[]
   swapRequests SwapRequest[]
+  changeRequests ChangeRequest[]
 
   waitlistEntry WaitlistEntry?
 
@@ -966,6 +980,12 @@ model Contract {
   esignEnvelopeId     String?      @map("esign_envelope_id")
   /// PENDING | SIGNED | DECLINED | EXPIRED — null until sendForSignature() is called.
   esignStatus         String?      @map("esign_status")
+  /// PRD go-live 2 §4.3 — bumped each time the agreement is re-rendered
+  /// because the booking it describes changed (a moved start date).
+  version             Int          @default(1)
+  /// What each earlier version was: `{ version, replacedAt, reason,
+  /// unsignedDocumentUrl, documentUrl, signedAt, signedByName, confirmedAt }`.
+  previousVersions    Json         @default("[]") @map("previous_versions")
   createdAt           DateTime     @default(now()) @map("created_at")
 
   @@unique([tenantId, contractNumber])
@@ -1195,6 +1215,46 @@ model Deposit {
   @@index([bookingId])
   @@index([tenantId, customerId])
   @@map("deposits")
+}
+
+/// PRD go-live 2 §4 — staff ask, someone else decides. A booking is no longer
+/// cancelled (or its start date moved) by the person who wants it: they file a
+/// request with a reason, and a decider named by Organization.approvalPolicy
+/// approves or rejects it. The decider is never the requester — except the one
+/// documented path, a super admin's own cancellation, which approves itself
+/// and says so in the audit log.
+///
+/// `payload` by type:
+///   CANCEL             {}
+///   CHANGE_START_DATE  { newStartDate: "YYYY-MM-DD", assetId?: uuid,
+///                        signedContract?: "RESIGN" | "RECONFIRM",
+///                        previousStartDate, previousAssetId }
+/// `result` is what approval did (voided / re-issued invoices, contract
+/// version, unit) — written once, for the history.
+///
+/// At most one PENDING request per booking per type: a partial unique index
+/// in the migration (Prisma cannot express it).
+model ChangeRequest {
+  id                String              @id @default(uuid()) @db.Uuid
+  tenantId          String              @map("tenant_id") @db.Uuid
+  bookingId         String              @map("booking_id") @db.Uuid
+  booking           Booking             @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  type              ChangeRequestType
+  payload           Json                @default("{}")
+  reason            String
+  status            ChangeRequestStatus @default(PENDING)
+  requestedByUserId String              @map("requested_by_user_id") @db.Uuid
+  requestedAt       DateTime            @default(now()) @map("requested_at")
+  decidedByUserId   String?             @map("decided_by_user_id") @db.Uuid
+  decidedAt         DateTime?           @map("decided_at")
+  decisionNote      String?             @map("decision_note")
+  result            Json?
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+
+  @@index([tenantId, status])
+  @@index([bookingId])
+  @@map("change_requests")
 }
 
 enum DepositSource {

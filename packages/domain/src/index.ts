@@ -175,3 +175,17 @@ export {
   type TermsLanguage,
   type AlignedArticle,
 } from "./documents/contract-terms.js";
+export {
+  DEFAULT_APPROVAL_POLICY,
+  CHANGE_REQUEST_TYPES,
+  resolveApprovalPolicy,
+  canApproveChange,
+  approvableChangeTypes,
+  selfApprovesOnRequest,
+  checkChangeDecision,
+  type ApprovalPolicy,
+  type ApprovalRule,
+  type ApprovalScope,
+  type ChangeRequestType,
+  type ChangeDecisionDenial,
+} from "./rbac/approval-policy.js";
