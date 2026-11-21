@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { useT } from "@/lib/i18n";
 
 /**
  * PRD go-live §4.4 / §5.3 — the shared "pick a CSV → preview (dry run) →
@@ -17,7 +18,7 @@ export function CsvImportPanel<TResult extends object>({
   endpoint,
   canApply,
   renderResult,
-  applyLabel = "Import",
+  applyLabel,
   onApplied,
 }: {
   title: string;
@@ -29,6 +30,7 @@ export function CsvImportPanel<TResult extends object>({
   applyLabel?: string;
   onApplied?: (result: TResult) => void;
 }) {
+  const { t } = useT();
   const [open, setOpen] = useState(false);
   const [csv, setCsv] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -78,16 +80,16 @@ export function CsvImportPanel<TResult extends object>({
           <div className="mt-1 text-xs text-brand-700/60">{description}</div>
         </div>
         <button onClick={() => setOpen(false)} className="text-xs text-brand-700/60 hover:text-accent-500">
-          Close
+          {t("common.close")}
         </button>
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <label className="cursor-pointer rounded border border-brand-600/20 px-3 py-1.5 text-sm hover:bg-brand-700/5">
-          {fileName ? "Choose another file" : "Choose CSV file"}
+          {fileName ? t("panels.csv.chooseAnother") : t("panels.csv.choose")}
           <input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => void pick(e.target.files?.[0])} />
         </label>
         {fileName && <span className="text-xs text-brand-700/60">{fileName}</span>}
-        {busy && <span className="text-xs text-brand-700/60">Working…</span>}
+        {busy && <span className="text-xs text-brand-700/60">{t("panels.csv.working")}</span>}
       </div>
       {error && <p className="text-sm text-red-600">{error}</p>}
       {result && renderResult(result, applied)}
@@ -98,12 +100,12 @@ export function CsvImportPanel<TResult extends object>({
             disabled={busy || !canApply(result)}
             className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
           >
-            {applyLabel}
+            {applyLabel ?? t("panels.csv.import")}
           </button>
-          {!canApply(result) && <span className="text-xs text-red-700">Fix the errors in the file and choose it again — nothing is imported while any row has an error.</span>}
+          {!canApply(result) && <span className="text-xs text-red-700">{t("panels.csv.fixErrors")}</span>}
         </div>
       )}
-      {applied && <p className="text-sm text-green-700">Imported.</p>}
+      {applied && <p className="text-sm text-green-700">{t("panels.csv.imported")}</p>}
     </div>
   );
 }

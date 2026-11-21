@@ -11,6 +11,8 @@ import {
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { translate, useT } from "@/lib/i18n";
+
 /**
  * PRD go-live 2 §2.1 — the ONE date-range control every report reads from.
  *
@@ -98,13 +100,16 @@ export function ReportRange({
   value,
   onChange,
   timeZone = "Asia/Jakarta",
-  locale = "id",
+  locale: localeProp,
 }: {
   value: ReportRangeValue;
   onChange: (next: ReportRangeValue) => void;
   timeZone?: string;
+  /** Defaults to the reader's console language. */
   locale?: "id" | "en";
 }) {
+  const ctx = useT();
+  const locale = localeProp ?? ctx.locale;
   const active = matchPreset(value, timeZone);
   const [custom, setCustom] = useState(active === "custom");
   const [draft, setDraft] = useState(value);
@@ -149,22 +154,22 @@ export function ReportRange({
           }}
         >
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-brand-700/60">{locale === "id" ? "Dari tanggal" : "From"}</span>
+            <span className="text-xs text-brand-700/60">{translate(locale, "reports.range.from")}</span>
             <input type="date" value={draft.from} max={draft.to || undefined} onChange={(e) => setDraft({ ...draft, from: e.target.value })} className="rounded border border-brand-600/20 px-2 py-1.5" />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-brand-700/60">{locale === "id" ? "Sampai tanggal" : "To"}</span>
+            <span className="text-xs text-brand-700/60">{translate(locale, "reports.range.to")}</span>
             <input type="date" value={draft.to} min={draft.from || undefined} onChange={(e) => setDraft({ ...draft, to: e.target.value })} className="rounded border border-brand-600/20 px-2 py-1.5" />
           </label>
           <button type="submit" disabled={!draftOk || (draft.from === value.from && draft.to === value.to)} className="rounded bg-brand-700 px-3 py-1.5 text-white disabled:opacity-40">
-            {locale === "id" ? "Terapkan" : "Apply"}
+            {translate(locale, "common.apply")}
           </button>
-          {!draftOk && <span className="text-xs text-red-600">{locale === "id" ? "Tanggal akhir tidak boleh sebelum tanggal awal." : "The end date cannot be before the start date."}</span>}
+          {!draftOk && <span className="text-xs text-red-600">{translate(locale, "reports.range.endBeforeStart")}</span>}
         </form>
       )}
       <p className="mt-2 text-xs text-brand-700/60">
         {value.from === value.to ? value.from : `${value.from} — ${value.to}`}
-        {value.to >= today && value.from <= today ? (locale === "id" ? " · termasuk hari ini" : " · includes today") : ""}
+        {value.to >= today && value.from <= today ? translate(locale, "reports.range.includesToday") : ""}
         {" · "}
         {timeZone === "Asia/Jakarta" ? "WIB" : timeZone}
       </p>

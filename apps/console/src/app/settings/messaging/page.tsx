@@ -8,6 +8,7 @@ import { LinkedDevicePanel } from "@/components/LinkedDevicePanel";
 import { TestAllowlistPanel } from "@/components/TestAllowlistPanel";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient, isOrgAdmin } from "@/lib/auth-client";
+import { useT } from "@/lib/i18n";
 import { notifyMessagingPauseChanged } from "@/lib/messaging-pause";
 
 type ProviderName = "console_log" | "whatsapp_cloud" | "whatsapp_linked";
@@ -37,27 +38,15 @@ interface TestResult {
   error: string | null;
 }
 
-const SOURCE_COPY: Record<MessagingConfig["source"], { label: string; tone: string; detail: string }> = {
-  organization: {
-    label: "Using your saved number",
-    tone: "bg-green-100 text-green-800",
-    detail: "Messages to customers go out through the WhatsApp number configured here, for every branch in the organization.",
-  },
-  environment: {
-    label: "Using deployment credentials",
-    tone: "bg-amber-100 text-amber-800",
-    detail:
-      "Nothing is saved here yet, so messages use the credentials set on the server. Saving a number below takes over from them.",
-  },
-  default: {
-    label: "Not sending — logging only",
-    tone: "bg-slate-200 text-slate-700",
-    detail:
-      "Customer messages are written to the notification log but never delivered. Add a WhatsApp number below to start sending.",
-  },
+/** Message keys under `msgSettings.source.` and the badge colour, per credential source. */
+const SOURCE_TONE: Record<MessagingConfig["source"], string> = {
+  organization: "bg-green-100 text-green-800",
+  environment: "bg-amber-100 text-amber-800",
+  default: "bg-slate-200 text-slate-700",
 };
 
 export default function MessagingSettingsPage() {
+  const { t, intl } = useT();
   const router = useRouter();
   const me = authClient.getUser();
   // PRD go-live §9.5 — the number, pairing, auto-reply and pause belong to the
@@ -143,12 +132,10 @@ export default function MessagingSettingsPage() {
   /** PRD go-live §9.1 — the organization-wide kill switch, behind a confirmation. */
   async function togglePause(next: boolean) {
     if (next && !pauseReason.trim()) {
-      setError("Say why messaging is being paused — the reason is shown in the banner on every page.");
+      setError(t("msgSettings.pause.reasonRequired"));
       return;
     }
-    const question = next
-      ? "Pause ALL outbound messages (WhatsApp and email) for every branch? Messages will be recorded as suppressed instead of sent."
-      : "Resume sending? Review the suppressed messages first — anything held back while paused is NOT sent automatically.";
+    const question = next ? t("msgSettings.pause.confirmPause") : t("msgSettings.pause.confirmResume");
     if (!window.confirm(question)) return;
     setPauseBusy(true);
     setError(null);
@@ -194,16 +181,15 @@ export default function MessagingSettingsPage() {
     }
   }
 
-  const status = config ? SOURCE_COPY[config.source] : null;
+  const status = config
+    ? { label: t(`msgSettings.source.${config.source}`), tone: SOURCE_TONE[config.source], detail: t(`msgSettings.source.${config.source}Detail`) }
+    : null;
 
   return (
     <ConsoleShell>
       <div className="max-w-3xl space-y-6">
-        <h1 className="text-2xl font-semibold">Messaging</h1>
-        <p className="text-sm text-slate-600">
-          WhatsApp is how customers hear from you — booking confirmations, waitlist places, KYC links, invoices and payment
-          reminders. One number serves every branch in the organization.
-        </p>
+        <h1 className="text-2xl font-semibold">{t("msgSettings.title")}</h1>
+        <p className="text-sm text-slate-600">{t("msgSettings.intro")}</p>
 
         {error && <div className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>}
 
@@ -212,32 +198,28 @@ export default function MessagingSettingsPage() {
             <div className="flex items-center gap-3">
               <span className={`rounded px-2 py-1 text-xs font-medium ${status.tone}`}>{status.label}</span>
               {config.accessTokenHint && (
-                <span className="text-xs text-slate-500">token ending ····{config.accessTokenHint}</span>
+                <span className="text-xs text-slate-500">{t("msgSettings.tokenEnding", { hint: config.accessTokenHint })}</span>
               )}
             </div>
             <p className="mt-2 text-sm text-slate-600">{status.detail}</p>
             {config.updatedAt && (
-              <p className="mt-1 text-xs text-slate-400">Last changed {new Date(config.updatedAt).toLocaleString()}</p>
+              <p className="mt-1 text-xs text-slate-400">{t("msgSettings.lastChanged", { when: new Date(config.updatedAt).toLocaleString(intl) })}</p>
             )}
           </div>
         )}
 
         {config && (
           <div className={`space-y-3 rounded border p-4 ${config.pause.paused ? "border-red-300 bg-red-50" : "border-slate-200 bg-white"}`}>
-            <h2 className="text-sm font-semibold text-slate-800">Pause all messaging</h2>
+            <h2 className="text-sm font-semibold text-slate-800">{t("msgSettings.pause.title")}</h2>
             {config.pause.paused ? (
               <p className="text-sm text-red-800">
-                <b>Paused</b>
-                {config.pause.reason ? `: ${config.pause.reason}` : ""}
-                {config.pause.pausedAt ? ` — since ${new Date(config.pause.pausedAt).toLocaleString("id-ID")}` : ""}. Nothing outbound reaches a
-                provider: notifications, reminders, the auto-reply and inbox replies are recorded as suppressed. Incoming messages are still recorded.
+                <b>{t("msgSettings.pause.paused")}</b>
+                {config.pause.reason ? `: ${config.pause.reason}` : null}
+                {config.pause.pausedAt ? <> — {t("msgSettings.pause.since", { when: new Date(config.pause.pausedAt).toLocaleString(intl) })}</> : null}.{" "}
+                {t("msgSettings.pause.pausedBody")}
               </p>
             ) : (
-              <p className="text-xs text-slate-500">
-                Stops every outbound WhatsApp and email for all branches at once — use it during a data migration or if something is
-                sending that shouldn&apos;t. Each held-back message is recorded as suppressed so you can see what would have gone. The
-                legacy data import refuses to run unless messaging is paused.
-              </p>
+              <p className="text-xs text-slate-500">{t("msgSettings.pause.explain")}</p>
             )}
             {canEdit ? (
               config.pause.paused ? (
@@ -246,7 +228,7 @@ export default function MessagingSettingsPage() {
                   disabled={pauseBusy}
                   className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                 >
-                  {pauseBusy ? "Working…" : "Resume sending"}
+                  {pauseBusy ? t("msgSettings.pause.working") : t("msgSettings.pause.resume")}
                 </button>
               ) : (
                 <div className="flex gap-2">
@@ -254,7 +236,7 @@ export default function MessagingSettingsPage() {
                     value={pauseReason}
                     onChange={(e) => setPauseReason(e.target.value)}
                     maxLength={300}
-                    placeholder="Reason, e.g. Data migration from Booqable"
+                    placeholder={t("msgSettings.pause.reasonPlaceholder")}
                     className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm"
                   />
                   <button
@@ -262,12 +244,12 @@ export default function MessagingSettingsPage() {
                     disabled={pauseBusy}
                     className="rounded bg-red-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                   >
-                    {pauseBusy ? "Working…" : "Pause messaging"}
+                    {pauseBusy ? t("msgSettings.pause.working") : t("msgSettings.pause.pauseButton")}
                   </button>
                 </div>
               )
             ) : (
-              <p className="text-xs text-slate-500">Only an organization-scoped Admin (Super Admin) can pause or resume messaging.</p>
+              <p className="text-xs text-slate-500">{t("msgSettings.pause.onlyOrgAdmin")}</p>
             )}
           </div>
         )}
@@ -275,56 +257,50 @@ export default function MessagingSettingsPage() {
         <TestAllowlistPanel canEdit={canEdit} />
 
         {!canEdit && (
-          <div className="rounded border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-            You can see how messaging is set up. Changing the number, pairing, auto-reply or pause needs an organization-scoped Admin
-            (Super Admin), because they apply to every branch.
-          </div>
+          <div className="rounded border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">{t("msgSettings.readOnlyNote")}</div>
         )}
 
         <LinkedDevicePanel canEdit={canEdit} />
 
         {config && !config.canStoreSecrets && provider === "whatsapp_cloud" && (
-          <div className="rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            The API has no <code>MESSAGING_CONFIG_KEY</code> set, so an access token can&apos;t be stored securely and saving one
-            will be refused. Generate a key with <code>openssl rand -hex 32</code>, set it on the API and restart.
-          </div>
+          <div className="rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{t("msgSettings.noSecretKey")}</div>
         )}
 
         <form onSubmit={save} className="space-y-4 rounded border border-slate-200 bg-white p-4">
-          <h2 className="text-sm font-semibold text-slate-800">How RentOS sends</h2>
+          <h2 className="text-sm font-semibold text-slate-800">{t("msgSettings.how.title")}</h2>
 
           <label className="block text-sm">
-            <span className="text-slate-700">Sending</span>
+            <span className="text-slate-700">{t("msgSettings.how.sending")}</span>
             <select
               value={provider}
               onChange={(e) => setProvider(e.target.value as ProviderName)}
               disabled={!canEdit}
               className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
             >
-              <option value="console_log">Off — log messages only</option>
+              <option value="console_log">{t("msgSettings.how.off")}</option>
               <option value="whatsapp_linked" disabled={!config?.linkedBridgeConfigured}>
-                On — send from the linked WhatsApp number above
+                {t("msgSettings.how.linked")}
               </option>
-              <option value="whatsapp_cloud">On — send via WhatsApp Cloud API (Meta, needs approved templates)</option>
+              <option value="whatsapp_cloud">{t("msgSettings.how.cloud")}</option>
             </select>
           </label>
 
           {provider === "whatsapp_cloud" && (
             <>
               <label className="block text-sm">
-                <span className="text-slate-700">Phone number ID</span>
+                <span className="text-slate-700">{t("msgSettings.how.phoneNumberId")}</span>
                 <input
                   value={phoneNumberId}
                   onChange={(e) => setPhoneNumberId(e.target.value)}
                   disabled={!canEdit}
-                  placeholder="From Meta Business Suite → WhatsApp → API Setup"
+                  placeholder={t("msgSettings.how.phoneNumberIdPlaceholder")}
                   className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
                 />
               </label>
 
               <label className="block text-sm">
                 <span className="text-slate-700">
-                  WhatsApp Business account ID <span className="text-slate-400">(optional)</span>
+                  {t("msgSettings.how.businessAccountId")} <span className="text-slate-400">({t("common.optional")})</span>
                 </span>
                 <input
                   value={businessAccountId}
@@ -335,19 +311,17 @@ export default function MessagingSettingsPage() {
               </label>
 
               <label className="block text-sm">
-                <span className="text-slate-700">Permanent access token</span>
+                <span className="text-slate-700">{t("msgSettings.how.token")}</span>
                 <input
                   type="password"
                   autoComplete="off"
                   value={accessToken}
                   onChange={(e) => setAccessToken(e.target.value)}
                   disabled={!canEdit}
-                  placeholder={config?.hasAccessToken ? "Saved — leave blank to keep it" : "Paste the system user token"}
+                  placeholder={config?.hasAccessToken ? t("msgSettings.how.tokenSaved") : t("msgSettings.how.tokenPaste")}
                   className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
                 />
-                <span className="mt-1 block text-xs text-slate-500">
-                  Stored encrypted and never shown again. Leave blank to keep the current one.
-                </span>
+                <span className="mt-1 block text-xs text-slate-500">{t("msgSettings.how.tokenHint")}</span>
               </label>
             </>
           )}
@@ -359,20 +333,17 @@ export default function MessagingSettingsPage() {
                 disabled={busy}
                 className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
               >
-                {busy ? "Saving…" : "Save"}
+                {busy ? t("common.saving") : t("common.save")}
               </button>
-              {saved && <span className="text-sm text-green-700">Saved.</span>}
+              {saved && <span className="text-sm text-green-700">{t("common.saved")}</span>}
             </div>
           )}
         </form>
 
         {canEdit && (
           <form onSubmit={save} className="space-y-4 rounded border border-slate-200 bg-white p-4">
-            <h2 className="text-sm font-semibold text-slate-800">Reply automatically to incoming messages</h2>
-            <p className="text-xs text-slate-500">
-              When a customer messages your WhatsApp number, send this back — at most once per number per cooldown, and not
-              while a person on your team has replied within it. Their message and the reply both appear in the inbox.
-            </p>
+            <h2 className="text-sm font-semibold text-slate-800">{t("msgSettings.auto.title")}</h2>
+            <p className="text-xs text-slate-500">{t("msgSettings.auto.intro")}</p>
 
             <label className="flex items-center gap-2 text-sm">
               <input
@@ -381,30 +352,25 @@ export default function MessagingSettingsPage() {
                 onChange={(e) => setAutoReplyEnabled(e.target.checked)}
                 disabled={!canEdit}
               />
-              <span className="text-slate-700">Reply automatically</span>
+              <span className="text-slate-700">{t("msgSettings.auto.toggle")}</span>
             </label>
 
             <label className="block text-sm">
-              <span className="text-slate-700">Reply text</span>
+              <span className="text-slate-700">{t("msgSettings.auto.text")}</span>
               <textarea
                 value={autoReplyText}
                 onChange={(e) => setAutoReplyText(e.target.value)}
                 disabled={!canEdit || !autoReplyEnabled}
                 rows={3}
                 maxLength={1000}
-                placeholder="Terima kasih, pesan Anda sudah kami terima. Tim kami akan membalas segera. / Thanks — we've got your message and will reply shortly."
+                placeholder={t("msgSettings.auto.placeholder")}
                 className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
               />
-              <span className="mt-1 block text-xs text-slate-500">
-                Placeholders, filled from Settings → Branch: <code>{"{branchName}"}</code>, <code>{"{branchWhatsapp}"}</code>,{" "}
-                <code>{"{branchPhone}"}</code>, <code>{"{branchContact}"}</code> (CS WhatsApp, else phone, else email) — the customer&apos;s own branch, or the first branch for an unknown number — and{" "}
-                <code>{"{allBranches}"}</code>, one &ldquo;Branch: WA … · Tel …&rdquo; line per branch. Example: &ldquo;Halo! Nomor ini hanya
-                untuk notifikasi otomatis. Untuk pertanyaan, hubungi CS {"{branchName}"}: {"{branchContact}"}.&rdquo;
-              </span>
+              <span className="mt-1 block text-xs text-slate-500">{t("msgSettings.auto.placeholders")}</span>
             </label>
 
             <label className="block text-sm">
-              <span className="text-slate-700">Cooldown (hours)</span>
+              <span className="text-slate-700">{t("msgSettings.auto.cooldown")}</span>
               <input
                 type="number"
                 min={1}
@@ -414,11 +380,11 @@ export default function MessagingSettingsPage() {
                 disabled={!canEdit || !autoReplyEnabled}
                 className="mt-1 w-32 rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
               />
-              <span className="mt-1 block text-xs text-slate-500">At most one automatic reply per number in this window. Default 12.</span>
+              <span className="mt-1 block text-xs text-slate-500">{t("msgSettings.auto.cooldownHint")}</span>
             </label>
 
             <label className="block text-sm">
-              <span className="text-slate-700">System number (E.164)</span>
+              <span className="text-slate-700">{t("msgSettings.auto.systemNumber")}</span>
               <input
                 value={systemWhatsapp}
                 onChange={(e) => setSystemWhatsapp(e.target.value)}
@@ -426,26 +392,19 @@ export default function MessagingSettingsPage() {
                 disabled={!canEdit}
                 className="mt-1 w-56 rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
               />
-              <span className="mt-1 block text-xs text-slate-500">
-                The one number every customer message is sent from, for all branches. It only notifies: it cannot be saved as a
-                branch&apos;s CS contact, and the auto-reply never points customers back to it.
-              </span>
+              <span className="mt-1 block text-xs text-slate-500">{t("msgSettings.auto.systemNumberHint")}</span>
             </label>
 
             <button type="submit" disabled={busy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-              {busy ? "Saving…" : "Save"}
+              {busy ? t("common.saving") : t("common.save")}
             </button>
           </form>
         )}
 
         {canEdit && (
           <div className="space-y-3 rounded border border-slate-200 bg-white p-4">
-            <h2 className="text-sm font-semibold text-slate-800">Send a test message</h2>
-            <p className="text-xs text-slate-500">
-              Sends a short test message to one number so you can confirm the connection works. With the linked number
-              selected above, the test goes through it even before you save; for the Cloud API, a number and token typed
-              above are used instead of the saved ones. Test sends aren&apos;t recorded against any customer.
-            </p>
+            <h2 className="text-sm font-semibold text-slate-800">{t("msgSettings.test.title")}</h2>
+            <p className="text-xs text-slate-500">{t("msgSettings.test.intro")}</p>
             <div className="flex gap-2">
               <input
                 value={testTo}
@@ -459,7 +418,7 @@ export default function MessagingSettingsPage() {
                 disabled={testing || testTo.trim().length < 8}
                 className="rounded border border-slate-300 px-4 py-2 text-sm font-medium disabled:opacity-50"
               >
-                {testing ? "Sending…" : "Send test"}
+                {testing ? t("common.sending") : t("msgSettings.test.send")}
               </button>
             </div>
             {testResult && (
@@ -470,8 +429,8 @@ export default function MessagingSettingsPage() {
               >
                 {testResult.ok
                   ? testResult.provider === "console_log"
-                    ? "Sending is off, so the message was written to the log instead of delivered."
-                    : `Sent. Message id ${testResult.providerRef}.`
+                    ? t("msgSettings.test.loggedOnly")
+                    : t("msgSettings.test.sent", { id: testResult.providerRef })
                   : testResult.error}
               </div>
             )}

@@ -9,6 +9,7 @@ import { staffRoleLabel, type StaffPasswordLink } from "@rentos/contracts";
 
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient, isAdmin, isOrgScoped } from "@/lib/auth-client";
+import { useT } from "@/lib/i18n";
 
 type BaseRole = "ADMIN" | "FINANCE" | "SUPERVISOR" | "STAFF";
 type RoleScope = "ORGANIZATION" | "TENANT";
@@ -50,6 +51,7 @@ interface UserImportResult {
 }
 
 function CopyButton({ text }: { text: string }) {
+  const { t } = useT();
   const [copied, setCopied] = useState(false);
   return (
     <button
@@ -62,7 +64,7 @@ function CopyButton({ text }: { text: string }) {
       }}
       className="rounded border border-brand-600/20 px-2 py-0.5 text-xs hover:bg-brand-700/5"
     >
-      {copied ? "Copied" : "Copy link"}
+      {copied ? t("common.copied") : t("users.copyLink")}
     </button>
   );
 }
@@ -70,6 +72,7 @@ function CopyButton({ text }: { text: string }) {
 const emptyForm = { email: "", displayName: "", role: "STAFF" as BaseRole, scope: "TENANT" as RoleScope };
 
 export default function UsersPage() {
+  const { t, s } = useT();
   const router = useRouter();
   // The session lives in localStorage, which the server render cannot see:
   // read it after mount so the first client render matches the server's.
@@ -90,7 +93,7 @@ export default function UsersPage() {
     try {
       setUsers(await apiFetch<StaffUser[]>("/users", { token }));
     } catch (err) {
-      if (err instanceof ApiError && err.status === 403) setError("You need an admin role to manage users.");
+      if (err instanceof ApiError && err.status === 403) setError(t("users.needAdmin"));
       else router.push("/login");
     }
   }
@@ -117,7 +120,7 @@ export default function UsersPage() {
       setForm(emptyForm);
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to create user.");
+      setError(err instanceof ApiError ? err.message : t("users.createFailed"));
     } finally {
       setBusy(false);
     }
@@ -131,16 +134,14 @@ export default function UsersPage() {
       setEditingId(null);
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to update role.");
+      setError(err instanceof ApiError ? err.message : t("users.roleFailed"));
     } finally {
       setBusy(false);
     }
   }
 
   async function sendReset(u: StaffUser) {
-    const ok = window.confirm(
-      `Kirim tautan atur ulang kata sandi untuk ${u.displayName ?? u.email}? Kata sandi lamanya langsung tidak berlaku dan semua sesinya dikeluarkan.`,
-    );
+    const ok = window.confirm(t("users.resetConfirm", { name: u.displayName ?? u.email }));
     if (!ok) return;
     setBusy(true);
     setError(null);
@@ -149,7 +150,7 @@ export default function UsersPage() {
       setLinkNotice({ kind: "reset", result });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Tautan atur ulang tidak dapat dibuat.");
+      setError(err instanceof ApiError ? err.message : t("users.resetFailed"));
     } finally {
       setBusy(false);
     }
@@ -162,7 +163,7 @@ export default function UsersPage() {
       await apiFetch(`/users/${id}/status`, { token: authClient.getToken(), method: "PATCH", body: { active } });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to update status.");
+      setError(err instanceof ApiError ? err.message : t("users.statusFailed"));
     } finally {
       setBusy(false);
     }
@@ -172,35 +173,28 @@ export default function UsersPage() {
 
   return (
     <ConsoleShell>
-      <h1 className="text-2xl font-semibold">Users &amp; Roles</h1>
-      <p className="mt-1 text-sm text-brand-700/60">
-        Staff accounts and their role × scope. {orgScoped
-          ? "As a Super Admin you see every branch; new users are created in this branch — switch branches to add users elsewhere."
-          : "You manage users for your branch."}
-      </p>
+      <h1 className="text-2xl font-semibold">{t("users.title")}</h1>
+      <p className="mt-1 text-sm text-brand-700/60">{orgScoped ? t("users.introOrg") : t("users.introBranch")}</p>
       {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
 
       {linkNotice && (
         <div role="status" data-testid="password-link-notice" className="mt-4 rounded-lg border border-green-300 bg-green-50 p-4 text-sm">
           <div className="flex items-start justify-between gap-3">
             <p className="font-medium text-green-900">
-              {linkNotice.kind === "created" ? "Akun dibuat untuk " : "Tautan atur ulang dibuat untuk "}
-              {linkNotice.result.displayName ?? linkNotice.result.email} ({linkNotice.result.email}).
+              {t(linkNotice.kind === "created" ? "users.notice.created" : "users.notice.reset", {
+                name: linkNotice.result.displayName ?? linkNotice.result.email,
+                email: linkNotice.result.email,
+              })}
             </p>
             <button type="button" onClick={() => setLinkNotice(null)} className="text-xs text-green-900/70 hover:underline">
-              Tutup
+              {t("common.close")}
             </button>
           </div>
           {linkNotice.result.emailed ? (
-            <p className="mt-1 text-green-900/80">
-              Tautan untuk membuat kata sandi sudah dikirim ke email tersebut. Tautan hanya bisa dipakai sekali dan berlaku 72 jam.
-            </p>
+            <p className="mt-1 text-green-900/80">{t("users.notice.emailed")}</p>
           ) : (
             <>
-              <p className="mt-1 text-green-900/80">
-                Email tidak terkirim (email belum dikonfigurasi atau pengiriman pesan sedang dijeda). Salin tautan ini dan berikan langsung
-                kepada pemilik akun saja. Tautan hanya bisa dipakai sekali, berlaku 72 jam, dan tidak akan ditampilkan lagi.
-              </p>
+              <p className="mt-1 text-green-900/80">{t("users.notice.notEmailed")}</p>
               <div className="mt-2 flex items-center gap-2">
                 <code className="min-w-0 flex-1 truncate rounded border border-green-300 bg-white px-2 py-1 text-xs">{linkNotice.result.link}</code>
                 {linkNotice.result.link && <CopyButton text={linkNotice.result.link} />}
@@ -212,36 +206,33 @@ export default function UsersPage() {
 
       <div className="mt-4">
         <CsvImportPanel<UserImportResult>
-          title="Import CSV"
+          title={t("users.import.title")}
           description={
             <>
-              Columns: <code>email, display_name, role, scope, branch_slug, notes</code> (the go-live data pack&apos;s
-              go-live-users.csv). Role is ADMIN, FINANCE, SUPERVISOR or STAFF; scope is ORGANIZATION or TENANT (a TENANT user needs
-              a branch_slug). Nobody gets a password: each new user receives a single-use link to set their own.
-              {!orgScoped && " As a branch Admin you can only add users to your own branch."}
+              {t("users.import.description")}
+              {!orgScoped && <> {t("users.import.branchOnly")}</>}
             </>
           }
           endpoint="/users/import"
           canApply={(r) => r.plan.canApply && r.plan.summary.create > 0}
-          applyLabel="Create users"
+          applyLabel={t("users.import.apply")}
           onApplied={() => void load()}
           renderResult={(r, applied) => (
             <div className="space-y-3 text-sm">
-              <p>
-                Create <b>{r.plan.summary.create}</b> · already exist <b>{r.plan.summary.exists}</b> ·{" "}
-                <span className={r.plan.summary.error ? "font-semibold text-red-700" : ""}>errors {r.plan.summary.error}</span>
+              <p className={r.plan.summary.error ? "font-semibold text-red-700" : ""}>
+                {t("users.import.summary", { create: r.plan.summary.create, exists: r.plan.summary.exists, error: r.plan.summary.error })}
               </p>
               {!applied && (
                 <div className="max-h-72 overflow-auto rounded border border-brand-600/10">
                   <table className="w-full text-xs">
                     <thead className="sticky top-0 bg-brand-700/5 text-left">
                       <tr>
-                        <th className="p-2">Line</th>
-                        <th className="p-2">Email</th>
-                        <th className="p-2">Name</th>
-                        <th className="p-2">Role</th>
-                        <th className="p-2">Branch</th>
-                        <th className="p-2">Result</th>
+                        <th className="p-2">{t("users.import.line")}</th>
+                        <th className="p-2">{t("common.email")}</th>
+                        <th className="p-2">{t("common.name")}</th>
+                        <th className="p-2">{t("users.table.role")}</th>
+                        <th className="p-2">{t("common.branch")}</th>
+                        <th className="p-2">{t("users.import.result")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -255,7 +246,7 @@ export default function UsersPage() {
                           </td>
                           <td className="p-2">{row.branchSlug ?? "—"}</td>
                           <td className={`p-2 ${row.errors.length ? "text-red-700" : ""}`}>
-                            {row.errors.length ? row.errors.join("; ") : row.action === "exists" ? "already exists — skipped" : "will be created"}
+                            {row.errors.length ? row.errors.join("; ") : row.action === "exists" ? t("users.import.exists") : t("users.import.willCreate")}
                           </td>
                         </tr>
                       ))}
@@ -265,11 +256,7 @@ export default function UsersPage() {
               )}
               {applied && r.created.length > 0 && (
                 <div className="space-y-2">
-                  <p className="text-xs text-brand-700/70">
-                    Each person sets their own password with their link. Links are <b>single use</b> and valid for <b>72 hours</b>.
-                    They were also emailed — but while messaging is paused, emails are suppressed, so hand these over directly
-                    (in person or by WhatsApp) and to their owner only.
-                  </p>
+                  <p className="text-xs text-brand-700/70">{t("users.import.linksNote")}</p>
                   <ul className="divide-y divide-brand-600/10 rounded border border-brand-600/10">
                     {r.created.map((c) => (
                       <li key={c.email} className="flex items-center justify-between gap-3 p-2 text-xs">
@@ -289,47 +276,45 @@ export default function UsersPage() {
 
       {/* Create form */}
       <form onSubmit={createUser} className="mt-6 grid grid-cols-1 gap-3 rounded-lg border border-brand-600/10 bg-white p-4 md:grid-cols-6">
-        <input required type="email" placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="rounded border border-brand-600/20 px-3 py-2 text-sm md:col-span-2" />
-        <input required placeholder="Display name" value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} className="rounded border border-brand-600/20 px-3 py-2 text-sm md:col-span-2" />
-        <p className="self-center text-xs text-brand-700/60 md:col-span-2">
-          Tanpa kata sandi: pengguna baru menerima tautan sekali pakai untuk membuat kata sandinya sendiri.
-        </p>
+        <input required type="email" placeholder={t("common.email")} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="rounded border border-brand-600/20 px-3 py-2 text-sm md:col-span-2" />
+        <input required placeholder={t("users.form.displayName")} value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} className="rounded border border-brand-600/20 px-3 py-2 text-sm md:col-span-2" />
+        <p className="self-center text-xs text-brand-700/60 md:col-span-2">{t("users.form.noPassword")}</p>
         <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as BaseRole })} className="rounded border border-brand-600/20 px-3 py-2 text-sm md:col-span-2">
-          {roleOptions.map((r) => <option key={r} value={r}>{r}</option>)}
+          {roleOptions.map((r) => <option key={r} value={r}>{s(r)}</option>)}
         </select>
         <select
           value={form.scope}
           onChange={(e) => setForm({ ...form, scope: e.target.value as RoleScope })}
           className="rounded border border-brand-600/20 px-3 py-2 text-sm md:col-span-2"
-          title={orgScoped ? "" : "Only a Super Admin can grant organization-wide scope"}
+          title={orgScoped ? "" : t("users.form.orgScopeOnlySuper")}
         >
-          <option value="TENANT">This branch (TENANT)</option>
+          <option value="TENANT">{t("users.form.scopeTenant")}</option>
           {/* ORGANIZATION scope only offered to org-scoped admins — API also enforces it. */}
-          <option value="ORGANIZATION" disabled={!orgScoped}>Whole organization (ORGANIZATION)</option>
+          <option value="ORGANIZATION" disabled={!orgScoped}>{t("users.form.scopeOrg")}</option>
         </select>
         <div className="flex items-center md:col-span-2">
-          <span className="text-xs text-brand-700/60">Resolves to: <b>{roleLabel(form.role, form.scope)}</b></span>
+          <span className="text-xs text-brand-700/60">{t("users.form.resolvesTo")} <b>{roleLabel(form.role, form.scope)}</b></span>
         </div>
         <button disabled={busy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 md:col-span-2">
-          {busy ? "Saving…" : "Create user"}
+          {busy ? t("common.saving") : t("users.form.create")}
         </button>
       </form>
 
       {/* List */}
       {!users ? (
-        <p className="mt-6">Loading…</p>
+        <p className="mt-6">{t("common.loading")}</p>
       ) : users.length === 0 ? (
-        <p className="mt-6 text-brand-700/60">No staff users yet.</p>
+        <p className="mt-6 text-brand-700/60">{t("users.table.empty")}</p>
       ) : (
         <div className="mt-6 overflow-hidden rounded-lg border border-brand-600/10 bg-white">
           <table className="w-full text-sm">
             <thead className="bg-brand-700/5 text-left">
               <tr>
-                <th className="p-3">Name</th>
-                <th className="p-3">Email</th>
-                <th className="p-3">Role</th>
-                {orgScoped && <th className="p-3">Branch</th>}
-                <th className="p-3">Status</th>
+                <th className="p-3">{t("common.name")}</th>
+                <th className="p-3">{t("common.email")}</th>
+                <th className="p-3">{t("users.table.role")}</th>
+                {orgScoped && <th className="p-3">{t("common.branch")}</th>}
+                <th className="p-3">{t("common.status")}</th>
                 <th className="p-3"></th>
               </tr>
             </thead>
@@ -340,17 +325,17 @@ export default function UsersPage() {
                 return (
                   <Fragment key={u.id}>
                     <tr className="border-t border-brand-600/10">
-                      <td className="p-3">{u.displayName ?? "—"}{isMe && <span className="ml-2 text-xs text-brand-700/50">(you)</span>}</td>
+                      <td className="p-3">{u.displayName ?? "—"}{isMe && <span className="ml-2 text-xs text-brand-700/50">{t("users.table.you")}</span>}</td>
                       <td className="p-3">{u.email}</td>
                       <td className="p-3">{primary ? roleLabel(primary.role, primary.scope) : "—"}</td>
                       {orgScoped && <td className="p-3">{u.tenantName ?? "—"}</td>}
                       <td className="p-3">
-                        <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_COLORS[u.status] ?? ""}`}>{u.status}</span>
+                        <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_COLORS[u.status] ?? ""}`}>{s(u.status)}</span>
                         {u.hasPassword === false && (
-                          <span className="mt-1 inline-block whitespace-nowrap rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-800">Belum membuat kata sandi</span>
+                          <span className="mt-1 inline-block whitespace-nowrap rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-800">{t("users.table.noPasswordYet")}</span>
                         )}
                         {u.hasPassword !== false && u.mustChangePassword && (
-                          <span className="mt-1 inline-block whitespace-nowrap rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800">Wajib ganti kata sandi</span>
+                          <span className="mt-1 inline-block whitespace-nowrap rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800">{t("users.table.mustChange")}</span>
                         )}
                       </td>
                       <td className="p-3 text-right">
@@ -360,21 +345,21 @@ export default function UsersPage() {
                               onClick={() => { setEditingId(editingId === u.id ? null : u.id); if (primary) setEditRole({ role: primary.role, scope: primary.scope }); }}
                               className="whitespace-nowrap rounded border border-brand-600/20 px-3 py-1 text-xs font-medium hover:bg-brand-700/5"
                             >
-                              Change role
+                              {t("users.table.changeRole")}
                             </button>
                             <button
                               onClick={() => void sendReset(u)}
                               disabled={busy}
                               className="whitespace-nowrap rounded border border-brand-600/20 px-3 py-1 text-xs font-medium hover:bg-brand-700/5 disabled:opacity-50"
                             >
-                              Kirim tautan atur ulang
+                              {t("users.table.sendReset")}
                             </button>
                             <button
                               onClick={() => setStatus(u.id, u.status !== "ACTIVE")}
                               disabled={busy}
                               className="whitespace-nowrap rounded border border-brand-600/20 px-3 py-1 text-xs font-medium hover:bg-brand-700/5 disabled:opacity-50"
                             >
-                              {u.status === "ACTIVE" ? "Deactivate" : "Activate"}
+                              {u.status === "ACTIVE" ? t("users.table.deactivate") : t("users.table.activate")}
                             </button>
                           </div>
                         )}
@@ -385,14 +370,14 @@ export default function UsersPage() {
                         <td colSpan={orgScoped ? 6 : 5} className="p-3">
                           <div className="flex items-center gap-2">
                             <select value={editRole.role} onChange={(e) => setEditRole({ ...editRole, role: e.target.value as BaseRole })} className="rounded border border-brand-600/20 px-2 py-1 text-sm">
-                              {roleOptions.map((r) => <option key={r} value={r}>{r}</option>)}
+                              {roleOptions.map((r) => <option key={r} value={r}>{s(r)}</option>)}
                             </select>
                             <select value={editRole.scope} onChange={(e) => setEditRole({ ...editRole, scope: e.target.value as RoleScope })} className="rounded border border-brand-600/20 px-2 py-1 text-sm">
-                              <option value="TENANT">This branch</option>
-                              <option value="ORGANIZATION" disabled={!orgScoped}>Whole organization</option>
+                              <option value="TENANT">{t("users.table.thisBranch")}</option>
+                              <option value="ORGANIZATION" disabled={!orgScoped}>{t("users.table.wholeOrg")}</option>
                             </select>
                             <span className="text-xs text-brand-700/60">→ <b>{roleLabel(editRole.role, editRole.scope)}</b></span>
-                            <button onClick={() => saveRole(u.id)} disabled={busy} className="rounded bg-brand-700 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50">Save</button>
+                            <button onClick={() => saveRole(u.id)} disabled={busy} className="rounded bg-brand-700 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50">{t("common.save")}</button>
                           </div>
                         </td>
                       </tr>

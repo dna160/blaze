@@ -7,8 +7,9 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReportRangeValue } from "@/components/ReportRange";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { getLocale, tr, useT } from "@/lib/i18n";
 
-import { DownloadCsvButton, formatDay, formatIDR, INVOICE_STATUS_LABEL, LoadError, SectionHeader } from "./report-ui";
+import { DownloadCsvButton, formatDay, formatIDR, invoiceStatusLabel, LoadError, SectionHeader } from "./report-ui";
 
 /**
  * PRD go-live 2 §2.5 — AR aging keeps its buckets; every bucket opens into
@@ -19,16 +20,8 @@ import { DownloadCsvButton, formatDay, formatIDR, INVOICE_STATUS_LABEL, LoadErro
 
 const HORIZONS = [30, 60, 90] as const;
 
-const BUCKET_LABEL: Record<ArAgingBucketKey, string> = {
-  overdue_current: "Jatuh tempo hari itu",
-  overdue_1_30: "Terlambat 1–30 hari",
-  overdue_31_60: "Terlambat 31–60 hari",
-  overdue_60_plus: "Terlambat lebih dari 60 hari",
-  coming_0_30: "Jatuh tempo dalam 30 hari",
-  coming_31_60: "Jatuh tempo 31–60 hari lagi",
-  coming_61_90: "Jatuh tempo 61–90 hari lagi",
-  beyond_horizon: "Di luar horizon",
-};
+/** A bucket's name in the reader's language (`reports.ar.bucket.<key>`). */
+const bucketLabel = (b: ArAgingBucketKey) => tr(`reports.ar.bucket.${b}`);
 
 const OVERDUE: ArAgingBucketKey[] = ["overdue_current", "overdue_1_30", "overdue_31_60", "overdue_60_plus"];
 const COMING: ArAgingBucketKey[] = ["coming_0_30", "coming_31_60", "coming_61_90", "beyond_horizon"];
@@ -55,17 +48,18 @@ function bucketAmount(a: ArAgingResponse, b: ArAgingBucketKey): string {
 }
 
 function lateness(days: number): string {
-  if (days > 0) return `${days} hari terlambat`;
-  if (days === 0) return "Jatuh tempo hari itu";
-  return `${-days} hari lagi`;
+  if (days > 0) return tr("reports.ar.daysLate", { count: days, days });
+  if (days === 0) return tr("reports.ar.dueThatDay");
+  return tr("reports.ar.daysToGo", { count: -days, days: -days });
 }
 
 function reminderTime(iso: string | null, timeZone: string): string {
-  if (!iso) return "Belum pernah";
-  return new Intl.DateTimeFormat("id-ID", { timeZone, day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
+  if (!iso) return tr("reports.ar.never");
+  return new Intl.DateTimeFormat(getLocale() === "en" ? "en-GB" : "id-ID", { timeZone, day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
 }
 
 export function ArAgingSection({ range, timeZone }: { range: ReportRangeValue; timeZone: string }) {
+  const { t } = useT();
   const today = zonedDateString(new Date(), timeZone);
   const asOf = range.to < today ? range.to : today;
   const [horizon, setHorizon] = useState<(typeof HORIZONS)[number]>(30);
@@ -84,7 +78,7 @@ export function ArAgingSection({ range, timeZone }: { range: ReportRangeValue; t
         if (!cancelled) setData(r);
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof ApiError ? err.message : "Umur piutang gagal dimuat.");
+        if (!cancelled) setError(err instanceof ApiError ? err.message : tr("reports.ar.loadFailed"));
       });
     return () => {
       cancelled = true;
@@ -118,9 +112,9 @@ export function ArAgingSection({ range, timeZone }: { range: ReportRangeValue; t
         aria-pressed={on}
         className={`rounded border p-3 text-left text-sm ${on ? "border-brand-700 bg-brand-700 text-white" : "border-brand-600/15 bg-white hover:bg-brand-700/5"} disabled:opacity-40`}
       >
-        <span className={`block text-xs ${on ? "text-white/80" : "text-brand-700/60"}`}>{BUCKET_LABEL[b]}</span>
+        <span className={`block text-xs ${on ? "text-white/80" : "text-brand-700/60"}`}>{bucketLabel(b)}</span>
         <span className="mt-1 block text-base font-semibold tabular-nums">{disabled ? "—" : formatIDR(bucketAmount(data, b))}</span>
-        <span className={`block text-xs ${on ? "text-white/80" : "text-brand-700/60"}`}>{disabled ? "Di luar horizon" : `${count} invoice`}</span>
+        <span className={`block text-xs ${on ? "text-white/80" : "text-brand-700/60"}`}>{disabled ? t("reports.ar.bucket.beyond_horizon") : t("reports.sales.invoiceCount", { count })}</span>
       </button>
     );
   };
@@ -128,14 +122,14 @@ export function ArAgingSection({ range, timeZone }: { range: ReportRangeValue; t
   return (
     <section data-testid="ar-aging-section">
       <SectionHeader
-        title="Umur piutang (AR aging)"
-        hint={`Per ${formatDay(asOf)}${asOf !== range.to ? " (hari ini — rentang berakhir di masa depan)" : ""}: apa yang sudah terlambat dan apa yang akan jatuh tempo. Klik sebuah kelompok untuk melihat invoicenya.`}
+        title={t("reports.ar.title")}
+        hint={t(asOf !== range.to ? "reports.ar.hintFuture" : "reports.ar.hint", { date: formatDay(asOf) })}
         action={
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex gap-1 rounded border border-brand-600/20 p-0.5 text-xs">
               {HORIZONS.map((h) => (
                 <button key={h} type="button" onClick={() => setHorizon(h)} aria-pressed={horizon === h} className={`rounded px-2.5 py-1 font-medium ${horizon === h ? "bg-brand-700 text-white" : "hover:bg-brand-700/5"}`}>
-                  {h} hari ke depan
+                  {t("reports.ar.horizon", { days: h })}
                 </button>
               ))}
             </div>
@@ -150,34 +144,36 @@ export function ArAgingSection({ range, timeZone }: { range: ReportRangeValue; t
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <div>
               <p className="rounded-t border border-b-0 border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-red-800">
-                Terlambat · {formatIDR(data.overdue.total)}
+                {t("reports.ar.overdueTotal", { amount: formatIDR(data.overdue.total) })}
               </p>
               <div className="grid grid-cols-2 gap-2 rounded-b border border-red-200 bg-red-50/40 p-2 sm:grid-cols-4">{OVERDUE.map(bucketCard)}</div>
             </div>
             <div>
               <p className="rounded-t border border-b-0 border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-blue-800">
-                Akan jatuh tempo dalam {data.horizonDays} hari · {formatIDR(data.comingDue.total)}
+                {t("reports.ar.comingTotal", { days: data.horizonDays, amount: formatIDR(data.comingDue.total) })}
               </p>
               <div className="grid grid-cols-2 gap-2 rounded-b border border-blue-200 bg-blue-50/40 p-2 sm:grid-cols-4">{COMING.map(bucketCard)}</div>
             </div>
           </div>
-          <p className="mt-2 text-xs text-brand-700/60">
-            {data.invoiceCount} invoice belum dibayar · total {formatIDR(data.totalOutstanding)} (termasuk tagihan terjadwal dari kontrak berjangka).
-          </p>
+          <p className="mt-2 text-xs text-brand-700/60">{t("reports.ar.totalLine", { count: data.invoiceCount, amount: formatIDR(data.totalOutstanding) })}</p>
 
           <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
             <h3 className="font-medium">
-              {bucket ? BUCKET_LABEL[bucket] : "Semua invoice belum dibayar"} · {rows.length} invoice · {formatIDR(rows.reduce((n, r) => n + Number(r.amountOutstanding), 0))}
+              {t("reports.ar.groupLine", {
+                label: bucket ? bucketLabel(bucket) : t("reports.ar.allUnpaid"),
+                count: rows.length,
+                amount: formatIDR(rows.reduce((n, r) => n + Number(r.amountOutstanding), 0)),
+              })}
             </h3>
             <div className="flex items-center gap-3 text-sm">
               {bucket && (
                 <button type="button" onClick={() => setBucket(null)} className="text-brand-700/70 underline">
-                  Tampilkan semua
+                  {t("reports.ar.showAll")}
                 </button>
               )}
               <label className="flex items-center gap-1.5">
                 <input type="checkbox" checked={perCustomer} onChange={(e) => setPerCustomer(e.target.checked)} />
-                <span>Per pelanggan</span>
+                <span>{t("reports.ar.perCustomer")}</span>
               </label>
             </div>
           </div>
@@ -187,11 +183,11 @@ export function ArAgingSection({ range, timeZone }: { range: ReportRangeValue; t
               <table className="w-full text-sm" data-testid="ar-by-customer">
                 <thead className="bg-brand-700/5 text-left">
                   <tr>
-                    <th className="p-3">Pelanggan</th>
-                    <th className="p-3">Invoice</th>
-                    <th className="p-3">Unit</th>
-                    <th className="p-3">Paling terlambat</th>
-                    <th className="p-3 text-right">Total belum dibayar</th>
+                    <th className="p-3">{t("common.customer")}</th>
+                    <th className="p-3">{t("common.invoice")}</th>
+                    <th className="p-3">{t("common.unit")}</th>
+                    <th className="p-3">{t("reports.ar.colMostLate")}</th>
+                    <th className="p-3 text-right">{t("reports.ar.colTotalUnpaid")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -221,14 +217,14 @@ export function ArAgingSection({ range, timeZone }: { range: ReportRangeValue; t
               <table className="w-full text-sm" data-testid="ar-rows">
                 <thead className="bg-brand-700/5 text-left">
                   <tr>
-                    <th className="p-3">Pelanggan</th>
-                    <th className="p-3">No. kontrak</th>
-                    <th className="p-3">No. invoice</th>
-                    <th className="p-3">Unit</th>
-                    <th className="p-3">Jatuh tempo</th>
-                    <th className="p-3">Hari terlambat</th>
-                    <th className="p-3 text-right">Belum dibayar</th>
-                    <th className="p-3">Pengingat terakhir</th>
+                    <th className="p-3">{t("common.customer")}</th>
+                    <th className="p-3">{t("common.contractNumber")}</th>
+                    <th className="p-3">{t("common.invoiceNumber")}</th>
+                    <th className="p-3">{t("common.unit")}</th>
+                    <th className="p-3">{t("common.dueDate")}</th>
+                    <th className="p-3">{t("reports.ar.colDaysLate")}</th>
+                    <th className="p-3 text-right">{t("reports.ar.colUnpaid")}</th>
+                    <th className="p-3">{t("reports.ar.colLastReminder")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -245,7 +241,7 @@ export function ArAgingSection({ range, timeZone }: { range: ReportRangeValue; t
                         <Link href={`/invoices/${r.invoiceId}`} className="hover:underline">
                           {r.invoiceNumber}
                         </Link>
-                        <span className="block text-xs text-brand-700/60">{INVOICE_STATUS_LABEL[r.status] ?? r.status}</span>
+                        <span className="block text-xs text-brand-700/60">{invoiceStatusLabel(r.status)}</span>
                       </td>
                       <td className="whitespace-nowrap p-3">{r.unit ?? "—"}</td>
                       <td className="whitespace-nowrap p-3">{formatDay(r.dueDate)}</td>
@@ -257,7 +253,7 @@ export function ArAgingSection({ range, timeZone }: { range: ReportRangeValue; t
                 </tbody>
               </table>
             )}
-            {rows.length === 0 && <p className="p-4 text-center text-sm text-brand-700/60">Tidak ada invoice di kelompok ini.</p>}
+            {rows.length === 0 && <p className="p-4 text-center text-sm text-brand-700/60">{t("reports.ar.emptyGroup")}</p>}
           </div>
         </>
       )}
