@@ -54,6 +54,7 @@ export {
 } from "./storage-availability.js";
 export { findOrCreateCustomerAccessToken, exchangeCustomerAccessToken, hashAccessToken, MAGIC_LINK_TTL_DAYS } from "./magic-link.js";
 export {
+  recordInvoiceIssuedEntries,
   recordPaymentReceivedEntries,
   recordDepositHeldEntries,
   recordDepositRefundedEntries,
