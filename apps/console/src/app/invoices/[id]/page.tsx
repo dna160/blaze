@@ -7,11 +7,12 @@ import type { InvoiceDto, PaymentDto } from "@rentos/contracts";
 import Link from "next/link";
 
 import { ConsoleShell } from "@/components/ConsoleShell";
+import { LegacyPaymentsBlock, type LegacyInvoiceSettlement } from "@/components/LegacyPaid";
 import { apiFetch, apiFetchBlob, apiUpload, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import { canDo } from "@/lib/capabilities";
 
-type InvoiceWithPayments = InvoiceDto & { payments: PaymentDto[] };
+type InvoiceWithPayments = InvoiceDto & { payments: PaymentDto[]; legacySettlement?: LegacyInvoiceSettlement | null };
 interface CreditNote {
   id: string;
   amount: string;
@@ -155,6 +156,7 @@ export default function InvoiceDetailPage() {
       <p className="mt-1 text-brand-700/70">
         Status: {invoice.status} · Due {new Date(invoice.dueDate).toLocaleDateString("id-ID")}
       </p>
+      <LegacyPaymentsBlock settlement={invoice.legacySettlement} />
       {invoice.status === "CREDITED" && (
         <p className="mt-2 text-sm text-amber-700">
           {invoice.supersededByInvoiceId ? (

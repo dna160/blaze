@@ -10,6 +10,7 @@ import {
   recordInvoiceVoidedEntries,
   type BookingForInvoicing,
   type Prisma,
+  legacySettlementForInvoices,
 } from "@rentos/database";
 import { invoiceFsm, money, monthlyPeriodEnd, wholeMonthsBetween } from "@rentos/domain";
 
@@ -67,10 +68,12 @@ export class FinanceService {
 
   async getInvoice(tenantId: string, invoiceId: string) {
     const invoice = await this.prisma.runInTenantContext(tenantId, (tx) =>
-      tx.invoice.findUnique({ where: { id: invoiceId }, include: { lines: true, payments: true } }),
+      tx.invoice.findUnique({ where: { id: invoiceId }, include: { lines: true, payments: true, booking: { select: { legacyBookingNumber: true } } } }),
     );
     if (!invoice) throw new NotFoundException("Invoice not found.");
-    return invoice;
+    // PRD go-live 2 §7.3 — was it paid in Booqable? (null when Booqable has no trace of it)
+    const legacy = await this.prisma.runInTenantContext(tenantId, (tx) => legacySettlementForInvoices(tx, [invoice]));
+    return { ...invoice, legacySettlement: legacy.get(invoice.id) ?? null };
   }
 
   /**

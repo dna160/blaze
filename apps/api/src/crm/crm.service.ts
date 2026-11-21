@@ -1,5 +1,5 @@
 import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import type { Prisma } from "@rentos/database";
+import { legacyPaymentsForCustomer, legacySettlementForInvoices, type Prisma } from "@rentos/database";
 import { classifyCustomerHealth, money, roundMoney, type CustomerHealth } from "@rentos/domain";
 import type { ClientListItem, ClientListQuery, ClientListResponse } from "@rentos/contracts";
 import { isKycVerified } from "@rentos/contracts";
@@ -466,6 +466,12 @@ export class CrmService {
     );
     // A customer outside the first 100 rows still gets a summary — recompute for them alone.
     const health = summary ?? (await this.listClients(tenantId, { page: 1, pageSize: 100, search: detail.phone ?? detail.email ?? undefined })).items.find((i) => i.id === customerId) ?? null;
-    return { customer: detail, summary: health, notifications };
+    // PRD go-live 2 §7.3 — what Booqable recorded: per-invoice settlement, the customer's legacy payments, rentals' paid-through.
+    const { legacyByInvoice, legacy } = await this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const invoices = detail.bookings.flatMap((b) => b.invoices.map((i) => ({ ...i, booking: { legacyBookingNumber: b.legacyBookingNumber } })));
+      const map = await legacySettlementForInvoices(tx, invoices);
+      return { legacyByInvoice: Object.fromEntries(map), legacy: await legacyPaymentsForCustomer(tx, detail) };
+    });
+    return { customer: detail, summary: health, notifications, legacy, legacyByInvoice };
   }
 }

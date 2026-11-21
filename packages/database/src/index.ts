@@ -155,3 +155,11 @@ export {
   depositRemaining,
   DEPOSIT_REFUND_DAYS,
 } from "./deposits.js";
+export {
+  legacySettlementForInvoices,
+  legacyPaymentsForCustomer,
+  LEGACY_SETTLED_VOID_REASON_PREFIX,
+  type LegacyInvoiceSettlement,
+  type LegacyPaymentRef,
+  type CustomerLegacyPayments,
+} from "./legacy-settlement.js";

@@ -9,6 +9,7 @@ import { ChangeRequestActions, ChangeRequestPanel } from "@/components/ChangeReq
 import { HEALTH_STYLE } from "@/components/ClientList";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { KycPanel } from "@/components/KycPanel";
+import { CustomerLegacyPaymentsBlock, LegacyPaidChip, type CustomerLegacyPayments, type LegacyInvoiceSettlement } from "@/components/LegacyPaid";
 import { SignedScanUpload } from "@/components/SignedScanUpload";
 import { apiFetch, apiFetchBlob, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
@@ -53,6 +54,8 @@ interface ClientDetail {
   };
   summary: ClientListItem | null;
   notifications: Array<{ id: string; templateKey: string; channel: string; status: string; recipient: string; createdAt: string }>;
+  legacy?: CustomerLegacyPayments;
+  legacyByInvoice?: Record<string, LegacyInvoiceSettlement>;
 }
 
 function formatIDR(amount: string | number): string {
@@ -319,6 +322,8 @@ export default function ClientDetailPage() {
         </div>
       </section>
 
+      <CustomerLegacyPaymentsBlock legacy={data.legacy} />
+
       <section className="mt-8">
         <h2 className="text-lg font-medium">Rentals</h2>
         {customer.bookings.length === 0 && <p className="mt-2 text-sm text-brand-700/60">No rentals yet.</p>}
@@ -367,7 +372,8 @@ export default function ClientDetailPage() {
                           <Link href={`/invoices/${inv.id}`} className="hover:underline">
                             {inv.scheduleIndex === 0 ? "Proforma" : inv.scheduleIndex !== null ? `#${inv.scheduleIndex + 1}` : ""}{" "}
                             {inv.invoiceNumber.startsWith("SCHEDULED/") ? "(numbered when issued)" : `Invoice #${inv.invoiceNumber}`}
-                          </Link>
+                          </Link>{" "}
+                          <LegacyPaidChip settlement={data.legacyByInvoice?.[inv.id]} />
                         </td>
                         <td className="py-1">{fmtDate(inv.dueDate)}</td>
                         <td className="py-1">

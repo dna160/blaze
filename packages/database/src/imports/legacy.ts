@@ -1,3 +1,4 @@
+import { LEGACY_SETTLED_VOID_REASON_PREFIX } from "../legacy-settlement.js";
 import type { Prisma, PrismaClient } from "../../generated/client/index.js";
 import { raiseCounter, resolveNumbering, counterScope, zonedYearMonth } from "../document-number.js";
 import { createHeldDeposit, depositRefundDueAt, recordDepositEvent } from "../deposits.js";
@@ -650,7 +651,7 @@ export async function applyLegacyImport(prisma: PrismaClient, tenantId: string, 
       for (const inv of await findSettledInvoices(tx, parsed.invoices.map((i) => i.number))) {
         await tx.invoice.update({
           where: { id: inv.id },
-          data: { status: "VOID", voidedAt: new Date(), voidReason: "Settled in Booqable after the import — see the legacy records" },
+          data: { status: "VOID", voidedAt: new Date(), voidReason: `${LEGACY_SETTLED_VOID_REASON_PREFIX} after the import — see the legacy records` },
         });
         await ledgerSet(tx, tenantId, inv.id, "AR", 0, `Opening balance: Booqable invoice #${inv.invoiceNumber}`);
       }
