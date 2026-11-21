@@ -36,6 +36,11 @@ const LOGIN_LINK_COOLDOWN_SECONDS = 60;
 const PASSWORD_CHANGE_MAX_FAILURES = 5;
 const PASSWORD_CHANGE_FAILURE_WINDOW_SECONDS = 15 * 60;
 
+/** The console's languages (PRD go-live 2 §9.1); anything else reads as Indonesian. */
+function normalizeLocale(value: string | null | undefined): "id" | "en" {
+  return value === "en" ? "en" : "id";
+}
+
 interface CustomerLike {
   id: string;
   phone: string | null;
@@ -94,6 +99,7 @@ export class AuthService {
       displayName: string | null;
       mustChangePassword: boolean;
       passwordChangedAt: Date | null;
+      locale?: string | null;
       roles: Array<{ role: string; scope: string; tenantIds: string[] }>;
     },
     session: { tenantId: string | null; organizationId: string | null },
@@ -122,6 +128,7 @@ export class AuthService {
         roles,
         ...(session.tenantId ? { roleAssignments } : {}),
         mustChangePassword: user.mustChangePassword,
+        locale: normalizeLocale(user.locale),
       },
     };
   }
@@ -148,8 +155,20 @@ export class AuthService {
         roles,
         roleAssignments: actor.tenantId ? user.roles.map((r) => ({ role: r.role, scope: r.scope, tenantIds: r.tenantIds })) : [],
         mustChangePassword: user.mustChangePassword,
+        locale: normalizeLocale(user.locale),
       },
     };
+  }
+
+  /** PRD go-live 2 §9.1 — the console language this staff member reads (`id` default, `en`). */
+  async updateStaffPreferences(actor: AuthenticatedUser, prefs: { locale: "id" | "en" }) {
+    const where = { id: actor.id };
+    if (actor.tenantId) {
+      await this.prisma.runInTenantContext(actor.tenantId, (tx) => tx.user.update({ where, data: { locale: prefs.locale } }));
+    } else {
+      await this.prisma.runInPlatformContext((tx) => tx.user.update({ where, data: { locale: prefs.locale } }));
+    }
+    return this.staffMe(actor);
   }
 
   /**

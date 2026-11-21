@@ -20,10 +20,10 @@ const v = (vars: Vars, key: string, fallback = "") => vars[key] ?? fallback;
 const TEMPLATES: Record<string, (vars: Vars) => RenderedMessage> = {
   /** Console → Settings → Messaging "send a test". Takes no variables, so only the connection can make it fail. */
   connection_test: () => ({
-    subject: "Pesan percobaan RentOS / RentOS test message",
+    subject: "Pesan percobaan / Test message",
     text:
-      "Ini pesan percobaan dari RentOS. Jika Anda menerimanya, koneksi WhatsApp cabang Anda sudah aktif.\n" +
-      "This is a test message from RentOS. If you received it, your branch's WhatsApp connection is working.",
+      "Ini pesan percobaan dari console cabang Anda. Jika Anda menerimanya, koneksi WhatsApp cabang Anda sudah aktif.\n" +
+      "This is a test message from your branch console. If you received it, your branch's WhatsApp connection is working.",
   }),
   booking_received: (vars) => ({
     subject: "Permintaan booking diterima / Booking request received",
@@ -87,10 +87,11 @@ const TEMPLATES: Record<string, (vars: Vars) => RenderedMessage> = {
   }),
   /** PRD go-live §4.4 — staff, by email: no shared or default passwords. */
   staff_set_password: (vars) => ({
-    subject: "Akun RentOS Anda / Your RentOS console account",
+    // PRD go-live 2 §9.2 — the organization's console name, not the product's.
+    subject: `Akun ${v(vars, "consoleName", "City Storage")} Anda / Your ${v(vars, "consoleName", "City Storage")} console account`,
     text:
-      `Halo ${v(vars, "displayName", "")}, akun console RentOS untuk ${v(vars, "branchName", "City Storage")} sudah dibuat. Buat kata sandi Anda melalui tautan di bawah (sekali pakai, berlaku 72 jam).\n` +
-      `Your RentOS console account for ${v(vars, "branchName", "City Storage")} is ready. Set your password with the link below (single use, valid 72 hours).\n\n${v(vars, "link")}`,
+      `Halo ${v(vars, "displayName", "")}, akun console ${v(vars, "consoleName", "City Storage")} untuk ${v(vars, "branchName", "City Storage")} sudah dibuat. Buat kata sandi Anda melalui tautan di bawah (sekali pakai, berlaku 72 jam).\n` +
+      `Your ${v(vars, "consoleName", "City Storage")} console account for ${v(vars, "branchName", "City Storage")} is ready. Set your password with the link below (single use, valid 72 hours).\n\n${v(vars, "link")}`,
   }),
   // PRD go-live 2 §5.1 — `documents` / `documentsEn` list exactly what is still
   // missing (after a walk-in's KTP was taken at the counter, only the selfie).
@@ -146,7 +147,7 @@ const TEMPLATES: Record<string, (vars: Vars) => RenderedMessage> = {
   }),
   // PRD go-live 2 §6.1 — an admin sent a reset link (email only; staff, not customers).
   staff_password_reset: (vars) => ({
-    subject: "Atur ulang kata sandi console / Reset your console password",
+    subject: `Atur ulang kata sandi console ${v(vars, "consoleName", "City Storage")} / Reset your ${v(vars, "consoleName", "City Storage")} console password`,
     text:
       `Halo ${v(vars, "displayName", "")}, admin ${v(vars, "branchName", "City Storage")} mengirim tautan untuk mengatur ulang kata sandi console Anda. Kata sandi lama sudah tidak berlaku. Buat yang baru melalui tautan di bawah (sekali pakai, berlaku 72 jam).\n` +
       `An administrator at ${v(vars, "branchName", "City Storage")} sent you a link to reset your console password. Your old password no longer works. Set a new one with the link below (single use, valid 72 hours).\n\n${v(vars, "link")}`,

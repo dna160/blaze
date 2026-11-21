@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import type { BankAccount, BranchPublicProfile, BranchSettings, LegacyMigrationRequest, UpdateBranchSettingsRequest } from "@rentos/contracts";
+import type { BankAccount, BranchPublicProfile, BranchSettings, ConsoleBranding, LegacyMigrationRequest, UpdateBranchSettingsRequest } from "@rentos/contracts";
+import { consoleNameOf, DEFAULT_CONSOLE_NAME } from "@rentos/contracts";
 import {
   applyLegacyImport,
   contactKey,
@@ -17,7 +18,7 @@ import type { AuthenticatedUser } from "../common/types/express-request.js";
 import { gatewayReady, onlinePaymentsStatus } from "../payments/online-payments.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 
-type TenantRow = Prisma.TenantGetPayload<{ include: { organization: { select: { legalName: true } } } }>;
+type TenantRow = Prisma.TenantGetPayload<{ include: { organization: { select: { legalName: true; branding: true } } } }>;
 
 function asStringArray(v: unknown): string[] {
   if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string");
@@ -43,7 +44,7 @@ export class BranchService {
   private async load(tenantId: string): Promise<TenantRow> {
     const tenant = await this.prisma.raw.tenant.findUnique({
       where: { id: tenantId },
-      include: { organization: { select: { legalName: true } } },
+      include: { organization: { select: { legalName: true, branding: true } } },
     });
     if (!tenant) throw new NotFoundException("Branch not found.");
     return tenant;
@@ -110,6 +111,12 @@ export class BranchService {
     return this.publicView(await this.load(tenantId));
   }
 
+  /** PRD go-live 2 §9.2 — the console's name and logo, for the sign-in page (no session yet). */
+  async getConsoleBranding(tenantId: string): Promise<ConsoleBranding> {
+    const t = await this.load(tenantId);
+    return { consoleName: consoleNameOf(t.organization.branding), branchName: t.name, logoDataUrl: this.publicView(t).logoDataUrl };
+  }
+
   async getSettings(user: AuthenticatedUser, tenantId: string): Promise<BranchSettings> {
     const t = await this.load(tenantId);
     const flags = (t.featureFlags ?? {}) as Record<string, unknown>;
@@ -124,6 +131,8 @@ export class BranchService {
       branchCode: t.branchCode,
       timezone: t.timezone,
       organizationLegalName: t.organization.legalName,
+      consoleName: consoleNameOf(t.organization.branding),
+      consoleNameIsDefault: consoleNameOf(t.organization.branding) === DEFAULT_CONSOLE_NAME && !((t.organization.branding ?? {}) as { consoleName?: string }).consoleName,
       bankAccounts: (t.bankAccounts ?? []) as BankAccount[],
       numbering: (t.numbering ?? {}) as BranchSettings["numbering"],
       onlinePaymentsFlag: flags.onlinePaymentsEnabled === true,
@@ -206,12 +215,19 @@ export class BranchService {
     if (body.organizationLegalName !== undefined) {
       await this.prisma.raw.organization.update({ where: { id: before.organizationId }, data: { legalName: body.organizationLegalName } });
     }
+    if (body.consoleName !== undefined) {
+      const branding = { ...((before.organization.branding ?? {}) as Record<string, unknown>) };
+      if (body.consoleName) branding.consoleName = body.consoleName;
+      else delete branding.consoleName;
+      await this.prisma.raw.organization.update({ where: { id: before.organizationId }, data: { branding: branding as Prisma.InputJsonValue } });
+    }
 
     // Field-level diff — "every change is audited".
     const beforeView: Record<string, unknown> = {
       name: before.name,
       legalName: before.legalName,
       organizationLegalName: before.organization.legalName,
+      consoleName: ((before.organization.branding ?? {}) as { consoleName?: string }).consoleName ?? null,
       branchCode: before.branchCode,
       isPkp: before.isPkp,
       timezone: before.timezone,

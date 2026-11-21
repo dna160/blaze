@@ -1,6 +1,7 @@
-import { Body, Controller, Get, HttpCode, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Patch, Post, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import {
+  UpdateStaffPreferencesRequestSchema,
   ChangeStaffPasswordRequestSchema,
   ClerkExchangeSchema,
   ConsoleLoginRequestSchema,
@@ -55,6 +56,16 @@ export class AuthController {
   @AllowPendingPasswordChange()
   staffMe(@CurrentUser() user: AuthenticatedUser) {
     return this.auth.staffMe(user);
+  }
+
+  /** PRD go-live 2 §9.1 — my console preferences (today: the language). */
+  @Patch("staff/me")
+  @UseGuards(JwtAuthGuard, StaffGuard)
+  updateStaffMe(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body(new ZodValidationPipe(UpdateStaffPreferencesRequestSchema)) body: ReturnType<typeof UpdateStaffPreferencesRequestSchema.parse>,
+  ) {
+    return this.auth.updateStaffPreferences(user, body);
   }
 
   /**

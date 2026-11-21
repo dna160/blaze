@@ -7,6 +7,7 @@ import { ConsoleShell } from "@/components/ConsoleShell";
 import { PasswordRules, passwordFormProblem } from "@/components/PasswordRules";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient, type StaffSessionUser } from "@/lib/auth-client";
+import { useT } from "@/lib/i18n";
 
 /**
  * PRD go-live 2 §6.1 — Change my password.
@@ -28,6 +29,7 @@ interface SessionResponse {
 }
 
 function ChangePasswordForm({ user, forced, onChanged }: { user: StaffSessionUser; forced: boolean; onChanged: () => void }) {
+  const { t } = useT();
   const [current, setCurrent] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -42,7 +44,7 @@ function ChangePasswordForm({ user, forced, onChanged }: { user: StaffSessionUse
     setDone(false);
     const problem = passwordFormProblem(password, confirm, identity);
     if (problem) return setError(problem);
-    if (password === current) return setError("Kata sandi baru harus berbeda dari kata sandi saat ini.");
+    if (password === current) return setError(t("password.problemSameAsCurrent"));
     setBusy(true);
     try {
       const result = await apiFetch<SessionResponse>("/auth/staff/change-password", {
@@ -57,7 +59,7 @@ function ChangePasswordForm({ user, forced, onChanged }: { user: StaffSessionUse
       setDone(true);
       onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Kata sandi tidak dapat diganti. Coba lagi.");
+      setError(err instanceof ApiError ? err.message : t("password.changeFailed"));
     } finally {
       setBusy(false);
     }
@@ -66,7 +68,7 @@ function ChangePasswordForm({ user, forced, onChanged }: { user: StaffSessionUse
   return (
     <form onSubmit={onSubmit} className="space-y-4" data-testid="change-password-form">
       <label className="block text-sm">
-        <span className="text-brand-700/80">Kata sandi saat ini</span>
+        <span className="text-brand-700/80">{t("password.current")}</span>
         <input
           type="password"
           name="current-password"
@@ -78,7 +80,7 @@ function ChangePasswordForm({ user, forced, onChanged }: { user: StaffSessionUse
         />
       </label>
       <label className="block text-sm">
-        <span className="text-brand-700/80">Kata sandi baru</span>
+        <span className="text-brand-700/80">{t("password.new")}</span>
         <input
           type="password"
           name="new-password"
@@ -90,7 +92,7 @@ function ChangePasswordForm({ user, forced, onChanged }: { user: StaffSessionUse
         />
       </label>
       <label className="block text-sm">
-        <span className="text-brand-700/80">Ulangi kata sandi baru</span>
+        <span className="text-brand-700/80">{t("password.repeatNew")}</span>
         <input
           type="password"
           name="confirm-password"
@@ -109,17 +111,18 @@ function ChangePasswordForm({ user, forced, onChanged }: { user: StaffSessionUse
       )}
       {done && !forced && (
         <p role="status" className="text-sm text-green-700">
-          Kata sandi sudah diganti. Sesi Anda di perangkat lain sudah dikeluarkan.
+          {t("password.changedOk")}
         </p>
       )}
       <button disabled={busy} className="w-full rounded bg-brand-700 px-4 py-2 font-medium text-white disabled:opacity-50">
-        {busy ? "Menyimpan…" : "Ganti kata sandi"}
+        {busy ? t("common.saving") : t("password.changeButton")}
       </button>
     </form>
   );
 }
 
 export default function ChangePasswordPage() {
+  const { t } = useT();
   const router = useRouter();
   // The session lives in localStorage, which the server render cannot see.
   const [user, setUser] = useState<StaffSessionUser | null>(null);
@@ -151,11 +154,8 @@ export default function ChangePasswordPage() {
     return (
       <main className="flex min-h-screen items-center justify-center bg-brand-50 p-6">
         <div className="w-full max-w-md rounded-xl border border-brand-600/10 bg-white p-8">
-          <h1 className="text-xl font-semibold">Ganti kata sandi Anda</h1>
-          <p className="mb-5 mt-2 text-sm text-brand-700/70">
-            Sebelum melanjutkan, buat kata sandi baru yang hanya Anda yang tahu. Kata sandi akun <b>{user.email}</b> saat ini dibuat atau
-            diketahui oleh orang lain, jadi harus diganti dulu.
-          </p>
+          <h1 className="text-xl font-semibold">{t("password.forcedTitle")}</h1>
+          <p className="mb-5 mt-2 text-sm text-brand-700/70">{t("password.forcedBody", { email: user.email })}</p>
           <ChangePasswordForm user={user} forced onChanged={() => router.replace("/bookings")} />
           <button
             type="button"
@@ -165,7 +165,7 @@ export default function ChangePasswordPage() {
             }}
             className="mt-4 w-full text-center text-sm text-brand-700/60 hover:text-accent-500"
           >
-            Keluar
+            {t("nav.menu.logout")}
           </button>
         </div>
       </main>
@@ -174,10 +174,8 @@ export default function ChangePasswordPage() {
 
   return (
     <ConsoleShell>
-      <h1 className="text-2xl font-semibold">Ganti kata sandi</h1>
-      <p className="mt-1 text-sm text-brand-700/60">
-        Untuk akun <b>{user.email}</b>. Setelah diganti, sesi Anda di perangkat lain otomatis dikeluarkan.
-      </p>
+      <h1 className="text-2xl font-semibold">{t("password.pageTitle")}</h1>
+      <p className="mt-1 text-sm text-brand-700/60">{t("password.pageIntro", { email: user.email })}</p>
       <div className="mt-6 max-w-md rounded-lg border border-brand-600/10 bg-white p-6">
         <ChangePasswordForm user={user} forced={false} onChanged={() => setUser(authClient.getUser())} />
       </div>
