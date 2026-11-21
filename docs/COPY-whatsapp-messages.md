@@ -16,7 +16,7 @@ Generated from the code. Wording changes are made in `packages/domain/src/comms/
 - Nominal ditulis apa adanya dari sistem (mis. `2100000`); bila ingin format `2.100.000`, tuliskan di baris Perubahan.
   Amounts print as the system holds them; say so on the Change line if you want `2.100.000`.
 
-Jumlah pesan / Messages: 28
+Jumlah pesan / Messages: 32
 
 ---
 
@@ -162,17 +162,71 @@ Jumlah pesan / Messages: 28
 
     Subjek email / Email subject: Verifikasi identitas Anda / Verify your identity
 
-    > Halo Budi Santoso, mohon unggah foto KTP dan selfie Anda agar kami bisa menyiapkan kontrak. Tautan ini langsung masuk ke akun Anda tanpa kode OTP.
-    > Please upload your KTP and a selfie so we can prepare your contract. This link signs you in directly — no OTP needed.
+    > Halo Budi Santoso, mohon unggah Selfie agar kami bisa menyiapkan kontrak. Tautan ini langsung masuk ke akun Anda tanpa kode OTP.
+    > Please upload: Selfie — so we can prepare your contract. This link signs you in directly — no OTP needed.
     >
     > https://sewa.citystorage.co.id/m/8f2c1a
 
-    *Data:* `customerName`, `link`
+    *Data:* `customerName`, `documents`, `documentsEn`, `link`
 
     **Perubahan / Change:**
 
 
-12. **`contract_proforma_ready`** — untuk pelanggan / to the customer
+12. **`kyc_rejected`** — untuk pelanggan / to the customer
+
+    Subjek email / Email subject: Dokumen perlu diunggah ulang / Please re-upload your documents
+
+    > Halo Budi Santoso, mohon maaf, dokumen verifikasi Anda belum dapat kami terima. Alasan: Foto KTP tidak terbaca. Silakan unggah ulang lewat tautan ini.
+    > We're sorry — we could not accept your verification documents. Reason: Foto KTP tidak terbaca. Please upload them again using this link.
+    >
+    > https://sewa.citystorage.co.id/m/8f2c1a
+
+    *Data:* `customerName`, `reason`, `link`
+
+    **Perubahan / Change:**
+
+
+13. **`contract_sign_offline`** — untuk pelanggan / to the customer
+
+    Subjek email / Email subject: Tanda tangan kontrak di kantor / Sign your contract at our office
+
+    > Halo Budi Santoso, kontrak sewa unit STORAGE-12 sudah siap. Mohon datang ke City Storage Kebon Jeruk untuk menandatanganinya paling lambat 2026-11-27.
+    > Your rental agreement for unit STORAGE-12 is ready. Please come to City Storage Kebon Jeruk to sign it by 2026-11-27.
+    >
+    > https://sewa.citystorage.co.id/m/8f2c1a
+
+    *Data:* `customerName`, `assetCode`, `locationName`, `deadline`, `link`
+
+    **Perubahan / Change:**
+
+
+14. **`contract_sign_reminder`** — untuk pelanggan / to the customer
+
+    Subjek email / Email subject: Pengingat tanda tangan kontrak / Contract signing reminder — 2026-11-27
+
+    > Halo Budi Santoso, kontrak sewa unit STORAGE-12 belum ditandatangani. Batas waktunya 2026-11-27 (3 hari lagi) — mohon datang ke City Storage Kebon Jeruk. Setelah batas waktu, pemesanan dibatalkan dan unit dilepas.
+    > Your rental agreement for unit STORAGE-12 is not signed yet. The deadline is 2026-11-27 (3 day(s) left) — please come to City Storage Kebon Jeruk. After the deadline the booking is cancelled and the unit released.
+    >
+    > https://sewa.citystorage.co.id/m/8f2c1a
+
+    *Data:* `deadline`, `customerName`, `assetCode`, `daysLeft`, `locationName`, `link`
+
+    **Perubahan / Change:**
+
+
+15. **`contract_sign_lapsed`** — untuk pelanggan / to the customer
+
+    Subjek email / Email subject: Pemesanan dibatalkan / Booking cancelled — contract not signed
+
+    > Halo Budi Santoso, kontrak sewa unit STORAGE-12 tidak ditandatangani sampai batas waktu 2026-11-27, sehingga pemesanan dibatalkan dan unit dilepas. Silakan hubungi kami bila masih berminat.
+    > Your rental agreement for unit STORAGE-12 was not signed by 2026-11-27, so the booking was cancelled and the unit released. Contact us if you are still interested.
+
+    *Data:* `customerName`, `assetCode`, `deadline`
+
+    **Perubahan / Change:**
+
+
+16. **`contract_proforma_ready`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Kontrak & proforma 36-21112026-240-431 / Contract & proforma ready
 
@@ -186,7 +240,7 @@ Jumlah pesan / Messages: 28
     **Perubahan / Change:**
 
 
-13. **`booking_approved_payment_link`** — untuk pelanggan / to the customer
+17. **`booking_approved_payment_link`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Invoice 36-21112026-240-431 — pembayaran / payment
 
@@ -200,7 +254,7 @@ Jumlah pesan / Messages: 28
     **Perubahan / Change:**
 
 
-14. **`invoice_issued`** — untuk pelanggan / to the customer
+18. **`invoice_issued`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Invoice 36-21112026-240-431 diterbitkan / issued
 
@@ -214,7 +268,7 @@ Jumlah pesan / Messages: 28
     **Perubahan / Change:**
 
 
-15. **`invoice_paid`** — untuk pelanggan / to the customer
+19. **`invoice_paid`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Pembayaran diterima / Payment received — 36-21112026-240-431
 
@@ -228,7 +282,7 @@ Jumlah pesan / Messages: 28
     **Perubahan / Change:**
 
 
-16. **`staff_password_reset`** — untuk pelanggan / to the customer
+20. **`staff_password_reset`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Atur ulang kata sandi console / Reset your console password
 
@@ -242,7 +296,7 @@ Jumlah pesan / Messages: 28
     **Perubahan / Change:**
 
 
-17. **`booking_rejected`** — untuk pelanggan / to the customer
+21. **`booking_rejected`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Permintaan booking tidak dapat diproses / Booking request declined
 
@@ -254,7 +308,7 @@ Jumlah pesan / Messages: 28
     **Perubahan / Change:**
 
 
-18. **`booking_cancelled`** — untuk pelanggan / to the customer
+22. **`booking_cancelled`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Booking dibatalkan / Booking cancelled
 
@@ -266,7 +320,7 @@ Jumlah pesan / Messages: 28
     **Perubahan / Change:**
 
 
-19. **`booking_date_changed`** — untuk pelanggan / to the customer
+23. **`booking_date_changed`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Tanggal mulai sewa diubah / Rental start date changed
 
@@ -280,7 +334,7 @@ Jumlah pesan / Messages: 28
     **Perubahan / Change:**
 
 
-20. **`booking_expired`** — untuk pelanggan / to the customer
+24. **`booking_expired`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Permintaan booking kedaluwarsa / Booking request expired
 
@@ -294,7 +348,7 @@ Jumlah pesan / Messages: 28
     **Perubahan / Change:**
 
 
-21. **`term_ended`** — untuk pelanggan / to the customer
+25. **`term_ended`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Masa sewa berakhir / Your rental term has ended
 
@@ -308,7 +362,7 @@ Jumlah pesan / Messages: 28
     **Perubahan / Change:**
 
 
-22. **`notice_confirmed`** — untuk pelanggan / to the customer
+26. **`notice_confirmed`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Pemberitahuan berhenti sewa diterima / Termination notice received
 
@@ -322,7 +376,7 @@ Jumlah pesan / Messages: 28
     **Perubahan / Change:**
 
 
-23. **`lease_suspended`** — untuk pelanggan / to the customer
+27. **`lease_suspended`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Akses ditangguhkan / Access suspended — 36-21112026-240-431
 
@@ -336,7 +390,7 @@ Jumlah pesan / Messages: 28
     **Perubahan / Change:**
 
 
-24. **`invoice_reminder_h{n} — n hari sebelum jatuh tempo / n days before the due date`** — untuk pelanggan / to the customer
+28. **`invoice_reminder_h{n} — n hari sebelum jatuh tempo / n days before the due date`** — untuk pelanggan / to the customer
 
     *Contoh untuk satu nilai n; kalimatnya sama untuk setiap n. / One value of n shown; the wording is the same for every n.*
 
@@ -352,7 +406,7 @@ Jumlah pesan / Messages: 28
     **Perubahan / Change:**
 
 
-25. **`invoice_overdue_d{n} — n hari setelah jatuh tempo / n days after the due date`** — untuk pelanggan / to the customer
+29. **`invoice_overdue_d{n} — n hari setelah jatuh tempo / n days after the due date`** — untuk pelanggan / to the customer
 
     *Contoh untuk satu nilai n; kalimatnya sama untuk setiap n. / One value of n shown; the wording is the same for every n.*
 
@@ -368,7 +422,7 @@ Jumlah pesan / Messages: 28
     **Perubahan / Change:**
 
 
-26. **`invoice_reminder_h{n}_admin — salinan untuk admin cabang / the branch admin's copy`** — untuk staf / to staff
+30. **`invoice_reminder_h{n}_admin — salinan untuk admin cabang / the branch admin's copy`** — untuk staf / to staff
 
     *Contoh untuk satu nilai n; kalimatnya sama untuk setiap n. / One value of n shown; the wording is the same for every n.*
 
@@ -382,7 +436,7 @@ Jumlah pesan / Messages: 28
     **Perubahan / Change:**
 
 
-27. **`invoice_overdue_d{n}_admin — salinan untuk admin cabang / the branch admin's copy`** — untuk staf / to staff
+31. **`invoice_overdue_d{n}_admin — salinan untuk admin cabang / the branch admin's copy`** — untuk staf / to staff
 
     *Contoh untuk satu nilai n; kalimatnya sama untuk setiap n. / One value of n shown; the wording is the same for every n.*
 
@@ -396,7 +450,7 @@ Jumlah pesan / Messages: 28
     **Perubahan / Change:**
 
 
-28. **`auto_reply — balasan otomatis saat pelanggan mengirim pesan ke nomor sistem / the automatic reply when a customer writes to the system number`** — untuk pelanggan / to the customer
+32. **`auto_reply — balasan otomatis saat pelanggan mengirim pesan ke nomor sistem / the automatic reply when a customer writes to the system number`** — untuk pelanggan / to the customer
 
     *Teks bawaan; dapat diubah di Pengaturan → Pesan, dan hanya terkirim bila balasan otomatis dinyalakan. / The default text; editable in Settings → Messaging, sent only while the auto-reply is on.*
 
