@@ -1,11 +1,14 @@
-import { Body, Controller, Get, Post, Put, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Post, Put, Query, Res, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import {
   MessagingPauseRequestSchema,
   PairLinkedDeviceRequestSchema,
+  SuppressedMessagesQuerySchema,
   TestMessagingRequestSchema,
+  UpdateMessagingAllowlistRequestSchema,
   UpdateMessagingConfigRequestSchema,
 } from "@rentos/contracts";
+import type { Response } from "express";
 
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
@@ -14,6 +17,7 @@ import { CapabilityGuard } from "../common/guards/capability.guard.js";
 import { StaffGuard } from "../common/guards/staff.guard.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
+import { CSV_BOM, csvDateTime, csvFilename, toCsv } from "../reporting/csv.util.js";
 
 import { OrganizationService } from "./organization.service.js";
 
@@ -80,6 +84,67 @@ export class OrganizationController {
     @Body(new ZodValidationPipe(MessagingPauseRequestSchema)) body: ReturnType<typeof MessagingPauseRequestSchema.parse>,
   ) {
     return this.organization.setMessagingPause(user, body);
+  }
+
+  /** PRD go-live 2 §8.1 — the test allowlist. Org-scoped Admin only (checked in the service). */
+  @Get("messaging/allowlist")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("manage_users")
+  messagingAllowlist(@CurrentUser() user: AuthenticatedUser) {
+    return this.organization.getMessagingAllowlist(user);
+  }
+
+  @Put("messaging/allowlist")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("manage_users")
+  setMessagingAllowlist(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body(new ZodValidationPipe(UpdateMessagingAllowlistRequestSchema)) body: ReturnType<typeof UpdateMessagingAllowlistRequestSchema.parse>,
+  ) {
+    return this.organization.setMessagingAllowlist(user, body);
+  }
+
+  /**
+   * PRD go-live 2 §8.2 — what was held back, and why. Read-only. Admins, and
+   * the roles that read the customer inbox (the same recipients and templates).
+   */
+  @Get("messaging/suppressed")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("manage_users", "read_messages")
+  suppressedMessages(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query(new ZodValidationPipe(SuppressedMessagesQuerySchema)) query: ReturnType<typeof SuppressedMessagesQuerySchema.parse>,
+  ) {
+    return this.organization.listSuppressedMessages(user, query);
+  }
+
+  @Get("messaging/suppressed.csv")
+  @UseGuards(CapabilityGuard)
+  @RequireCapability("manage_users", "read_messages")
+  async suppressedMessagesCsv(
+    @CurrentUser() user: AuthenticatedUser,
+    @Res() res: Response,
+    @Query(new ZodValidationPipe(SuppressedMessagesQuerySchema)) query: ReturnType<typeof SuppressedMessagesQuerySchema.parse>,
+  ) {
+    const { rows, timeZone, branch } = await this.organization.exportSuppressedMessages(user, query);
+    const csv = toCsv(
+      rows.map((r) => ({
+        created_at: csvDateTime(r.createdAt, timeZone),
+        branch: r.branchName,
+        template: r.templateKey,
+        channel: r.channel,
+        recipient: r.recipient,
+        recipient_role: r.recipientRole,
+        customer_number: r.customerNumber,
+        customer: r.customerName,
+        reason: r.reason,
+        reason_text: r.reasonText,
+      })),
+      ["created_at", "branch", "template", "channel", "recipient", "recipient_role", "customer_number", "customer", "reason", "reason_text"],
+    );
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${csvFilename(branch, "suppressed-messages", query.from && query.to ? { from: query.from, to: query.to } : null)}"`);
+    res.send(`${CSV_BOM}${csv}`);
   }
 
   @Post("messaging/test")

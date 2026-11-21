@@ -3,6 +3,8 @@ import { assetFsm, termEndDate } from "@rentos/domain";
 import {
   checkStorageAssetFree,
   computePooledAvailableCount,
+  createHeldDeposit,
+  syncDepositRefundDue,
   findAvailableNonPooledAsset,
   findAvailablePooledAsset,
   findAvailableStorageAsset,
@@ -1148,6 +1150,8 @@ export class BookingService {
       if (unitChanged && booking.assetId) await this.releaseAsset(tx, booking.assetId, bookingId);
       const updated = await tx.booking.update({ where: { id: bookingId }, data: { startDate: newStart, endDate: newEnd, assetId: target.id } });
       if (unitChanged) await this.softReserveAsset(tx, target.id);
+      // A deposit's refund falls due from the lease end, which just moved (PRD go-live 2 §3.1).
+      await syncDepositRefundDue(tx, bookingId);
 
       // 3. The proforma and the schedule.
       const voidReason = `Tanggal mulai diubah ${previousStartIso} -> ${newStartIso}: ${params.reason}`;
@@ -1452,7 +1456,9 @@ export class BookingService {
   private async recordDepositIfNeeded(tx: Prisma.TransactionClient, tenantId: string, bookingId: string, amount: string) {
     const existingDeposit = await tx.deposit.findFirst({ where: { bookingId } });
     if (existingDeposit) return;
-    const deposit = await tx.deposit.create({ data: { tenantId, bookingId, amount, status: "HELD" } });
+    // PRD go-live 2 §3.1 — the row with its report dates (customer, received
+    // now, refund due) and its HELD event, beside the ledger entries.
+    const deposit = await createHeldDeposit(tx, { tenantId, bookingId, amount });
     await recordDepositHeldEntries(tx, tenantId, deposit.id, amount);
   }
 
@@ -1693,6 +1699,8 @@ export class BookingService {
         where: { id: bookingId },
         data: { status: to, noticeGivenAt: new Date(), noticeEffectiveDate },
       });
+      // The lease now has (or has a new) end date: the deposit's refund is due 30 days after it.
+      await syncDepositRefundDue(tx, bookingId);
 
       if (existing.termMonths) {
         const count = await voidScheduledInvoices(tx, bookingId, noticeEffectiveDate);

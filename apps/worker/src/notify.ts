@@ -32,7 +32,8 @@ export async function notify(params: {
   const channel = params.channel ?? "WHATSAPP";
 
   // PRD go-live §9.1 — same kill switch as apps/api's NotificationsService.notify.
-  const blocked = await outboundBlock(prisma, params.tenantId);
+  // PRD go-live 2 §8.1 — and the test allowlist, which is why it is told the recipient.
+  const blocked = await outboundBlock(prisma, params.tenantId, params.recipient);
   if (blocked) {
     await withTenantContext(prisma, params.tenantId, (tx) =>
       recordSuppressed(tx, {
@@ -46,7 +47,7 @@ export async function notify(params: {
         reason: blocked,
       }),
     );
-    console.log(`[suppressed] ${params.templateKey} -> ${params.recipient}: ${blocked}`);
+    console.log(`[suppressed] ${params.templateKey} -> ${params.recipient}: ${blocked.message}`);
     return;
   }
 

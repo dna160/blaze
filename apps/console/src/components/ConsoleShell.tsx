@@ -8,6 +8,8 @@ import { authClient, isAdmin } from "@/lib/auth-client";
 import { canDo } from "@/lib/capabilities";
 import { useMessagingPause } from "@/lib/messaging-pause";
 import { useChangeRequestSummary } from "@/lib/change-requests";
+
+import { ConsoleBanners } from "./ConsoleBanners";
 import { usePendingApprovalCount } from "@/lib/pending-approvals";
 import { useUnreadMessageCount } from "@/lib/unread-messages";
 
@@ -218,21 +220,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
             Log out
           </button>
         </header>
-        {pause?.paused && (
-          <div role="alert" className="border-b border-red-700 bg-red-600 px-6 py-2 text-sm text-white">
-            <b>Messaging is paused</b> — no WhatsApp or email reaches customers or staff
-            {pause.reason ? <>: {pause.reason}</> : null}
-            {pause.pausedAt ? <> (since {new Date(pause.pausedAt).toLocaleString("id-ID")})</> : null}.{" "}
-            {pause.suppressedCount > 0 && (
-              <>
-                {pause.suppressedCount} message{pause.suppressedCount === 1 ? " was" : "s were"} held back and recorded as suppressed.{" "}
-              </>
-            )}
-            <Link href="/settings/messaging" className="underline">
-              Messaging settings
-            </Link>
-          </div>
-        )}
+        <ConsoleBanners pause={pause} />
         <main className="p-6">{children}</main>
       </div>
     </div>

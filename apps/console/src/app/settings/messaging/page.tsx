@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { LinkedDevicePanel } from "@/components/LinkedDevicePanel";
+import { TestAllowlistPanel } from "@/components/TestAllowlistPanel";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient, isOrgAdmin } from "@/lib/auth-client";
 import { notifyMessagingPauseChanged } from "@/lib/messaging-pause";
@@ -270,6 +271,8 @@ export default function MessagingSettingsPage() {
             )}
           </div>
         )}
+
+        <TestAllowlistPanel canEdit={canEdit} />
 
         {!canEdit && (
           <div className="rounded border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">

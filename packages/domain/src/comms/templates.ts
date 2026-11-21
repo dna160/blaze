@@ -157,6 +157,24 @@ const TEMPLATES: Record<string, (vars: Vars) => RenderedMessage> = {
   }),
 };
 
+/**
+ * Every key `renderMessage` has copy for: the fixed templates above, plus one
+ * representative of each dynamically keyed dunning family (the day count in
+ * the key varies, the wording does not). The copy deck (`pnpm wa:templates
+ * copy`) and the wording test iterate this, so a template added to TEMPLATES
+ * shows up in both without touching either.
+ */
+export const DYNAMIC_MESSAGE_TEMPLATE_KEYS: ReadonlyArray<{ key: string; family: string }> = [
+  { key: "invoice_reminder_h7", family: "invoice_reminder_h{n} — n hari sebelum jatuh tempo / n days before the due date" },
+  { key: "invoice_overdue_d3", family: "invoice_overdue_d{n} — n hari setelah jatuh tempo / n days after the due date" },
+  { key: "invoice_reminder_h7_admin", family: "invoice_reminder_h{n}_admin — salinan untuk admin cabang / the branch admin's copy" },
+  { key: "invoice_overdue_d3_admin", family: "invoice_overdue_d{n}_admin — salinan untuk admin cabang / the branch admin's copy" },
+];
+
+export function messageTemplateKeys(): string[] {
+  return [...Object.keys(TEMPLATES), ...DYNAMIC_MESSAGE_TEMPLATE_KEYS.map((d) => d.key)];
+}
+
 export function renderMessage(templateKey: string, variables: Vars): RenderedMessage {
   const template = TEMPLATES[templateKey];
   if (template) return template(variables);

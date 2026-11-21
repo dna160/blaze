@@ -108,7 +108,19 @@ export {
   setMessagingPause,
   recordSuppressed,
   SUPPRESSED_STATUS,
+  SUPPRESSION_CODES,
+  MESSAGING_ALLOWLIST_MAX,
+  allowlistBlock,
+  allowlistPermits,
+  getMessagingAllowlist,
+  setMessagingAllowlist,
+  normalizeAllowlistNumber,
+  recipientPhoneKey,
+  MessagingAllowlistError,
   type MessagingPauseState,
+  type MessagingAllowlistState,
+  type OutboundBlock,
+  type SuppressionCode,
 } from "./messaging-pause.js";
 export { parseCsv, toCsv } from "./imports/csv.js";
 export { planUnitImport, applyUnitImport, type UnitImportPlan, type UnitImportRow } from "./imports/units.js";
@@ -132,3 +144,12 @@ export {
   type Finding as LegacyFinding,
 } from "./imports/legacy.js";
 export { legacyAutomationHold } from "./legacy-hold.js";
+export {
+  createHeldDeposit,
+  recordDepositEvent,
+  syncDepositRefundDue,
+  depositLeaseEnd,
+  depositRefundDueAt,
+  depositRemaining,
+  DEPOSIT_REFUND_DAYS,
+} from "./deposits.js";

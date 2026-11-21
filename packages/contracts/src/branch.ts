@@ -77,6 +77,12 @@ export const BranchSettingsSchema = BranchPublicProfileSchema.extend({
    * (they are still run in the legacy system). Lifting it is the cut-over.
    */
   legacyAutomationHold: z.boolean(),
+  /**
+   * featureFlags.test_mode (PRD go-live 2 §7.1) — the branch is in the client's
+   * test period: its bookings, contracts and invoices are test data and will be
+   * wiped before go-live. Drives the console banner; changes no behaviour.
+   */
+  testMode: z.boolean(),
   /** Whether this deployment has a real gateway at all (PAYMENT_PROVIDER=xendit in production). */
   gatewayReady: z.boolean(),
   /** A sample of the next numbers, so a format change can be checked before saving. */
@@ -106,6 +112,7 @@ export const UpdateBranchSettingsRequestSchema = z.object({
   onlinePaymentsEnabled: z.boolean().optional(),
   apiAccessEnabled: z.boolean().optional(),
   legacyAutomationHold: z.boolean().optional(),
+  testMode: z.boolean().optional(),
 });
 export type UpdateBranchSettingsRequest = z.infer<typeof UpdateBranchSettingsRequestSchema>;
 

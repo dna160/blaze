@@ -95,8 +95,8 @@ const CALL_SITES: Array<{ site: string; templateKey: string; variables: Record<s
   { site: "auth.service requestMagicLink", templateKey: "login_link", metaName: "login_link", params: 2,
     variables: viaNotify({ customerName: "Budi Santoso", link: "https://s.example/m/tok?next=%2Fportal" }) },
 
-  // apps/api/src/auth/auth.service.ts — through `notify`, code only.
-  { site: "auth.service sendOtp", templateKey: "otp_code", metaName: "otp_code", params: 1, variables: viaNotify({ code: "483920" }) },
+  // No otp_code: the passcode sign-in was removed (Meta refuses the
+  // AUTHENTICATION category on this account); login_link is the sign-in.
 ];
 
 function bodyParamCount(payload: ReturnType<typeof buildWhatsAppTemplatePayload>): number {
@@ -139,7 +139,6 @@ describe("notify call sites satisfy their WhatsApp templates", () => {
         "lease_suspended",
         "login_link",
         "notice_confirmed",
-        "otp_code",
         "renewal_offer_h14",
         "term_ended",
         "term_renewal_offer_h14",
