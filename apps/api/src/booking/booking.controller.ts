@@ -1,6 +1,6 @@
-import { Body, Controller, ForbiddenException, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
-import { ApproveBookingRequestSchema, CreateBookingRequestSchema, GiveNoticeRequestSchema, RejectBookingRequestSchema } from "@rentos/contracts";
+import { ApproveBookingRequestSchema, CreateBookingRequestSchema, GiveNoticeRequestSchema, RejectBookingRequestSchema, SignMethodRequestSchema } from "@rentos/contracts";
 import type { Request } from "express";
 
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
@@ -124,8 +124,17 @@ export class BookingController {
   @Post(":id/generate-contract")
   @UseGuards(JwtAuthGuard, CapabilityGuard)
   @RequireCapability("create_booking")
-  generateContract(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
-    return this.booking.generateContractAndProforma(tenant, id, user.id);
+  generateContract(
+    @CurrentTenant() tenant: ResolvedTenant,
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id") id: string,
+    // PRD go-live 2 §5.3 — `{ signMethod: "ONLINE" | "OFFLINE" }`, optional (the branch default otherwise).
+    @Body() body: unknown,
+  ) {
+    // Tolerates a missing body: older callers post nothing at all.
+    const parsed = SignMethodRequestSchema.safeParse(body ?? {});
+    if (!parsed.success) throw new BadRequestException('signMethod must be "ONLINE" or "OFFLINE".');
+    return this.booking.generateContractAndProforma(tenant, id, user.id, { signMethod: parsed.data.signMethod });
   }
 
   /** PRD v2 §5.1 waitlist — offer a now-free unit to a waitlisted customer; re-enters approval. */

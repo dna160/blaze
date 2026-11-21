@@ -214,14 +214,60 @@ const TEMPLATES: Record<string, WhatsAppTemplateSpec> = {
       `Masuk / Sign in: {{2}}\n${THANKS}`,
   },
 
+  // PRD go-live 2 §5.1 — v2 of this template: it now lists what is asked
+  // ({{2}} Indonesian, {{3}} English), so a walk-in whose KTP staff already
+  // took is asked for the selfie only. A changed body needs Meta re-approval;
+  // hence the new name (the old `kyc_requested` stays approved until removed).
   kyc_requested: {
-    metaName: "kyc_requested",
+    metaName: "kyc_requested_v2",
     category: "UTILITY",
-    params: ["customerName", "link"],
+    params: ["customerName", "documents", "documentsEn", "link"],
     body:
-      "Halo {{1}}, mohon unggah foto KTP dan selfie Anda agar kami bisa menyiapkan kontrak. Tautan ini langsung masuk ke akun Anda tanpa kode OTP.\n" +
-      "Hi {{1}}, please upload your KTP and a selfie so we can prepare your contract. This link signs you in directly — no OTP needed.\n\n" +
-      `Unggah / Upload: {{2}}\n${THANKS}`,
+      "Halo {{1}}, mohon unggah {{2}} agar kami bisa menyiapkan kontrak. Tautan ini langsung masuk ke akun Anda tanpa kode OTP.\n" +
+      "Hi {{1}}, please upload: {{3}} — so we can prepare your contract. This link signs you in directly — no OTP needed.\n\n" +
+      `Unggah / Upload: {{4}}\n${THANKS}`,
+  },
+
+  kyc_rejected: {
+    metaName: "kyc_rejected",
+    category: "UTILITY",
+    params: ["customerName", "reason", "link"],
+    body:
+      "Halo {{1}}, mohon maaf, dokumen verifikasi Anda belum dapat kami terima. Alasan: {{2}}. Silakan unggah ulang.\n" +
+      "Hi {{1}}, we're sorry — we could not accept your verification documents. Reason: {{2}}. Please upload them again.\n\n" +
+      `Unggah ulang / Upload again: {{3}}\n${THANKS}`,
+  },
+
+  /* ------------------------------------------------- offline (paper) signing */
+
+  contract_sign_offline: {
+    metaName: "contract_sign_offline",
+    category: "UTILITY",
+    params: ["customerName", "assetCode", "locationName", "deadline", "link"],
+    body:
+      "Halo {{1}}, kontrak sewa unit {{2}} sudah siap. Mohon datang ke {{3}} untuk menandatanganinya paling lambat {{4}}.\n" +
+      "Hi {{1}}, your rental agreement for unit {{2}} is ready. Please come to {{3}} to sign it by {{4}}.\n\n" +
+      `Lihat kontrak / View the agreement: {{5}}\n${THANKS}`,
+  },
+
+  contract_sign_reminder: {
+    metaName: "contract_sign_reminder",
+    category: "UTILITY",
+    params: ["customerName", "assetCode", "deadline", "daysLeft", "locationName", "link"],
+    body:
+      "Halo {{1}}, kontrak sewa unit {{2}} belum ditandatangani. Batas waktunya {{3}} ({{4}} hari lagi) — mohon datang ke {{5}}. Setelah batas waktu, pemesanan dibatalkan dan unit dilepas.\n" +
+      "Hi {{1}}, your rental agreement for unit {{2}} is not signed yet. The deadline is {{3}} ({{4}} day(s) left) — please come to {{5}}. After the deadline the booking is cancelled and the unit released.\n\n" +
+      `Lihat kontrak / View the agreement: {{6}}\n${THANKS}`,
+  },
+
+  contract_sign_lapsed: {
+    metaName: "contract_sign_lapsed",
+    category: "UTILITY",
+    params: ["customerName", "assetCode", "deadline"],
+    body:
+      "Halo {{1}}, kontrak sewa unit {{2}} tidak ditandatangani sampai batas waktu {{3}}, sehingga pemesanan dibatalkan dan unit dilepas. Silakan hubungi kami bila masih berminat.\n" +
+      "Hi {{1}}, your rental agreement for unit {{2}} was not signed by {{3}}, so the booking was cancelled and the unit released. Contact us if you are still interested.\n\n" +
+      THANKS,
   },
 
   contract_proforma_ready: {

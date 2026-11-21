@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 
+import { NotificationsModule } from "../notifications/notifications.module.js";
 import { StorageModule } from "../storage/storage.module.js";
 
 import { KycController } from "./kyc.controller.js";
@@ -10,7 +11,7 @@ import { VerihubsKycVerificationProvider } from "./providers/verihubs-kyc-verifi
 
 /** KYC_VERIFICATION_PROVIDER env var selects the adapter — defaults to mock so local dev/CI needs zero KYC-verification credentials. */
 @Module({
-  imports: [StorageModule],
+  imports: [StorageModule, NotificationsModule],
   controllers: [KycController],
   providers: [
     MockKycVerificationProvider,
