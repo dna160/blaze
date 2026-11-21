@@ -93,6 +93,16 @@ function ReportsContent() {
   const allowed = canDo(user, "run_reports");
 
   const { range, setRange } = useReportRange({ timeZone: TIME_ZONE, userId: user?.id ?? null });
+  // The URL always carries the range in use (§2.1), also when it came from the
+  // remembered one or the default — so a copied link opens the same report.
+  useEffect(() => {
+    if (!range || (params?.get("from") === range.from && params?.get("to") === range.to)) return;
+    const q = new URLSearchParams(params?.toString() ?? "");
+    q.set("from", range.from);
+    q.set("to", range.to);
+    router.replace(`${pathname}?${q.toString()}`, { scroll: false });
+  }, [range, params, pathname, router]);
+
   const requested = params?.get("tab");
   const tab: TabId = TABS.some((t) => t.id === requested) ? (requested as TabId) : "penjualan";
   function selectTab(next: TabId) {
