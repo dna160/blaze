@@ -176,6 +176,30 @@ const TEMPLATES: Record<string, WhatsAppTemplateSpec> = {
       THANKS,
   },
 
+  // PRD go-live 2 §4.2 — a change request to cancel an approved booking was approved.
+  booking_cancelled: {
+    metaName: "booking_cancelled",
+    category: "UTILITY",
+    params: ["customerName", "reason"],
+    body:
+      "Halo {{1}}, booking Anda telah dibatalkan dan tagihan yang belum dibayar tidak berlaku lagi. Alasan: {{2}}.\n" +
+      "Hi {{1}}, your booking has been cancelled and its unpaid invoice no longer applies. Reason: {{2}}.\n\n" +
+      THANKS,
+  },
+
+  // PRD go-live 2 §4.3 — the start (check-in) date was moved. {{5}}/{{6}} say what
+  // the customer does next (pay the new proforma, sign again, or nothing).
+  booking_date_changed: {
+    metaName: "booking_date_changed",
+    category: "UTILITY",
+    params: ["customerName", "assetCode", "previousStartDate", "newStartDate", "nextStep", "nextStepEn", "link"],
+    body:
+      "Halo {{1}}, tanggal mulai sewa unit {{2}} Anda diubah dari {{3}} menjadi {{4}}. {{5}}\n" +
+      "Hi {{1}}, the start date of your rental of unit {{2}} has moved from {{3}} to {{4}}. {{6}}\n\n" +
+      "Lihat booking / View your booking: {{7}}\n\n" +
+      THANKS,
+  },
+
   booking_expired: {
     metaName: "booking_expired",
     category: "UTILITY",

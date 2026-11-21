@@ -48,6 +48,12 @@ export interface StorageAvailabilityOptions {
   blackoutMonths: number;
   customerId?: string;
   extendsBookingId?: string;
+  /**
+   * A booking whose own hold must not count against it — the booking being
+   * MOVED (PRD go-live 2 §4.3: change of start date). Without this a booking
+   * could never shift within its own unit: its old window would block the new.
+   */
+  excludeBookingId?: string;
 }
 
 interface CandidateAsset {
@@ -102,7 +108,7 @@ export async function listAvailableStorageAssets(
   const candidates = await loadCandidates(tx, assetTypeId, locationId);
   return candidates
     .filter((asset) =>
-      isUnitFreeFor(candidate, asset.bookings, {
+      isUnitFreeFor(candidate, options.excludeBookingId ? asset.bookings.filter((b) => b.id !== options.excludeBookingId) : asset.bookings, {
         blackoutMonths: options.blackoutMonths,
         customerId: options.customerId,
         extendsBookingId: options.extendsBookingId,
@@ -157,6 +163,31 @@ export async function findAvailableStorageAsset(
   const free = await listAvailableStorageAssets(tx, assetTypeId, locationId, window, options);
   if (options.preferredAssetId && free.some((a) => a.id === options.preferredAssetId)) return options.preferredAssetId;
   return free[0]?.id ?? null;
+}
+
+/**
+ * PRD go-live 2 §4.3 — is THIS unit free for the window (blackout included)?
+ * Used when a booking's start date moves: the same single-fire lock as
+ * `findAvailableStorageAsset` (every candidate row of the type/branch, in id
+ * order), so a concurrent new booking and a date change cannot both take it.
+ * Returns the bookings in the way, for the approver to see.
+ */
+export async function checkStorageAssetFree(
+  tx: Prisma.TransactionClient,
+  asset: { id: string; assetTypeId: string; locationId: string | null },
+  window: StorageWindow,
+  options: StorageAvailabilityOptions,
+): Promise<{ free: boolean; freeUnits: Array<{ id: string; code: string }> }> {
+  await tx.$queryRaw`
+    SELECT id FROM assets
+    WHERE asset_type_id = ${asset.assetTypeId}::uuid
+      AND (${asset.locationId ?? null}::uuid IS NULL OR location_id = ${asset.locationId ?? null}::uuid)
+      AND status NOT IN ('MAINTENANCE', 'RETIRED')
+    ORDER BY id
+    FOR UPDATE
+  `;
+  const freeUnits = await listAvailableStorageAssets(tx, asset.assetTypeId, asset.locationId ?? undefined, window, options);
+  return { free: freeUnits.some((a) => a.id === asset.id), freeUnits };
 }
 
 /** Tenant-configurable blackout (PRD v2 D2): `featureFlags.blackout_months`, default 1, 0 disables. */

@@ -51,6 +51,7 @@ export {
   resolveInvoiceLeadDays,
   type StorageWindow,
   type StorageAvailabilityOptions,
+  checkStorageAssetFree,
 } from "./storage-availability.js";
 export { findOrCreateCustomerAccessToken, exchangeCustomerAccessToken, hashAccessToken, MAGIC_LINK_TTL_DAYS } from "./magic-link.js";
 export {

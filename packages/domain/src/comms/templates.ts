@@ -120,6 +120,25 @@ const TEMPLATES: Record<string, (vars: Vars) => RenderedMessage> = {
     subject: "Permintaan booking tidak dapat diproses / Booking request declined",
     text: `Mohon maaf, permintaan Anda tidak dapat kami proses. Alasan: ${v(vars, "reason", "-")}.\nSorry, we couldn't process your request. Reason: ${v(vars, "reason", "-")}.`,
   }),
+  /** PRD go-live 2 §4.2 — an approved booking cancelled before it started (a change request was approved). */
+  booking_cancelled: (vars) => ({
+    subject: "Booking dibatalkan / Booking cancelled",
+    text:
+      `Halo ${v(vars, "customerName", "Pelanggan")}, booking Anda telah dibatalkan dan tagihan yang belum dibayar tidak berlaku lagi. Alasan: ${v(vars, "reason", "-")}.
+` +
+      `Hi ${v(vars, "customerName", "there")}, your booking has been cancelled and its unpaid invoice no longer applies. Reason: ${v(vars, "reason", "-")}.`,
+  }),
+  /** PRD go-live 2 §4.3 — the start (check-in) date of a booking was moved. */
+  booking_date_changed: (vars) => ({
+    subject: "Tanggal mulai sewa diubah / Rental start date changed",
+    text:
+      `Halo ${v(vars, "customerName", "Pelanggan")}, tanggal mulai sewa unit ${v(vars, "assetCode", "")} Anda diubah dari ${v(vars, "previousStartDate", "")} menjadi ${v(vars, "newStartDate", "")}. ${v(vars, "nextStep", "")}
+` +
+      `Hi ${v(vars, "customerName", "there")}, the start date of your rental of unit ${v(vars, "assetCode", "")} has moved from ${v(vars, "previousStartDate", "")} to ${v(vars, "newStartDate", "")}. ${v(vars, "nextStepEn", "")}
+
+` +
+      `Lihat booking / View your booking: ${v(vars, "link")}`,
+  }),
   booking_expired: (vars) => ({
     subject: "Permintaan booking kedaluwarsa / Booking request expired",
     text: `Permintaan Anda untuk ${v(vars, "assetTypeName", "")} kedaluwarsa karena belum diproses dalam waktu yang ditentukan. Silakan ajukan kembali.\nYour request expired before it could be processed — please submit again.\n\n${v(vars, "link")}`,
