@@ -131,3 +131,12 @@ export {
   type Finding as LegacyFinding,
 } from "./imports/legacy.js";
 export { legacyAutomationHold } from "./legacy-hold.js";
+export {
+  createHeldDeposit,
+  recordDepositEvent,
+  syncDepositRefundDue,
+  depositLeaseEnd,
+  depositRefundDueAt,
+  depositRemaining,
+  DEPOSIT_REFUND_DAYS,
+} from "./deposits.js";
