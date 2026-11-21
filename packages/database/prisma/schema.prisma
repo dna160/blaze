@@ -534,6 +534,7 @@ model Customer {
   updatedAt        DateTime        @updatedAt @map("updated_at")
 
   kycDocuments     KycDocument[]
+  kycRequests      KycRequest[]
   phones           CustomerPhone[]
   bookings         Booking[]
   rentalOrders     RentalOrder[]
@@ -612,9 +613,62 @@ model KycDocument {
   /// Human-readable reason from the provider — shown to staff verbatim for AUTO-REJECTED docs, or an inconclusive AUTO check that fell back to the manual queue.
   providerReason     String?               @map("provider_reason")
 
+  /// PRD go-live 2 §5.1 — who put the file in: "CUSTOMER" (the portal) or
+  /// "STAFF" (taken at the counter for a walk-in, `uploadedByUserId` set).
+  channel          String      @default("CUSTOMER")
+  uploadedByUserId String?     @map("uploaded_by_user_id") @db.Uuid
+  /// PRD go-live 2 §5.2 — the request (batch) this upload answers.
+  kycRequestId     String?     @map("kyc_request_id") @db.Uuid
+  kycRequest       KycRequest? @relation(fields: [kycRequestId], references: [id], onDelete: SetNull)
+
   @@index([tenantId])
   @@index([customerId])
+  @@index([kycRequestId])
   @@map("kyc_documents")
+}
+
+enum KycRequestStatus {
+  /// Asked; something is still missing.
+  OPEN
+  /// Everything asked has arrived; waiting for a reviewer.
+  COMPLETE
+  VERIFIED
+  REJECTED
+}
+
+/// PRD go-live 2 §5.2 — one KYC request is one batch: what was asked of a
+/// customer, when and by whom, and what came back. At most one request per
+/// customer is undecided (OPEN or COMPLETE) at a time; the review page shows
+/// one card per request and keeps the decided ones as history.
+model KycRequest {
+  id                String           @id @default(uuid()) @db.Uuid
+  tenantId          String           @map("tenant_id") @db.Uuid
+  customerId        String           @map("customer_id") @db.Uuid
+  customer          Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  bookingId         String?          @map("booking_id") @db.Uuid
+  booking           Booking?         @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  /// Document types asked for in this batch (KycDocumentType values).
+  requestedTypes    String[]         @map("requested_types")
+  requestedByUserId String?          @map("requested_by_user_id") @db.Uuid
+  requestedAt       DateTime         @default(now()) @map("requested_at")
+  /// WHATSAPP (staff asked by message), STAFF (taken at the counter),
+  /// PORTAL (the customer started it), BACKFILL (predates requests).
+  channel           String           @default("WHATSAPP")
+  status            KycRequestStatus @default(OPEN)
+  completedAt       DateTime?        @map("completed_at")
+  decidedByUserId   String?          @map("decided_by_user_id") @db.Uuid
+  decidedAt         DateTime?        @map("decided_at")
+  /// Required on REJECTED — it is sent to the customer.
+  decisionReason    String?          @map("decision_reason")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  documents KycDocument[]
+
+  @@index([tenantId, status])
+  @@index([customerId])
+  @@index([bookingId])
+  @@map("kyc_requests")
 }
 
 // ---------------------------------------------------------------------------
@@ -737,6 +791,7 @@ model Booking {
   updatedAt           DateTime      @updatedAt @map("updated_at")
 
   events       BookingEvent[]
+  kycRequests  KycRequest[]
   contracts    Contract[]
   invoices     Invoice[]
   deposits     Deposit[]
@@ -980,6 +1035,17 @@ model Contract {
   esignEnvelopeId     String?      @map("esign_envelope_id")
   /// PENDING | SIGNED | DECLINED | EXPIRED — null until sendForSignature() is called.
   esignStatus         String?      @map("esign_status")
+  /// PRD go-live 2 §5.3 — "ONLINE" (the customer signs on the portal: the
+  /// e-sign provider when one is configured, the signature pad otherwise) or
+  /// "OFFLINE" (on paper at the office; staff upload the scan).
+  signMethod          String       @default("ONLINE") @map("sign_method")
+  /// OFFLINE only: sign by this instant or the booking lapses (worker job
+  /// offline-sign-deadline). Null for ONLINE and once signed.
+  signDeadlineAt      DateTime?    @map("sign_deadline_at")
+  /// Recorded on a scan upload for a company customer; not enforced (§12 Q3).
+  companyStampPresent Boolean?     @map("company_stamp_present")
+  /// Staff member who uploaded the signed scan.
+  signedUploadedByUserId String?   @map("signed_uploaded_by_user_id") @db.Uuid
   /// PRD go-live 2 §4.3 — bumped each time the agreement is re-rendered
   /// because the booking it describes changed (a moved start date).
   version             Int          @default(1)

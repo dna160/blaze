@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   KYC_REQUIRED_DOCUMENTS,
+  kycUploadableDocuments,
   type CustomerDto,
   type KycDocumentDto,
   type KycDocumentTypeValue,
@@ -25,6 +26,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 const DOCUMENT_LABEL: Record<KycDocumentTypeValue, { title: string; hint: string }> = {
   KTP: { title: "KTP (ID card)", hint: "The signatory's Indonesian ID card." },
+  PASSPORT: { title: "Paspor / Passport", hint: "Optional — for a signatory without a KTP; replaces the KTP." },
   SELFIE: { title: "Selfie", hint: "A photo of the signatory holding their KTP." },
   NIB: { title: "NIB", hint: "Nomor Induk Berusaha — the company's business registration." },
   NPWP: { title: "NPWP", hint: "The company's tax registration card." },
@@ -122,8 +124,8 @@ export default function KycPage() {
 
   const isCompany = customer.type === "BUSINESS";
   const required = KYC_REQUIRED_DOCUMENTS[customer.type];
-  // The optional PPh slip is offered to companies only, after the required set.
-  const shown: KycDocumentTypeValue[] = isCompany ? [...required, "PPH_SUPPORT"] : [...required];
+  // One list for everyone (PRD go-live 2 §5.1): required first, then the optional ones (passport, the PPh slip for companies).
+  const shown: KycDocumentTypeValue[] = [...kycUploadableDocuments(customer.type)];
   const latestByType = (type: KycDocumentTypeValue) => documents.find((d) => d.documentType === type);
 
   return (

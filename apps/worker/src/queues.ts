@@ -12,6 +12,7 @@ import { runRenewalOffers } from "./jobs/renewal-offer.job.js";
 import { runRenewalTimeouts } from "./jobs/renewal-timeout.job.js";
 import { runSyncOtaCalendars } from "./jobs/sync-ota-calendars.job.js";
 import { runWaitlistExpiry } from "./jobs/waitlist-expiry.job.js";
+import { runOfflineSignDeadline } from "./jobs/offline-sign-deadline.job.js";
 
 export const INVOICE_GENERATION_QUEUE = "invoice-generation";
 /** PRD v2 §8 — issues the SCHEDULED cycles of term payment schedules on their issue date. */
@@ -25,6 +26,8 @@ export const RENEWAL_TIMEOUT_QUEUE = "renewal-timeout";
 export const WAITLIST_EXPIRY_QUEUE = "waitlist-expiry";
 export const OTA_CALENDAR_SYNC_QUEUE = "ota-calendar-sync";
 export const PLATFORM_BILLING_QUEUE = "platform-billing";
+/** PRD go-live 2 §5.3 — paper-signing deadline: reminders 3 and 1 day before, lapse after. */
+export const OFFLINE_SIGN_DEADLINE_QUEUE = "offline-sign-deadline";
 /** Must match apps/api/src/webhook-dispatch/webhook-dispatch.service.ts's TENANT_WEBHOOK_DELIVERY_QUEUE exactly — that's the producer, this file's Worker is the consumer. */
 export const TENANT_WEBHOOK_DELIVERY_QUEUE = "tenant-webhook-delivery";
 
@@ -56,6 +59,7 @@ export async function scheduleRepeatableJobs(connection: IORedis): Promise<void>
   const platformBillingQueue = new Queue(PLATFORM_BILLING_QUEUE, { connection });
   const scheduledIssueQueue = new Queue(SCHEDULED_INVOICE_ISSUE_QUEUE, { connection });
   const termLifecycleQueue = new Queue(TERM_LIFECYCLE_QUEUE, { connection });
+  const offlineSignQueue = new Queue(OFFLINE_SIGN_DEADLINE_QUEUE, { connection });
 
   // PRD v2: run the term clock before the invoice issuer so a lease that
   // ended today doesn't get a cycle issued in the same tick.
@@ -63,6 +67,12 @@ export async function scheduleRepeatableJobs(connection: IORedis): Promise<void>
     "tick",
     {},
     { repeat: { pattern: process.env.TERM_LIFECYCLE_CRON ?? "30 0 * * *" }, jobId: "term-lifecycle-daily" },
+  );
+  // 09:15 WIB — reminders reach customers during office hours.
+  await offlineSignQueue.add(
+    "tick",
+    {},
+    { repeat: { pattern: process.env.OFFLINE_SIGN_DEADLINE_CRON ?? "15 2 * * *" }, jobId: "offline-sign-deadline-daily" },
   );
   await scheduledIssueQueue.add(
     "tick",
@@ -123,6 +133,7 @@ export async function scheduleRepeatableJobs(connection: IORedis): Promise<void>
   await invoiceQueue.close();
   await scheduledIssueQueue.close();
   await termLifecycleQueue.close();
+  await offlineSignQueue.close();
   await dunningQueue.close();
   await ledgerQueue.close();
   await renewalOfferQueue.close();
@@ -154,6 +165,9 @@ export function startWorkers(connection: IORedis): Worker[] {
   const waitlistExpiryWorker = simpleWorker(WAITLIST_EXPIRY_QUEUE, runWaitlistExpiry);
   const otaSyncWorker = simpleWorker(OTA_CALENDAR_SYNC_QUEUE, runSyncOtaCalendars);
   const platformBillingWorker = simpleWorker(PLATFORM_BILLING_QUEUE, runPlatformBilling);
+  const offlineSignWorker = simpleWorker(OFFLINE_SIGN_DEADLINE_QUEUE, async () => {
+    await runOfflineSignDeadline();
+  });
 
   // Not a simpleWorker: this one is per-delivery rather than a cron tick, and
   // needs its own "failed" handler to flip a delivery to terminal FAILED once
@@ -185,6 +199,7 @@ export function startWorkers(connection: IORedis): Worker[] {
     waitlistExpiryWorker,
     otaSyncWorker,
     platformBillingWorker,
+    offlineSignWorker,
   ];
   for (const worker of workers) {
     worker.on("failed", (job, err) => console.error(`Job ${job?.id} in ${job?.queueName} failed:`, err));

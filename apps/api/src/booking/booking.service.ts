@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import { assetFsm, termEndDate } from "@rentos/domain";
+import { assetFsm, resolveDefaultSignMethod, resolveOfflineSignDays, termEndDate } from "@rentos/domain";
 import {
   checkStorageAssetFree,
   computePooledAvailableCount,
@@ -19,12 +19,13 @@ import {
   type Prisma,
 } from "@rentos/database";
 import type { CreateBookingResponse, PipelineBookingDto } from "@rentos/contracts";
-import { isKycVerified, zonedDateString, type SignedContractHandling } from "@rentos/contracts";
+import { isKycVerified, zonedDateString, type SignedContractHandling, type SignMethodValue } from "@rentos/contracts";
 
 import { AuditService } from "../audit/audit.service.js";
 import { CrmService } from "../crm/crm.service.js";
 import { DocumentsService } from "../documents/documents.service.js";
 import { FinanceService } from "../finance/finance.service.js";
+import { openKycRequestForBooking } from "../kyc/kyc-requests.util.js";
 import { NotificationsService, type NotifiableCustomer } from "../notifications/notifications.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
@@ -666,6 +667,7 @@ export class BookingService {
 
   /** PRD v2 §5.1 stage 2: send (or re-send) the KYC request with a magic link straight into the upload page. */
   async requestKyc(tenant: ResolvedTenant, bookingId: string, actorUserId: string) {
+    let kycVariables: { documents: string; documentsEn: string } | undefined;
     const booking = await this.prisma.runInTenantContext(tenant.id, async (tx) => {
       const existing = await tx.booking.findUnique({ where: { id: bookingId }, include: { customer: true } });
       if (!existing) throw new NotFoundException("Booking not found.");
@@ -674,6 +676,16 @@ export class BookingService {
       await tx.bookingEvent.create({
         data: { tenantId: tenant.id, bookingId, fromStatus: existing.status, toStatus: existing.status, actorType: "USER", actorId: actorUserId, reason: existing.kycRequestedAt ? "KYC request re-sent" : "KYC requested" },
       });
+      // PRD go-live 2 §5.2 — the ask becomes (or joins) the customer's KYC request,
+      // and the message lists only what is not on file yet.
+      const kyc = await openKycRequestForBooking(tx, {
+        tenantId: tenant.id,
+        customerId: existing.customerId,
+        customerType: existing.customer.type,
+        bookingId,
+        requestedByUserId: actorUserId,
+      });
+      kycVariables = kyc.variables;
       return tx.booking.update({ where: { id: bookingId }, data: { kycRequestedAt: new Date() }, include: { customer: true } });
     });
 
@@ -682,7 +694,7 @@ export class BookingService {
       tenantSlug: tenant.slug,
       customer: booking.customer,
       templateKey: "kyc_requested",
-      variables: { customerName: booking.customer.fullName ?? "Customer" },
+      variables: { customerName: booking.customer.fullName ?? "Customer", ...kycVariables },
       link: { purpose: "KYC", next: "/portal/kyc" },
     });
     await this.audit.record({ tenantId: tenant.id, actorUserId, action: "KYC_REQUESTED", entityType: "Booking", entityId: bookingId });
@@ -695,7 +707,10 @@ export class BookingService {
    * PDFs, and send the customer a pay-now link. Requires KYC to be
    * satisfied (or not required by the tenant) and a unit assigned.
    */
-  async generateContractAndProforma(tenant: ResolvedTenant, bookingId: string, actorUserId: string) {
+  async generateContractAndProforma(tenant: ResolvedTenant, bookingId: string, actorUserId: string, options?: { signMethod?: SignMethodValue }) {
+    // PRD go-live 2 §5.3 — staff pick how this contract is signed; the branch default otherwise.
+    const signMethod: SignMethodValue = options?.signMethod ?? resolveDefaultSignMethod(tenant.featureFlags);
+    const signDeadlineAt = signMethod === "OFFLINE" ? new Date(Date.now() + resolveOfflineSignDays(tenant.featureFlags) * 86_400_000) : null;
     const blackoutMonths = resolveBlackoutMonths(tenant.featureFlags);
     const leadDays = resolveInvoiceLeadDays(tenant.featureFlags);
     const kycRequired = Boolean(tenant.featureFlags.kyc_required);
@@ -740,9 +755,15 @@ export class BookingService {
       );
 
       await tx.booking.update({ where: { id: bookingId }, data: { contractGeneratedAt: new Date() } });
+      await tx.contract.update({ where: { id: contract.id }, data: { signMethod, signDeadlineAt } });
       await tx.bookingEvent.create({
         data: { tenantId: tenant.id, bookingId, fromStatus: booking.status, toStatus: booking.status, actorType: "USER", actorId: actorUserId, reason: `Contract + proforma ${proforma.invoiceNumber} generated (${1 + cycles.length} payments)` },
       });
+      if (signMethod === "OFFLINE") {
+        await tx.bookingEvent.create({
+          data: { tenantId: tenant.id, bookingId, fromStatus: booking.status, toStatus: booking.status, actorType: "USER", actorId: actorUserId, reason: `Tanda tangan di kantor (offline) — batas ${formatDateId(signDeadlineAt!)}` },
+        });
+      }
       return { booking, contract, proforma, cycles };
     });
 
@@ -788,7 +809,24 @@ export class BookingService {
       totalAmount: result.proforma.totalAmount.toString(),
     });
 
-    return { contractId: result.contract.id, proformaInvoiceId: result.proforma.id, scheduledInvoices: result.cycles.length };
+    if (signMethod === "OFFLINE") {
+      // The customer is told where and by when to sign on paper (§5.3 B).
+      await this.notifications.notifyCustomer({
+        tenantId: tenant.id,
+        tenantSlug: tenant.slug,
+        customer: result.booking.customer,
+        templateKey: "contract_sign_offline",
+        variables: {
+          customerName: result.booking.customer.fullName ?? "Customer",
+          assetCode: result.booking.asset?.code ?? "-",
+          locationName: result.booking.location?.name ?? tenant.name,
+          deadline: formatDateId(signDeadlineAt!),
+        },
+        link: { purpose: "BOOKING", next: `/portal/bookings/${bookingId}` },
+      });
+    }
+
+    return { contractId: result.contract.id, proformaInvoiceId: result.proforma.id, scheduledInvoices: result.cycles.length, signMethod, signDeadlineAt };
   }
 
   /** PRD v2 §5.1 waitlist column: staff offer a unit once capacity exists — re-checks availability, reserves, re-enters approval. */

@@ -21,6 +21,8 @@ import { DYNAMIC_MESSAGE_TEMPLATE_KEYS, messageTemplateKeys, renderMessage } fro
  */
 export const MESSAGE_SAMPLE_VALUES: Readonly<Record<string, string>> = {
   customerName: "Budi Santoso",
+  documents: "Selfie",
+  documentsEn: "Selfie",
   displayName: "Risa",
   branchName: "City Storage Kebon Jeruk",
   assetTypeName: "Medium Storage",

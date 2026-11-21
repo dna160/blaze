@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 
 import { BookingModule } from "../booking/booking.module.js";
+import { NotificationsModule } from "../notifications/notifications.module.js";
 import { DocumentsModule } from "../documents/documents.module.js";
 import { PrismaModule } from "../prisma/prisma.module.js";
 import { StorageModule } from "../storage/storage.module.js";
@@ -18,7 +19,7 @@ import { PrivyESignProvider } from "./providers/privy-esign.provider.js";
 /** ESIGN_PROVIDER env var selects the adapter — defaults to mock so local dev/CI
  *  needs zero e-sign credentials. "mekari" is the §5 primary certified provider. */
 @Module({
-  imports: [StorageModule, BookingModule, PrismaModule, DocumentsModule],
+  imports: [StorageModule, BookingModule, PrismaModule, DocumentsModule, NotificationsModule],
   controllers: [AgreementsController, MasterAgreementController],
   providers: [
     MockESignProvider,

@@ -176,6 +176,21 @@ export {
   type AlignedArticle,
 } from "./documents/contract-terms.js";
 export {
+  decideSigning,
+  customerSigningOption,
+  offlineSignStep,
+  offlineSignDeadline,
+  daysUntilSignDeadline,
+  resolveOfflineSignDays,
+  resolveDefaultSignMethod,
+  DEFAULT_OFFLINE_SIGN_DAYS,
+  OFFLINE_SIGN_REMINDER_DAYS,
+  type SignMethod,
+  type SigningAction,
+  type SigningContext,
+  type SigningDecision,
+} from "./documents/signing.js";
+export {
   DEFAULT_APPROVAL_POLICY,
   CHANGE_REQUEST_TYPES,
   resolveApprovalPolicy,

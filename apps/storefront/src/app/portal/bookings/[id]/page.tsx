@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AssetTypeDto, BookingDto, ContractDto, InvoiceDto, SwapRequestDto } from "@rentos/contracts";
 import { isKycVerified } from "@rentos/contracts";
 
-import { apiFetch, apiUpload, ApiError, openPdf } from "@/lib/api";
+import { apiFetch, ApiError, openPdf } from "@/lib/api";
 import { SignaturePad, type SignaturePadHandle } from "@/components/SignaturePad";
 import { authClient } from "@/lib/auth-client";
 import { formatDateId, formatIDR, getClientTenantSlug } from "@/lib/tenant-client";
@@ -15,6 +15,12 @@ const TENANT_SLUG = getClientTenantSlug();
 
 /** PRD go-live §6 — the contract row now carries its own number ("Contract #KBJ-11-2026-36-40"). */
 type ContractWithNumber = ContractDto & { contractNumber?: string | null; confirmedAt?: string | null };
+
+/** PRD go-live 2 §5.3 — the one way this contract is signed, as the portal shows it. */
+function signingOption(c: ContractWithNumber): "ESIGN" | "SIGNATURE_PAD" | "AT_OFFICE" {
+  if (c.signMethod === "OFFLINE") return "AT_OFFICE";
+  return c.esignAvailable ? "ESIGN" : "SIGNATURE_PAD";
+}
 
 /** A scheduled invoice carries a provisional SCHEDULED/… number until it is issued — never show that one. */
 function realInvoiceNumber(n: string): string | null {
@@ -55,7 +61,6 @@ export default function BookingDetailPage() {
   const [swapAssetTypeId, setSwapAssetTypeId] = useState("");
   const [swapReason, setSwapReason] = useState("");
   const [busy, setBusy] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const padRef = useRef<SignaturePadHandle>(null);
   const [padHasInk, setPadHasInk] = useState(false);
   const [agreed, setAgreed] = useState(false);
@@ -123,21 +128,19 @@ export default function BookingDetailPage() {
     }
   }
 
-  async function signContract(file: File) {
+  /** PRD go-live 2 §5.3 A — hand the agreement to the e-signature service (Privy); its page asks the customer to sign. */
+  async function signWithEsign() {
     const token = authClient.getToken();
-    if (!token || !signedByName) return;
-    setUploading(true);
+    if (!token) return;
+    setSigning(true);
     setError(null);
     try {
-      const formData = new FormData();
-      formData.append("signedByName", signedByName);
-      formData.append("file", file);
-      await apiUpload(`/contracts/by-booking/${id}/sign`, { tenantSlug: TENANT_SLUG, token, formData });
+      await apiFetch(`/contracts/by-booking/${id}/esign`, { tenantSlug: TENANT_SLUG, token, method: "POST", body: {} });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Upload failed.");
+      setError(err instanceof ApiError ? err.message : "Tidak dapat mengirim ke layanan tanda tangan elektronik.");
     } finally {
-      setUploading(false);
+      setSigning(false);
     }
   }
 
@@ -306,7 +309,37 @@ export default function BookingDetailPage() {
         </div>
       )}
 
-      {canSignContract && (
+      {canSignContract && contract && signingOption(contract) === "AT_OFFICE" && (
+        <div className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-6" data-testid="sign-at-office">
+          <h3 className="font-medium">Tanda tangan di kantor kami / Sign at our office</h3>
+          <p className="text-sm text-brand-700/70">
+            Perjanjian ini ditandatangani di atas kertas (materai) di kantor kami
+            {contract.signDeadlineAt ? `, paling lambat ${new Date(contract.signDeadlineAt).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}` : ""}.
+            Setelah batas waktu, pemesanan dibatalkan dan unit dilepas.
+          </p>
+          <p className="text-sm text-brand-700/60">
+            This agreement is signed on paper at our office
+            {contract.signDeadlineAt ? ` by ${new Date(contract.signDeadlineAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}` : ""}. After that the booking is cancelled and the unit released.
+          </p>
+        </div>
+      )}
+
+      {canSignContract && contract && signingOption(contract) === "ESIGN" && (
+        <div className="space-y-3 rounded-xl border border-brand-600/10 bg-white p-6" data-testid="sign-esign">
+          <h3 className="font-medium">Tanda tangani di Privy / Sign with Privy</h3>
+          <p className="text-sm text-brand-700/60">
+            Anda akan diarahkan ke Privy, layanan tanda tangan elektronik tersertifikasi. Bila belum punya akun Privy, Anda akan diminta membuatnya (verifikasi
+            wajah dan KTP) sebelum menandatangani. / You will be taken to Privy, a certified e-signature service. If you have no Privy account yet, you will be
+            asked to create one (face and KTP check) before signing.
+          </p>
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          <button type="button" onClick={() => void signWithEsign()} disabled={signing} className="w-full rounded bg-brand-700 py-2 font-medium text-white disabled:opacity-50">
+            {signing ? "Mengirim… / Sending…" : "Tanda tangani di Privy / Sign with Privy"}
+          </button>
+        </div>
+      )}
+
+      {canSignContract && contract && signingOption(contract) === "SIGNATURE_PAD" && (
         <form onSubmit={signWithPad} className="space-y-4 rounded-xl border border-brand-600/10 bg-white p-6">
           <div>
             <h3 className="font-medium">Tanda tangani perjanjian sewa / Sign your rental agreement</h3>
@@ -338,23 +371,6 @@ export default function BookingDetailPage() {
             {signing ? "Menyimpan… / Saving…" : "Tanda tangani / Sign agreement"}
           </button>
 
-          <details className="text-sm">
-            <summary className="cursor-pointer text-brand-700/60">Atau unggah dokumen yang sudah ditandatangani / Or upload a signed scan</summary>
-            <div className="mt-3 space-y-2">
-              <p className="text-brand-700/60">Print the agreement, sign it, and upload a photo or scan (PDF/JPEG/PNG). Uses the signer name above.</p>
-              <input
-                type="file"
-                accept="application/pdf,image/jpeg,image/png"
-                disabled={uploading || !signedByName}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) signContract(file);
-                }}
-                className="w-full text-sm"
-              />
-              {uploading && <p className="text-xs text-brand-700/60">Uploading...</p>}
-            </div>
-          </details>
         </form>
       )}
 

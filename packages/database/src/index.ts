@@ -145,6 +145,7 @@ export {
   type Finding as LegacyFinding,
 } from "./imports/legacy.js";
 export { legacyAutomationHold } from "./legacy-hold.js";
+export { cancelUnstartedBooking, type CancelUnstartedBookingParams, type CancelUnstartedBookingResult } from "./booking-cancel.js";
 export {
   createHeldDeposit,
   recordDepositEvent,

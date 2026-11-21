@@ -8,6 +8,8 @@ import type { ClientListItem } from "@rentos/contracts";
 import { ChangeRequestActions, ChangeRequestPanel } from "@/components/ChangeRequests";
 import { HEALTH_STYLE } from "@/components/ClientList";
 import { ConsoleShell } from "@/components/ConsoleShell";
+import { KycPanel } from "@/components/KycPanel";
+import { SignedScanUpload } from "@/components/SignedScanUpload";
 import { apiFetch, apiFetchBlob, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import { canDo } from "@/lib/capabilities";
@@ -45,7 +47,7 @@ interface ClientDetail {
       location: { id: string; name: string } | null;
       invoices: Array<{ id: string; invoiceNumber: string; status: string; scheduleIndex: number | null; dueDate: string; totalAmount: string; paidAt: string | null; payments: Array<{ id: string; method: string; status: string; amount: string; paidAt: string | null }> }>;
       deposits: Array<{ id: string; amount: string; status: string; appliedAmount: string }>;
-      contracts: Array<{ id: string; contractNumber: string | null; signedAt: string | null; confirmedAt: string | null; unsignedDocumentUrl: string | null }>;
+      contracts: Array<{ id: string; contractNumber: string | null; signedAt: string | null; confirmedAt: string | null; unsignedDocumentUrl: string | null; signMethod?: string; signDeadlineAt?: string | null; esignStatus?: string | null; createdAt?: string }>;
     }>;
     kycDocuments: Array<{ id: string; documentType: string; status: string; createdAt: string }>;
   };
@@ -201,6 +203,7 @@ export default function ClientDetailPage() {
   const [docError, setDocError] = useState<string | null>(null);
   const me = authClient.getUser();
   const canEditTax = canDo(me, "approve_booking") || canDo(me, "record_payment");
+  const canUploadScan = canDo(me, "create_booking") || canDo(me, "approve_booking");
   const [changeReload, setChangeReload] = useState(0);
 
   function load() {
@@ -389,7 +392,19 @@ export default function ClientDetailPage() {
                             : "not generated"
                       }`
                     : ""}
+                  {b.contracts[0] && !b.contracts[0].signedAt && b.contracts[0].signMethod === "OFFLINE"
+                    ? ` · tanda tangan di kantor, batas ${fmtDate(b.contracts[0].signDeadlineAt ?? null)}`
+                    : ""}
                 </p>
+              )}
+              {/* PRD go-live 2 §5.3 — record a paper contract from here too, not only from the booking page. */}
+              {b.status === "APPROVED" && b.contracts[0]?.unsignedDocumentUrl && !b.contracts[0].signedAt && b.contracts[0].esignStatus !== "PENDING" && canUploadScan && (
+                <details className="mt-3 rounded border border-brand-600/10 p-3">
+                  <summary className="cursor-pointer text-sm">Unggah kontrak bertanda tangan (kertas)</summary>
+                  <div className="mt-2">
+                    <SignedScanUpload bookingId={b.id} isCompany={customer.type === "BUSINESS"} onDone={() => void load()} />
+                  </div>
+                </details>
               )}
             </div>
           ))}
@@ -438,21 +453,8 @@ export default function ClientDetailPage() {
 
       <div className="mt-8 grid gap-6 lg:grid-cols-2">
         <section>
-          <h2 className="text-lg font-medium">KYC documents</h2>
-          {customer.kycDocuments.length === 0 ? (
-            <p className="mt-2 text-sm text-brand-700/60">Nothing uploaded.</p>
-          ) : (
-            <ul className="mt-2 space-y-1 text-sm">
-              {customer.kycDocuments.map((d) => (
-                <li key={d.id} className="flex justify-between rounded border border-brand-600/10 bg-white px-3 py-2">
-                  <span>{d.documentType}</span>
-                  <span className="text-brand-700/60">
-                    {kycLabel(d.status)} · {fmtDate(d.createdAt)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
+          {/* PRD go-live 2 §5.1 — staff take a walk-in's documents here. */}
+          <KycPanel customerId={customer.id} bookingId={customer.bookings.find((b) => b.status === "APPROVED")?.id ?? null} onChanged={() => void load()} />
           {customer.notes && <p className="mt-3 rounded bg-brand-700/5 p-3 text-sm">{customer.notes}</p>}
         </section>
         <section>

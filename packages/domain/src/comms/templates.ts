@@ -92,11 +92,39 @@ const TEMPLATES: Record<string, (vars: Vars) => RenderedMessage> = {
       `Halo ${v(vars, "displayName", "")}, akun console RentOS untuk ${v(vars, "branchName", "City Storage")} sudah dibuat. Buat kata sandi Anda melalui tautan di bawah (sekali pakai, berlaku 72 jam).\n` +
       `Your RentOS console account for ${v(vars, "branchName", "City Storage")} is ready. Set your password with the link below (single use, valid 72 hours).\n\n${v(vars, "link")}`,
   }),
+  // PRD go-live 2 §5.1 — `documents` / `documentsEn` list exactly what is still
+  // missing (after a walk-in's KTP was taken at the counter, only the selfie).
   kyc_requested: (vars) => ({
     subject: "Verifikasi identitas Anda / Verify your identity",
     text:
-      `Halo ${v(vars, "customerName", "Pelanggan")}, mohon unggah foto KTP dan selfie Anda agar kami bisa menyiapkan kontrak. Tautan ini langsung masuk ke akun Anda tanpa kode OTP.\n` +
-      `Please upload your KTP and a selfie so we can prepare your contract. This link signs you in directly — no OTP needed.\n\n${v(vars, "link")}`,
+      `Halo ${v(vars, "customerName", "Pelanggan")}, mohon unggah ${v(vars, "documents", "KTP (atau paspor) dan Selfie")} agar kami bisa menyiapkan kontrak. Tautan ini langsung masuk ke akun Anda tanpa kode OTP.\n` +
+      `Please upload: ${v(vars, "documentsEn", "KTP (or passport) and Selfie")} — so we can prepare your contract. This link signs you in directly — no OTP needed.\n\n${v(vars, "link")}`,
+  }),
+  // PRD go-live 2 §5.2 — a rejected KYC batch always carries the reviewer's reason.
+  kyc_rejected: (vars) => ({
+    subject: "Dokumen perlu diunggah ulang / Please re-upload your documents",
+    text:
+      `Halo ${v(vars, "customerName", "Pelanggan")}, mohon maaf, dokumen verifikasi Anda belum dapat kami terima. Alasan: ${v(vars, "reason", "-")}. Silakan unggah ulang lewat tautan ini.\n` +
+      `We're sorry — we could not accept your verification documents. Reason: ${v(vars, "reason", "-")}. Please upload them again using this link.\n\n${v(vars, "link")}`,
+  }),
+  // PRD go-live 2 §5.3 — signing on paper at the office, with a deadline.
+  contract_sign_offline: (vars) => ({
+    subject: "Tanda tangan kontrak di kantor / Sign your contract at our office",
+    text:
+      `Halo ${v(vars, "customerName", "Pelanggan")}, kontrak sewa unit ${v(vars, "assetCode", "")} sudah siap. Mohon datang ke ${v(vars, "locationName", "kantor kami")} untuk menandatanganinya paling lambat ${v(vars, "deadline", "")}.\n` +
+      `Your rental agreement for unit ${v(vars, "assetCode", "")} is ready. Please come to ${v(vars, "locationName", "our office")} to sign it by ${v(vars, "deadline", "")}.\n\n${v(vars, "link")}`,
+  }),
+  contract_sign_reminder: (vars) => ({
+    subject: `Pengingat tanda tangan kontrak / Contract signing reminder — ${v(vars, "deadline", "")}`,
+    text:
+      `Halo ${v(vars, "customerName", "Pelanggan")}, kontrak sewa unit ${v(vars, "assetCode", "")} belum ditandatangani. Batas waktunya ${v(vars, "deadline", "")} (${v(vars, "daysLeft", "")} hari lagi) — mohon datang ke ${v(vars, "locationName", "kantor kami")}. Setelah batas waktu, pemesanan dibatalkan dan unit dilepas.\n` +
+      `Your rental agreement for unit ${v(vars, "assetCode", "")} is not signed yet. The deadline is ${v(vars, "deadline", "")} (${v(vars, "daysLeft", "")} day(s) left) — please come to ${v(vars, "locationName", "our office")}. After the deadline the booking is cancelled and the unit released.\n\n${v(vars, "link")}`,
+  }),
+  contract_sign_lapsed: (vars) => ({
+    subject: "Pemesanan dibatalkan / Booking cancelled — contract not signed",
+    text:
+      `Halo ${v(vars, "customerName", "Pelanggan")}, kontrak sewa unit ${v(vars, "assetCode", "")} tidak ditandatangani sampai batas waktu ${v(vars, "deadline", "")}, sehingga pemesanan dibatalkan dan unit dilepas. Silakan hubungi kami bila masih berminat.\n` +
+      `Your rental agreement for unit ${v(vars, "assetCode", "")} was not signed by ${v(vars, "deadline", "")}, so the booking was cancelled and the unit released. Contact us if you are still interested.`,
   }),
   contract_proforma_ready: (vars) => ({
     subject: `Kontrak & proforma ${v(vars, "invoiceNumber", "")} / Contract & proforma ready`,
