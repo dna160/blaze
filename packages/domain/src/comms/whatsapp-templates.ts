@@ -238,12 +238,13 @@ const TEMPLATES: Record<string, WhatsAppTemplateSpec> = {
       `Masuk / Sign in: {{2}}\n${THANKS}`,
   },
 
-  // PRD go-live 2 §5.1 — v2 of this template: it now lists what is asked
-  // ({{2}} Indonesian, {{3}} English), so a walk-in whose KTP staff already
-  // took is asked for the selfie only. A changed body needs Meta re-approval;
-  // hence the new name (the old `kyc_requested` stays approved until removed).
+  // PRD go-live 2 §5.1 — now lists what is asked ({{2}} Indonesian, {{3}}
+  // English), so a walk-in whose KTP staff already took is asked for the
+  // selfie only. The body changed: re-submit it to Meta (`pnpm wa:templates
+  // push`) before using the Cloud API route; the linked-device route sends the
+  // rendered text and needs nothing.
   kyc_requested: {
-    metaName: "kyc_requested_v2",
+    metaName: "kyc_requested",
     category: "UTILITY",
     params: ["customerName", "documents", "documentsEn", "link"],
     body:
