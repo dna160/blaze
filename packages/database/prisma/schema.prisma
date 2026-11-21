@@ -1172,12 +1172,67 @@ model Deposit {
   refundApprovedByUserId String?       @map("refund_approved_by_user_id") @db.Uuid
   refundedAt             DateTime?     @map("refunded_at")
   payoutRef              String?       @map("payout_ref")
+  /// PRD go-live 2 §3.1 — the deposit report's dates.
+  /// The booking's customer, denormalised so a report never joins through the
+  /// booking. No FK on purpose (like Notification.customerId): a customer
+  /// merge must update it, see packages/database/src/deposits.ts.
+  customerId              String?       @map("customer_id") @db.Uuid
+  /// LEGACY: carried over from the legacy system's book (an opening balance),
+  /// not money RentOS itself received.
+  source                  DepositSource @default(RENTOS)
+  /// When the money arrived. For a legacy row: when it was imported.
+  receivedAt              DateTime      @default(now()) @map("received_at")
+  refundRequestedAt       DateTime?     @map("refund_requested_at")
+  refundRequestedByUserId String?       @map("refund_requested_by_user_id") @db.Uuid
+  /// Lease end + 30 days (T&C IV.3). Null while the lease has no end date yet.
+  refundDueAt             DateTime?     @map("refund_due_at")
   createdAt              DateTime      @default(now()) @map("created_at")
   updatedAt              DateTime      @updatedAt @map("updated_at")
 
+  events DepositEvent[]
+
   @@index([tenantId])
   @@index([bookingId])
+  @@index([tenantId, customerId])
   @@map("deposits")
+}
+
+enum DepositSource {
+  RENTOS
+  LEGACY
+}
+
+/// PRD go-live 2 §3.1 — every movement of a deposit, so a report over a date
+/// range shows what happened in it (received, applied, refunded), not only
+/// where each deposit stands today. Written in the same transaction as the
+/// ledger entries of the movement; the two must always tell the same story:
+/// held = HELD + ADJUSTED − APPLIED − REFUNDED = the DEPOSIT_LIABILITY balance.
+model DepositEvent {
+  id          String           @id @default(uuid()) @db.Uuid
+  tenantId    String           @map("tenant_id") @db.Uuid
+  depositId   String           @map("deposit_id") @db.Uuid
+  deposit     Deposit          @relation(fields: [depositId], references: [id], onDelete: Cascade)
+  type        DepositEventType
+  /// HELD: the amount received. APPLIED / REFUNDED: the amount that left the
+  /// deposit. REFUND_REQUESTED: the amount asked back (moves no money).
+  /// ADJUSTED: signed — a legacy re-sync that corrected the held amount.
+  amount      Decimal          @default(0) @db.Decimal(14, 2)
+  occurredAt  DateTime         @default(now()) @map("occurred_at")
+  actorUserId String?          @map("actor_user_id") @db.Uuid
+  note        String?
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  @@index([tenantId, occurredAt])
+  @@index([depositId])
+  @@map("deposit_events")
+}
+
+enum DepositEventType {
+  HELD
+  APPLIED
+  REFUND_REQUESTED
+  REFUNDED
+  ADJUSTED
 }
 
 /// PRD §7.1.4 "request upgrade/downsize... creates a swap request routed to
