@@ -129,6 +129,7 @@ export class BranchService {
       onlinePaymentsFlag: flags.onlinePaymentsEnabled === true,
       apiAccessEnabled: flags.api_access_enabled === true,
       legacyAutomationHold: flags.legacy_automation_hold === true,
+      testMode: flags.test_mode === true,
       gatewayReady: gatewayReady(),
       numberPreview: {
         contract: formatDocumentNumber(numbering.contract, sample),
@@ -188,7 +189,7 @@ export class BranchService {
     if (body.facilities !== undefined) data.facilities = body.facilities as Prisma.InputJsonValue;
     if (body.bankAccounts !== undefined) data.bankAccounts = body.bankAccounts as Prisma.InputJsonValue;
     if (body.numbering !== undefined) data.numbering = body.numbering as Prisma.InputJsonValue;
-    if (body.onlinePaymentsEnabled !== undefined || body.apiAccessEnabled !== undefined || body.legacyAutomationHold !== undefined) {
+    if (body.onlinePaymentsEnabled !== undefined || body.apiAccessEnabled !== undefined || body.legacyAutomationHold !== undefined || body.testMode !== undefined) {
       data.featureFlags = {
         ...((before.featureFlags ?? {}) as Record<string, unknown>),
         ...(body.onlinePaymentsEnabled !== undefined ? { onlinePaymentsEnabled: body.onlinePaymentsEnabled } : {}),
@@ -196,6 +197,8 @@ export class BranchService {
         ...(body.apiAccessEnabled !== undefined ? { api_access_enabled: body.apiAccessEnabled } : {}),
         // Imported rentals: no automatic invoice / reminder until cut-over.
         ...(body.legacyAutomationHold !== undefined ? { legacy_automation_hold: body.legacyAutomationHold } : {}),
+        // PRD go-live 2 §7.1 — the test-period banner ("data will be wiped before go-live").
+        ...(body.testMode !== undefined ? { test_mode: body.testMode } : {}),
       } as Prisma.InputJsonValue;
     }
 
@@ -221,6 +224,7 @@ export class BranchService {
       onlinePaymentsEnabled: ((before.featureFlags ?? {}) as Record<string, unknown>).onlinePaymentsEnabled ?? false,
       apiAccessEnabled: ((before.featureFlags ?? {}) as Record<string, unknown>).api_access_enabled ?? false,
       legacyAutomationHold: ((before.featureFlags ?? {}) as Record<string, unknown>).legacy_automation_hold ?? false,
+      testMode: ((before.featureFlags ?? {}) as Record<string, unknown>).test_mode ?? false,
     };
     const changes: Record<string, { from: unknown; to: unknown }> = {};
     for (const [key, to] of Object.entries(body)) {

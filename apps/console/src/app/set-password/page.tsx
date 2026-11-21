@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 
+import { PasswordRules, passwordFormProblem } from "@/components/PasswordRules";
 import { apiFetch, ApiError } from "@/lib/api";
 
 /**
@@ -24,8 +25,9 @@ function SetPasswordForm() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (password.length < 10) return setError("Use at least 10 characters.");
-    if (password !== confirm) return setError("The two passwords don't match.");
+    // Same policy as the API (PRD go-live 2 §6.1); the API also checks it against the account's email and name.
+    const problem = passwordFormProblem(password, confirm);
+    if (problem) return setError(problem);
     setBusy(true);
     try {
       const result = await apiFetch<{ email: string; branchSlug: string | null }>("/auth/staff/set-password", {
@@ -83,7 +85,8 @@ function SetPasswordForm() {
           className="mt-1 w-full rounded border border-brand-600/20 px-3 py-2"
         />
       </label>
-      <p className="text-xs text-brand-700/60">At least 10 characters. This link works once.</p>
+      <PasswordRules password={password} confirm={confirm} />
+      <p className="text-xs text-brand-700/60">Tautan ini hanya bisa dipakai sekali.</p>
       {error && <p className="text-sm text-red-600">{error}</p>}
       <button disabled={busy} className="w-full rounded bg-brand-700 px-4 py-2 font-medium text-white disabled:opacity-50">
         {busy ? "Saving…" : "Set password"}

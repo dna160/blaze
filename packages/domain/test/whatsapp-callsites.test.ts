@@ -56,6 +56,16 @@ const CALL_SITES: Array<{ site: string; templateKey: string; variables: Record<s
     variables: viaNotifyCustomer({ assetCode: "STORAGE-7", deadline: "28 Nov 2026", daysLeft: "3", locationName: "City Storage Kebon Jeruk" }) },
   { site: "worker offline-sign-deadline (lapsed)", templateKey: "contract_sign_lapsed", metaName: "contract_sign_lapsed", params: 3,
     variables: viaNotifyCustomer({ assetCode: "STORAGE-7", deadline: "28 Nov 2026" }, false) },
+  { site: "booking.service closeBooking (approved cancellation)", templateKey: "booking_cancelled", metaName: "booking_cancelled", params: 2,
+    variables: viaNotifyCustomer({ reason: "Pelanggan batal sewa" }, false) },
+  { site: "booking.service changeStartDate", templateKey: "booking_date_changed", metaName: "booking_date_changed", params: 7,
+    variables: viaNotifyCustomer({
+      assetCode: "STORAGE-12",
+      previousStartDate: "20 November 2026",
+      newStartDate: "27 November 2026",
+      nextStep: "Tagihan baru sudah diterbitkan.",
+      nextStepEn: "A new invoice has been issued.",
+    }) },
   { site: "booking.service generateContractAndProforma", templateKey: "contract_proforma_ready", metaName: "contract_proforma_ready", params: 6,
     variables: viaNotifyCustomer({ invoiceNumber: "INV-1", totalAmount: "2750000", dueDate: "8 Nov 2026", assetCode: "A-01" }) },
   { site: "booking.service offerUnit", templateKey: "waitlist_unit_offered", metaName: "waitlist_unit_offered", params: 5,
@@ -98,8 +108,8 @@ const CALL_SITES: Array<{ site: string; templateKey: string; variables: Record<s
   { site: "auth.service requestMagicLink", templateKey: "login_link", metaName: "login_link", params: 2,
     variables: viaNotify({ customerName: "Budi Santoso", link: "https://s.example/m/tok?next=%2Fportal" }) },
 
-  // apps/api/src/auth/auth.service.ts — through `notify`, code only.
-  { site: "auth.service sendOtp", templateKey: "otp_code", metaName: "otp_code", params: 1, variables: viaNotify({ code: "483920" }) },
+  // No otp_code: the passcode sign-in was removed (Meta refuses the
+  // AUTHENTICATION category on this account); login_link is the sign-in.
 ];
 
 function bodyParamCount(payload: ReturnType<typeof buildWhatsAppTemplatePayload>): number {
@@ -124,6 +134,8 @@ describe("notify call sites satisfy their WhatsApp templates", () => {
       [
         "booking_approved",
         "booking_approved_payment_link",
+        "booking_cancelled",
+        "booking_date_changed",
         "booking_expired",
         "booking_received",
         "booking_received_basic",
@@ -144,7 +156,6 @@ describe("notify call sites satisfy their WhatsApp templates", () => {
         "lease_suspended",
         "login_link",
         "notice_confirmed",
-        "otp_code",
         "renewal_offer_h14",
         "term_ended",
         "term_renewal_offer_h14",

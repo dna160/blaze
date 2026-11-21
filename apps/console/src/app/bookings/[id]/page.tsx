@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { BookingDto, ContractDto, InvoiceDto, PipelineBookingDto } from "@rentos/contracts";
 
+import { ChangeRequestActions, ChangeRequestPanel } from "@/components/ChangeRequests";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { KycPanel } from "@/components/KycPanel";
 import { SignedScanUpload } from "@/components/SignedScanUpload";
@@ -51,6 +52,8 @@ export default function BookingDetailPage() {
   const [stayActionBusy, setStayActionBusy] = useState(false);
   // PRD go-live 2 §5.3 — how the contract will be signed, chosen at the contract step.
   const [signMethod, setSignMethod] = useState<"ONLINE" | "OFFLINE">("ONLINE");
+
+  const [changeReload, setChangeReload] = useState(0);
 
   async function load() {
     const token = authClient.getToken();
@@ -304,6 +307,19 @@ export default function BookingDetailPage() {
           </table>
         </div>
       )}
+
+      <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5" data-testid="booking-change-requests">
+        <h2 className="font-medium">Permintaan perubahan</h2>
+        <p className="mt-1 text-xs text-brand-700/60">Pembatalan disetujui Super Admin; perubahan tanggal mulai disetujui supervisor atau admin.</p>
+        {canDo(authClient.getUser(), "request_booking_change") && ["PENDING_APPROVAL", "NEEDS_INFO", "APPROVED"].includes(booking.status) && (
+          <div className="mt-3">
+            <ChangeRequestActions bookingId={booking.id} onChanged={() => { setChangeReload((n) => n + 1); load(); }} />
+          </div>
+        )}
+        <div className="mt-3">
+          <ChangeRequestPanel bookingId={booking.id} reloadKey={changeReload} />
+        </div>
+      </div>
 
       {booking.bookingModel === "NIGHTLY" && (booking.status === "PAID" || booking.status === "CHECKED_IN") && (
         <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">

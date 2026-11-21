@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from "../../generated/client/index.js";
 import { raiseCounter, resolveNumbering, counterScope, zonedYearMonth } from "../document-number.js";
+import { createHeldDeposit, depositRefundDueAt, recordDepositEvent } from "../deposits.js";
 import { withTenantContext } from "../tenant-context.js";
 
 import { parseCsv } from "./csv.js";
@@ -567,9 +568,35 @@ export async function applyLegacyImport(prisma: PrismaClient, tenantId: string, 
       if (contract) await tx.contract.update({ where: { id: contract.id }, data: { bookingId: booking.id, ...contractData } });
       else await tx.contract.create({ data: { tenantId, bookingId: booking.id, contractNumber: r.contractNumber, ...contractData } });
 
+      // PRD go-live 2 §3.1 — a carried-over deposit is LEGACY, "received" on the
+      // day it was imported, and every change of the held amount is a movement:
+      // the first as HELD, a later re-sync correction as a signed ADJUSTED —
+      // matching, entry for entry, what ledgerSet posts just below.
       const deposit = await tx.deposit.findFirst({ where: { bookingId: booking.id } });
-      if (deposit) await tx.deposit.update({ where: { id: deposit.id }, data: { amount: r.depositHeld.toFixed(2) } });
-      else if (r.depositHeld > 0) await tx.deposit.create({ data: { tenantId, bookingId: booking.id, amount: r.depositHeld.toFixed(2), status: "HELD" } });
+      if (deposit) {
+        const delta = Math.round((r.depositHeld - Number(deposit.amount.toString())) * 100) / 100;
+        await tx.deposit.update({
+          where: { id: deposit.id },
+          data: { amount: r.depositHeld.toFixed(2), customerId, refundDueAt: depositRefundDueAt(booking) },
+        });
+        if (Math.abs(delta) >= 0.005) {
+          await recordDepositEvent(tx, {
+            tenantId,
+            depositId: deposit.id,
+            type: "ADJUSTED",
+            amount: delta,
+            note: `Legacy re-sync: held amount ${delta > 0 ? "raised" : "lowered"} to ${r.depositHeld.toFixed(2)} (Booqable booking #${r.bookingNumber})`,
+          });
+        }
+      } else if (r.depositHeld > 0) {
+        await createHeldDeposit(tx, {
+          tenantId,
+          bookingId: booking.id,
+          amount: r.depositHeld.toFixed(2),
+          source: "LEGACY",
+          note: `Opening balance: deposit held, Booqable booking #${r.bookingNumber}`,
+        });
+      }
 
       await ledgerSet(tx, tenantId, booking.id, "DEPOSIT", r.depositHeld, `Opening balance: deposit held, Booqable booking #${r.bookingNumber}`);
       return booking.id;

@@ -1,6 +1,7 @@
-import { Body, Controller, Post } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Post, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import {
+  ChangeStaffPasswordRequestSchema,
   ClerkExchangeSchema,
   ConsoleLoginRequestSchema,
   SetStaffPasswordRequestSchema,
@@ -9,8 +10,13 @@ import {
   PlatformLoginRequestSchema,
 } from "@rentos/contracts";
 
+import { AllowPendingPasswordChange } from "../common/decorators/allow-pending-password-change.decorator.js";
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
+import { CurrentUser } from "../common/decorators/current-user.decorator.js";
+import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
+import { StaffGuard } from "../common/guards/staff.guard.js";
 import { ZodValidationPipe } from "../common/pipes/zod-validation.pipe.js";
+import type { AuthenticatedUser } from "../common/types/express-request.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
 
 import { UsersService } from "../users/users.service.js";
@@ -37,6 +43,34 @@ export class AuthController {
   @Post("staff/set-password")
   setStaffPassword(@Body(new ZodValidationPipe(SetStaffPasswordRequestSchema)) body: ReturnType<typeof SetStaffPasswordRequestSchema.parse>) {
     return this.users.setPasswordWithToken(body.token, body.password);
+  }
+
+  /**
+   * PRD go-live 2 §6.1 — who this staff session is, as the account stands now.
+   * Allowed while a password change is pending: the console reads it to decide
+   * where to send the user.
+   */
+  @Get("staff/me")
+  @UseGuards(JwtAuthGuard, StaffGuard)
+  @AllowPendingPasswordChange()
+  staffMe(@CurrentUser() user: AuthenticatedUser) {
+    return this.auth.staffMe(user);
+  }
+
+  /**
+   * PRD go-live 2 §6.1 — change my own password (current + new). The one
+   * mutating route a session with a pending password change may call. Answers
+   * with a fresh token: every other session of the account is revoked.
+   */
+  @Post("staff/change-password")
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, StaffGuard)
+  @AllowPendingPasswordChange()
+  changeStaffPassword(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body(new ZodValidationPipe(ChangeStaffPasswordRequestSchema)) body: ReturnType<typeof ChangeStaffPasswordRequestSchema.parse>,
+  ) {
+    return this.auth.changeStaffPassword(user, body.currentPassword, body.newPassword);
   }
 
   /** Platform-admin login (Session 26) — tenant-agnostic, no @CurrentTenant() involved by design. */

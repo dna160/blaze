@@ -12,6 +12,9 @@ export interface MessagingPauseState {
   pausedByUserId: string | null;
   /** SUPPRESSED notifications waiting for review before unpausing. */
   suppressedCount: number;
+  /** PRD go-live 2 §8.1 — only the test numbers are sent to. */
+  allowlistOnly: boolean;
+  allowlistCount: number;
 }
 
 const REFRESH_EVENT = "rentos:messaging-pause-changed";

@@ -18,6 +18,8 @@ export interface StaffSessionUser {
   roles: string[];
   /** BUILD-SPEC C2 — full role × scope; distinguishes Super Admin (ADMIN@ORG) from a branch Admin. */
   roleAssignments?: RoleAssignment[];
+  /** PRD go-live 2 §6.1 — true: this session can only change its password; the console goes there first. */
+  mustChangePassword?: boolean;
 }
 
 /** True if the session holds an admin role (manage_users). */

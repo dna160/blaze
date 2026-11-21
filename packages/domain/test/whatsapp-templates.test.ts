@@ -15,8 +15,10 @@ function varsFor(names: readonly string[]): Record<string, string> {
 
 function bodyParams(payload: ReturnType<typeof buildWhatsAppTemplatePayload>): string[] {
   const components = (payload.template as { components: Array<Record<string, unknown>> }).components;
-  const body = components.find((c) => c.type === "body") as { parameters: Array<{ text: string }> };
-  return body.parameters.map((p) => p.text);
+  // A template that takes no parameters is sent with no components at all
+  // (Meta counts an empty body component as a parameter mismatch).
+  const body = (components ?? []).find((c) => c.type === "body") as { parameters: Array<{ text: string }> } | undefined;
+  return (body?.parameters ?? []).map((p) => p.text);
 }
 
 describe("whatsapp template registry", () => {
@@ -131,23 +133,18 @@ describe("whatsapp template registry", () => {
   });
 
   describe("authentication category", () => {
-    it("sends the OTP in both the body and the copy-code button", () => {
-      const payload = buildWhatsAppTemplatePayload("otp_code", "628123", { code: "483920" });
-      const components = (payload.template as { components: Array<Record<string, unknown>> }).components;
-      expect(components).toHaveLength(2);
-      expect(bodyParams(payload)).toEqual(["483920"]);
-      expect(components[1]).toEqual({
-        type: "button",
-        sub_type: "copy_code",
-        index: "0",
-        parameters: [{ type: "coupon_code", coupon_code: "483920" }],
-      });
+    // The passcode (otp_code) was removed on purpose: Meta refuses to create an
+    // AUTHENTICATION template on this account, so sign-in is the login_link
+    // magic link. A template in that category could never be registered.
+    it("has no AUTHENTICATION or MARKETING template", () => {
+      expect(allWhatsAppTemplates().filter((t) => t.category === "AUTHENTICATION")).toEqual([]);
+      expect(allWhatsAppTemplates().every((t) => t.category !== "MARKETING")).toBe(true);
+      expect(() => buildWhatsAppTemplatePayload("otp_code", "628123", { code: "483920" })).toThrow();
     });
 
-    it("is the only AUTHENTICATION template — everything else is UTILITY", () => {
-      const auth = allWhatsAppTemplates().filter((t) => t.category === "AUTHENTICATION");
-      expect(auth.map((t) => t.metaName)).toEqual(["otp_code"]);
-      expect(allWhatsAppTemplates().every((t) => t.category !== "MARKETING")).toBe(true);
+    it("sends a template without parameters with no components", () => {
+      const payload = buildWhatsAppTemplatePayload("connection_test", "628123", {});
+      expect((payload.template as { components?: unknown[] }).components ?? []).toEqual([]);
     });
   });
 

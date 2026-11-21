@@ -56,6 +56,8 @@ export type ClientListQuery = z.infer<typeof ClientListQuerySchema>;
 
 export const ClientListItemSchema = z.object({
   id: z.string().uuid(),
+  /** City Storage's own customer number (the {CUST} of contract and invoice numbers). */
+  customerNumber: z.number().int().nullable().optional(),
   fullName: z.string().nullable(),
   phone: z.string().nullable(),
   email: z.string().nullable(),

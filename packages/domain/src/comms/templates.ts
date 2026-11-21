@@ -144,9 +144,35 @@ const TEMPLATES: Record<string, (vars: Vars) => RenderedMessage> = {
     subject: `Pembayaran diterima / Payment received — ${v(vars, "invoiceNumber", "")}`,
     text: `Terima kasih, pembayaran invoice ${v(vars, "invoiceNumber", "")} sebesar Rp ${v(vars, "totalAmount", "")} sudah kami terima.\nThanks — payment for ${v(vars, "invoiceNumber", "")} (Rp ${v(vars, "totalAmount", "")}) is confirmed.\n\n${v(vars, "link")}`,
   }),
+  // PRD go-live 2 §6.1 — an admin sent a reset link (email only; staff, not customers).
+  staff_password_reset: (vars) => ({
+    subject: "Atur ulang kata sandi console / Reset your console password",
+    text:
+      `Halo ${v(vars, "displayName", "")}, admin ${v(vars, "branchName", "City Storage")} mengirim tautan untuk mengatur ulang kata sandi console Anda. Kata sandi lama sudah tidak berlaku. Buat yang baru melalui tautan di bawah (sekali pakai, berlaku 72 jam).\n` +
+      `An administrator at ${v(vars, "branchName", "City Storage")} sent you a link to reset your console password. Your old password no longer works. Set a new one with the link below (single use, valid 72 hours).\n\n${v(vars, "link")}`,
+  }),
   booking_rejected: (vars) => ({
     subject: "Permintaan booking tidak dapat diproses / Booking request declined",
     text: `Mohon maaf, permintaan Anda tidak dapat kami proses. Alasan: ${v(vars, "reason", "-")}.\nSorry, we couldn't process your request. Reason: ${v(vars, "reason", "-")}.`,
+  }),
+  /** PRD go-live 2 §4.2 — an approved booking cancelled before it started (a change request was approved). */
+  booking_cancelled: (vars) => ({
+    subject: "Booking dibatalkan / Booking cancelled",
+    text:
+      `Halo ${v(vars, "customerName", "Pelanggan")}, booking Anda telah dibatalkan dan tagihan yang belum dibayar tidak berlaku lagi. Alasan: ${v(vars, "reason", "-")}.
+` +
+      `Hi ${v(vars, "customerName", "there")}, your booking has been cancelled and its unpaid invoice no longer applies. Reason: ${v(vars, "reason", "-")}.`,
+  }),
+  /** PRD go-live 2 §4.3 — the start (check-in) date of a booking was moved. */
+  booking_date_changed: (vars) => ({
+    subject: "Tanggal mulai sewa diubah / Rental start date changed",
+    text:
+      `Halo ${v(vars, "customerName", "Pelanggan")}, tanggal mulai sewa unit ${v(vars, "assetCode", "")} Anda diubah dari ${v(vars, "previousStartDate", "")} menjadi ${v(vars, "newStartDate", "")}. ${v(vars, "nextStep", "")}
+` +
+      `Hi ${v(vars, "customerName", "there")}, the start date of your rental of unit ${v(vars, "assetCode", "")} has moved from ${v(vars, "previousStartDate", "")} to ${v(vars, "newStartDate", "")}. ${v(vars, "nextStepEn", "")}
+
+` +
+      `Lihat booking / View your booking: ${v(vars, "link")}`,
   }),
   booking_expired: (vars) => ({
     subject: "Permintaan booking kedaluwarsa / Booking request expired",
@@ -165,6 +191,24 @@ const TEMPLATES: Record<string, (vars: Vars) => RenderedMessage> = {
     text: `Invoice ${v(vars, "invoiceNumber", "")} belum dibayar; akses ke unit ditangguhkan sampai pembayaran diterima.\nInvoice ${v(vars, "invoiceNumber", "")} is unpaid; unit access is suspended until payment lands.\n\n${v(vars, "link")}`,
   }),
 };
+
+/**
+ * Every key `renderMessage` has copy for: the fixed templates above, plus one
+ * representative of each dynamically keyed dunning family (the day count in
+ * the key varies, the wording does not). The copy deck (`pnpm wa:templates
+ * copy`) and the wording test iterate this, so a template added to TEMPLATES
+ * shows up in both without touching either.
+ */
+export const DYNAMIC_MESSAGE_TEMPLATE_KEYS: ReadonlyArray<{ key: string; family: string }> = [
+  { key: "invoice_reminder_h7", family: "invoice_reminder_h{n} — n hari sebelum jatuh tempo / n days before the due date" },
+  { key: "invoice_overdue_d3", family: "invoice_overdue_d{n} — n hari setelah jatuh tempo / n days after the due date" },
+  { key: "invoice_reminder_h7_admin", family: "invoice_reminder_h{n}_admin — salinan untuk admin cabang / the branch admin's copy" },
+  { key: "invoice_overdue_d3_admin", family: "invoice_overdue_d{n}_admin — salinan untuk admin cabang / the branch admin's copy" },
+];
+
+export function messageTemplateKeys(): string[] {
+  return [...Object.keys(TEMPLATES), ...DYNAMIC_MESSAGE_TEMPLATE_KEYS.map((d) => d.key)];
+}
 
 export function renderMessage(templateKey: string, variables: Vars): RenderedMessage {
   const template = TEMPLATES[templateKey];

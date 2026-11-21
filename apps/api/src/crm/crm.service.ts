@@ -393,6 +393,7 @@ export class CrmService {
         return {
           locationIds: c.bookings.map((b) => b.location?.id).filter((id): id is string => Boolean(id)),
           id: c.id,
+          customerNumber: c.customerNumber,
           fullName: c.fullName,
           phone: c.phone,
           email: c.email,

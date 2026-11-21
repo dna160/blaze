@@ -43,3 +43,6 @@ coverage/
 
 # per-worktree local env (scratch setup script)
 .wt.env
+
+# agent worktrees (local, never committed)
+.claude/worktrees/

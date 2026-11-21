@@ -79,8 +79,97 @@ export const MessagingPauseResponseSchema = z.object({
   pausedByUserId: z.string().nullable(),
   /** SUPPRESSED notifications waiting for review (PRD go-live §10.2 step 6). */
   suppressedCount: z.number(),
+  /** PRD go-live 2 §8.1 — "Hanya kirim ke nomor uji" is on: only allowlisted numbers are sent to. */
+  allowlistOnly: z.boolean(),
+  /** How many numbers the test allowlist holds (the numbers themselves are the org Admin's to read). */
+  allowlistCount: z.number().int().nonnegative(),
 });
 export type MessagingPauseResponse = z.infer<typeof MessagingPauseResponseSchema>;
+
+/* ------------------------------------------------- test allowlist (§8.1) */
+
+/**
+ * PRD go-live 2 §8.1 — the organization's test allowlist. While `enabled`,
+ * every outbound message to a recipient that is not one of `numbers` is
+ * recorded as SUPPRESSED (reason NOT_ON_TEST_ALLOWLIST) instead of sent.
+ * Organization-scoped Admin only, like the pause.
+ */
+export const MESSAGING_ALLOWLIST_MAX_NUMBERS = 50;
+
+export const MessagingAllowlistSchema = z.object({
+  enabled: z.boolean(),
+  /** E.164 as stored, e.g. +628111877838. */
+  numbers: z.array(z.string()),
+});
+export type MessagingAllowlist = z.infer<typeof MessagingAllowlistSchema>;
+
+export const UpdateMessagingAllowlistRequestSchema = z.object({
+  enabled: z.boolean(),
+  /** Any common spelling (+62 811-…, 62811…, 0811…); the server stores E.164. */
+  numbers: z
+    .array(
+      z
+        .string()
+        .trim()
+        .regex(/^\+?[\d\s().-]{8,24}$/, "A phone number, e.g. +628111877838"),
+    )
+    .max(MESSAGING_ALLOWLIST_MAX_NUMBERS),
+});
+export type UpdateMessagingAllowlistRequest = z.infer<typeof UpdateMessagingAllowlistRequestSchema>;
+
+/* ------------------------------------------- suppressed messages (§8.2) */
+
+/** Why a message was held back. Stable codes; the human text travels next to them. */
+export const SuppressionCodeSchema = z.enum(["PAUSED", "NOT_ON_TEST_ALLOWLIST", "UNKNOWN_TENANT"]);
+export type SuppressionCodeName = z.infer<typeof SuppressionCodeSchema>;
+
+const IsoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD");
+
+/**
+ * `from`/`to` are inclusive calendar dates in the branch timezone (the report
+ * range convention); both omitted means "ever".
+ */
+export const SuppressedMessagesQuerySchema = z
+  .object({
+    from: IsoDay.optional(),
+    to: IsoDay.optional(),
+    template: z.string().trim().min(1).max(80).optional(),
+    reason: SuppressionCodeSchema.optional(),
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(200).default(50),
+  })
+  .refine((v) => Boolean(v.from) === Boolean(v.to), { message: "Give both from and to, or neither.", path: ["to"] });
+export type SuppressedMessagesQuery = z.infer<typeof SuppressedMessagesQuerySchema>;
+
+export const SuppressedMessageSchema = z.object({
+  id: z.string(),
+  createdAt: z.string(),
+  templateKey: z.string(),
+  channel: z.string(),
+  recipient: z.string(),
+  recipientRole: z.string(),
+  customerId: z.string().nullable(),
+  customerName: z.string().nullable(),
+  customerNumber: z.number().nullable(),
+  branchName: z.string().nullable(),
+  reason: SuppressionCodeSchema,
+  reasonText: z.string().nullable(),
+});
+export type SuppressedMessage = z.infer<typeof SuppressedMessageSchema>;
+
+export const SuppressedMessagesResponseSchema = z.object({
+  items: z.array(SuppressedMessageSchema),
+  /** Matching the filters. */
+  total: z.number(),
+  /** Every suppressed message the caller can see, whatever the filters. */
+  totalEver: z.number(),
+  page: z.number(),
+  pageSize: z.number(),
+  /** The templates that occur, for the filter. */
+  templates: z.array(z.string()),
+  timeZone: z.string(),
+});
+export type SuppressedMessagesResponse = z.infer<typeof SuppressedMessagesResponseSchema>;
 
 /**
  * Test send. `accessToken`/`phoneNumberId` are optional overrides so a

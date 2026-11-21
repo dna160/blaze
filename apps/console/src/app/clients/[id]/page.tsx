@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { ClientListItem } from "@rentos/contracts";
 
+import { ChangeRequestActions, ChangeRequestPanel } from "@/components/ChangeRequests";
 import { HEALTH_STYLE } from "@/components/ClientList";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { KycPanel } from "@/components/KycPanel";
@@ -203,6 +204,7 @@ export default function ClientDetailPage() {
   const me = authClient.getUser();
   const canEditTax = canDo(me, "approve_booking") || canDo(me, "record_payment");
   const canUploadScan = canDo(me, "create_booking") || canDo(me, "approve_booking");
+  const [changeReload, setChangeReload] = useState(0);
 
   function load() {
     const token = authClient.getToken();
@@ -311,6 +313,13 @@ export default function ClientDetailPage() {
       </div>
 
       <section className="mt-8">
+        <h2 className="text-lg font-medium">Permintaan perubahan</h2>
+        <div className="mt-2">
+          <ChangeRequestPanel customerId={customer.id} reloadKey={changeReload} />
+        </div>
+      </section>
+
+      <section className="mt-8">
         <h2 className="text-lg font-medium">Rentals</h2>
         {customer.bookings.length === 0 && <p className="mt-2 text-sm text-brand-700/60">No rentals yet.</p>}
         <div className="mt-3 space-y-4">
@@ -334,6 +343,11 @@ export default function ClientDetailPage() {
                 </div>
                 <span className="rounded-full bg-brand-700/10 px-3 py-1 text-xs font-medium">{b.status}</span>
               </div>
+              {canDo(me, "request_booking_change") && ["PENDING_APPROVAL", "NEEDS_INFO", "APPROVED"].includes(b.status) && (
+                <div className="mt-2">
+                  <ChangeRequestActions bookingId={b.id} compact onChanged={() => setChangeReload((n) => n + 1)} />
+                </div>
+              )}
 
               {b.invoices.length > 0 && (
                 <table className="mt-3 w-full text-xs">

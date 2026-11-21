@@ -290,6 +290,59 @@ types are **unpublished** — re-publish them in Catalog Setup once the book is
 back, or the storefront would sell units that are physically occupied. Remove
 both variables afterwards. Re-import with §7.
 
+`ONE_OFF_WIPE_RESET_COUNTERS=1` additionally puts the number counters back —
+see "The client's test period" below. Without it the counters are kept, so no
+contract or invoice number is ever reused.
+
+### The client's test period, then the real cut-over (PRD part 2 §7.1)
+
+City Storage tests on an **empty** Kebon Jeruk first — test renters with their
+own phone numbers, real contract and invoice formats, no real customers — and
+only then does the real cut-over happen. Three tools make that safe:
+
+- **The wipe** (above), once to start the test period and once to end it.
+- **The test allowlist** (Settings → Messaging → "Mode uji — hanya kirim ke
+  nomor uji"). While it is on, a message to any number that is not on the list
+  is recorded as suppressed (`NOT_ON_TEST_ALLOWLIST`) and never sent, and
+  every e-mail is held back too. The pause still wins over it. Held-back
+  messages are listed under Pesan → *Pesan yang ditahan* (`/messaging/suppressed`)
+  with a CSV export; nothing in that list is ever sent later.
+- **The test-mode banner** (Settings → Branch → "Mode uji"): every console
+  page says "Mode uji — data akan dihapus sebelum go-live". It is a marker
+  only; it changes no behaviour.
+
+**Booqable re-sync stays manual, and none runs during the test period** — the
+client asked for this explicitly. Nothing in RentOS pulls from Booqable on a
+schedule; the developer runs §7 by hand at step 7 only. Staff keep working in
+Booqable throughout the test period; RentOS is not the system of record until
+step 10.
+
+The sequence, and who does each step:
+
+| # | Step | Who | How, and how to know it worked |
+|---|---|---|---|
+| 1 | **Pause messaging** | Owner (Johnson), as org-scoped Admin | Settings → Messaging → Pause, with a reason. The red banner appears on every page. |
+| 2 | **Wipe for testing** | Developer | `ONE_OFF_WIPE=dry`, read the log, then `apply`, with `ONE_OFF_WIPE_TENANT=city-storage-kebon-jeruk`. **Do not** set `ONE_OFF_WIPE_RESET_COUNTERS` here. Then remove the variables (set `ONE_OFF_WIPE=off`) so a restart cannot wipe again. Clients, Finance, Deposit and the Booqable archive are empty; Inventory still has every unit. |
+| 3 | **Turn on test mode** | Owner | Settings → Messaging: add the testers' own numbers, press "Hanya kirim ke nomor uji" (amber banner "Mode uji: hanya N nomor"). Settings → Branch: tick "Mode uji". Re-publish the unit types testers should be able to book (Catalog Setup). Then **unpause** — only the listed numbers can now receive anything. |
+| 4 | **Client tests** | City Storage staff, with the owner | Bookings, KYC, contracts, invoices, payments, with their own phone numbers as the renters. A tester whose number is missing from the list gets no message — look in *Pesan yang ditahan* and add the number. |
+| 5 | **Pause** | Owner | As step 1. Testing is over; from here nothing must reach anyone until step 10. |
+| 6 | **Wipe with counter reset** | Developer | As step 2 **plus** `ONE_OFF_WIPE_RESET_COUNTERS=1`. Test contracts and invoices used up real sequence numbers; this puts the contract, invoice and customer counters back so real numbering continues from Booqable without a gap. Do the dry run first: it prints the counters before and after. Go straight on to step 7. |
+| 7 | **Final Booqable re-sync and import** | Developer | §7, by hand: fetch → `to_migration.py` → dry run → apply → `to_archive.py` → archive import. The import raises the counters to Booqable's highest contract, invoice and customer numbers. It refuses to run unless messaging is paused (step 5). Freeze Booqable for new work from this moment. |
+| 8 | **Reconcile** | Owner and City Storage finance, with the developer | §8 steps 2–4: totals against Booqable (active rentals, AR, deposits held), ten customers spot-checked with the branch. Check the next numbers in Settings → Branch → numbering preview. |
+| 9 | **Turn off test mode** | Owner | Settings → Messaging: "Matikan mode uji". Settings → Branch: untick "Mode uji". Re-publish the unit types. Messaging is **still paused**, so nothing goes out yet. |
+| 10 | **Unpause** | Owner | Review *Pesan yang ditahan* one last time (none of it is sent), then Resume sending. Lift the legacy hold (below) when RentOS is to bill and remind the imported customers itself. |
+
+About the counter reset in step 6. After a wipe RentOS holds no Booqable
+number at all — the highest numbers live in Booqable and in the import files —
+so the reset returns the counters to the floor (no document counters; the
+customer counter at the highest number another branch of the organization
+still uses, else 0) and the import in step 7 raises them to the true maxima.
+If anything could be issued between steps 6 and 7, pin them instead with
+`ONE_OFF_WIPE_MIN_CONTRACT_SEQ`, `ONE_OFF_WIPE_MIN_INVOICE_SEQ` and
+`ONE_OFF_WIPE_MIN_CUSTOMER_NUMBER` (Booqable's highest numbers — the dry run of
+the import prints them as "counters continue"). Never use the reset for the
+wipe in step 2: there is no import after it to raise the counters again.
+
 ## 9. Storefront domain (needs B6)
 
 ```sql

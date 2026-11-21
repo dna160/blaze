@@ -236,6 +236,19 @@ enum SwapRequestStatus {
   REJECTED
 }
 
+/// PRD go-live 2 §4 — what a booking change request asks for.
+enum ChangeRequestType {
+  CANCEL
+  CHANGE_START_DATE
+}
+
+enum ChangeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
 /// Platform-level (RentOS's own SaaS revenue from a tenant), not to be
 /// confused with a tenant's own Invoice model — see PlatformInvoice's own
 /// doc comment. Static pricing/limits per plan live in code
@@ -783,6 +796,7 @@ model Booking {
   invoices     Invoice[]
   deposits     Deposit[]
   swapRequests SwapRequest[]
+  changeRequests ChangeRequest[]
 
   waitlistEntry WaitlistEntry?
 
@@ -1032,6 +1046,12 @@ model Contract {
   companyStampPresent Boolean?     @map("company_stamp_present")
   /// Staff member who uploaded the signed scan.
   signedUploadedByUserId String?   @map("signed_uploaded_by_user_id") @db.Uuid
+  /// PRD go-live 2 §4.3 — bumped each time the agreement is re-rendered
+  /// because the booking it describes changed (a moved start date).
+  version             Int          @default(1)
+  /// What each earlier version was: `{ version, replacedAt, reason,
+  /// unsignedDocumentUrl, documentUrl, signedAt, signedByName, confirmedAt }`.
+  previousVersions    Json         @default("[]") @map("previous_versions")
   createdAt           DateTime     @default(now()) @map("created_at")
 
   @@unique([tenantId, contractNumber])
@@ -1238,12 +1258,107 @@ model Deposit {
   refundApprovedByUserId String?       @map("refund_approved_by_user_id") @db.Uuid
   refundedAt             DateTime?     @map("refunded_at")
   payoutRef              String?       @map("payout_ref")
+  /// PRD go-live 2 §3.1 — the deposit report's dates.
+  /// The booking's customer, denormalised so a report never joins through the
+  /// booking. No FK on purpose (like Notification.customerId): a customer
+  /// merge must update it, see packages/database/src/deposits.ts.
+  customerId              String?       @map("customer_id") @db.Uuid
+  /// LEGACY: carried over from the legacy system's book (an opening balance),
+  /// not money RentOS itself received.
+  source                  DepositSource @default(RENTOS)
+  /// When the money arrived. For a legacy row: when it was imported.
+  receivedAt              DateTime      @default(now()) @map("received_at")
+  refundRequestedAt       DateTime?     @map("refund_requested_at")
+  refundRequestedByUserId String?       @map("refund_requested_by_user_id") @db.Uuid
+  /// Lease end + 30 days (T&C IV.3). Null while the lease has no end date yet.
+  refundDueAt             DateTime?     @map("refund_due_at")
   createdAt              DateTime      @default(now()) @map("created_at")
   updatedAt              DateTime      @updatedAt @map("updated_at")
 
+  events DepositEvent[]
+
   @@index([tenantId])
   @@index([bookingId])
+  @@index([tenantId, customerId])
   @@map("deposits")
+}
+
+/// PRD go-live 2 §4 — staff ask, someone else decides. A booking is no longer
+/// cancelled (or its start date moved) by the person who wants it: they file a
+/// request with a reason, and a decider named by Organization.approvalPolicy
+/// approves or rejects it. The decider is never the requester — except the one
+/// documented path, a super admin's own cancellation, which approves itself
+/// and says so in the audit log.
+///
+/// `payload` by type:
+///   CANCEL             {}
+///   CHANGE_START_DATE  { newStartDate: "YYYY-MM-DD", assetId?: uuid,
+///                        signedContract?: "RESIGN" | "RECONFIRM",
+///                        previousStartDate, previousAssetId }
+/// `result` is what approval did (voided / re-issued invoices, contract
+/// version, unit) — written once, for the history.
+///
+/// At most one PENDING request per booking per type: a partial unique index
+/// in the migration (Prisma cannot express it).
+model ChangeRequest {
+  id                String              @id @default(uuid()) @db.Uuid
+  tenantId          String              @map("tenant_id") @db.Uuid
+  bookingId         String              @map("booking_id") @db.Uuid
+  booking           Booking             @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  type              ChangeRequestType
+  payload           Json                @default("{}")
+  reason            String
+  status            ChangeRequestStatus @default(PENDING)
+  requestedByUserId String              @map("requested_by_user_id") @db.Uuid
+  requestedAt       DateTime            @default(now()) @map("requested_at")
+  decidedByUserId   String?             @map("decided_by_user_id") @db.Uuid
+  decidedAt         DateTime?           @map("decided_at")
+  decisionNote      String?             @map("decision_note")
+  result            Json?
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+
+  @@index([tenantId, status])
+  @@index([bookingId])
+  @@map("change_requests")
+}
+
+enum DepositSource {
+  RENTOS
+  LEGACY
+}
+
+/// PRD go-live 2 §3.1 — every movement of a deposit, so a report over a date
+/// range shows what happened in it (received, applied, refunded), not only
+/// where each deposit stands today. Written in the same transaction as the
+/// ledger entries of the movement; the two must always tell the same story:
+/// held = HELD + ADJUSTED − APPLIED − REFUNDED = the DEPOSIT_LIABILITY balance.
+model DepositEvent {
+  id          String           @id @default(uuid()) @db.Uuid
+  tenantId    String           @map("tenant_id") @db.Uuid
+  depositId   String           @map("deposit_id") @db.Uuid
+  deposit     Deposit          @relation(fields: [depositId], references: [id], onDelete: Cascade)
+  type        DepositEventType
+  /// HELD: the amount received. APPLIED / REFUNDED: the amount that left the
+  /// deposit. REFUND_REQUESTED: the amount asked back (moves no money).
+  /// ADJUSTED: signed — a legacy re-sync that corrected the held amount.
+  amount      Decimal          @default(0) @db.Decimal(14, 2)
+  occurredAt  DateTime         @default(now()) @map("occurred_at")
+  actorUserId String?          @map("actor_user_id") @db.Uuid
+  note        String?
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  @@index([tenantId, occurredAt])
+  @@index([depositId])
+  @@map("deposit_events")
+}
+
+enum DepositEventType {
+  HELD
+  APPLIED
+  REFUND_REQUESTED
+  REFUNDED
+  ADJUSTED
 }
 
 /// PRD §7.1.4 "request upgrade/downsize... creates a swap request routed to
@@ -1313,10 +1428,13 @@ model Notification {
   recipientRole String    @default("CUSTOMER") @map("recipient_role")
   recipient     String
   payload       Json      @default("{}")
-  /// QUEUED | SENT | FAILED
+  /// QUEUED | SENT | FAILED | SUPPRESSED | RECEIVED
   status        String    @default("QUEUED")
   providerRef   String?   @map("provider_ref")
   error         String?
+  /// PRD go-live 2 §8.2 — set only on a SUPPRESSED row: the stable reason code
+  /// (PAUSED | NOT_ON_TEST_ALLOWLIST | UNKNOWN_TENANT). `error` keeps the text.
+  suppressionCode String? @map("suppression_code")
   sentAt        DateTime? @map("sent_at")
   /// Messaging inbox — when staff opened the thread after this inbound arrived.
   /// Null means unread. Only meaningful on inbound rows.
@@ -1326,6 +1444,8 @@ model Notification {
   @@index([tenantId])
   /// The inbox groups by (tenant, counterpart phone) and orders by time.
   @@index([tenantId, recipient, createdAt])
+  /// The suppressed list and the banner's count read by status.
+  @@index([tenantId, status, createdAt])
   @@map("notifications")
 }
 

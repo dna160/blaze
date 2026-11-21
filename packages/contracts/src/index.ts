@@ -14,3 +14,7 @@ export * from "./automation.js";
 export * from "./branch.js";
 export * from "./legacy.js";
 export * from "./report-range.js";
+export * from "./change-request.js";
+export * from "./deposit-report.js";
+export * from "./password-policy.js";
+export * from "./reports.js";

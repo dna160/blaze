@@ -133,8 +133,14 @@ fi
 # PROMOTE_ADMIN_TENANT=<slug>       (required when more than one tenant exists)
 # PROMOTE_ADMIN_PASSWORD=<password> (optional; sets/resets it, required to create)
 #
+# The password set here is a ONE-TIME password (PRD go-live 2 §6.1): it has sat
+# in a deploy variable, so the account must change it at first login and can do
+# nothing else until it has; sessions from before the reset are revoked.
+#
 # Remove these once you are in. Left set, it re-asserts the grant every boot —
-# harmless but it means the account cannot be demoted from the console.
+# the account cannot be demoted from the console, and with
+# PROMOTE_ADMIN_PASSWORD still set every boot puts that password back, signs the
+# account out and forces another change.
 if [ -n "$PROMOTE_ADMIN_EMAIL" ]; then
   echo "[entrypoint] Promoting $PROMOTE_ADMIN_EMAIL to ADMIN x ORGANIZATION…"
   # Never fatal. This is an operator convenience; a bad tenant slug or a missing
@@ -174,8 +180,14 @@ fi
 # 2026-11-17). ONE_OFF_WIPE=dry prints what it would delete and rolls back;
 # =apply commits. ONE_OFF_WIPE_TENANT names the branch — without it nothing
 # runs. See packages/database/scripts/go-live-wipe.ts. Remove both after.
+#
+# ONE_OFF_WIPE_RESET_COUNTERS=1 (PRD go-live 2 §7.1) additionally puts the
+# contract / invoice / customer number counters back, for the wipe that ENDS
+# the client's test period — run the final Booqable import straight after.
+# Optional: ONE_OFF_WIPE_MIN_CONTRACT_SEQ / _MIN_INVOICE_SEQ /
+# _MIN_CUSTOMER_NUMBER pin Booqable's highest numbers. Remove these too.
 if [ "$ONE_OFF_WIPE" = "dry" ] || [ "$ONE_OFF_WIPE" = "apply" ]; then
-  echo "[entrypoint] Branch wipe ($ONE_OFF_WIPE, tenant '$ONE_OFF_WIPE_TENANT')…"
+  echo "[entrypoint] Branch wipe ($ONE_OFF_WIPE, tenant '$ONE_OFF_WIPE_TENANT', reset counters: ${ONE_OFF_WIPE_RESET_COUNTERS:-no})…"
   pnpm --filter @rentos/database go-live-wipe || echo "[entrypoint] Wipe FAILED (see above) — nothing was changed. Starting the API anyway."
 fi
 

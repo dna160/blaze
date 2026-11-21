@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { apiFetch, ApiError } from "@/lib/api";
+import { apiFetch, ApiError, CHANGE_PASSWORD_PATH } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 
 interface LoginResponse {
@@ -15,6 +15,7 @@ interface LoginResponse {
     organizationId?: string | null;
     roles: string[];
     roleAssignments?: { role: "ADMIN" | "FINANCE" | "SUPERVISOR" | "STAFF"; scope: "ORGANIZATION" | "TENANT"; tenantIds: string[] }[];
+    mustChangePassword?: boolean;
   };
 }
 
@@ -32,7 +33,8 @@ export default function LoginPage() {
     try {
       const result = await apiFetch<LoginResponse>("/auth/console/login", { method: "POST", body: { email, password } });
       authClient.setSession(result.accessToken, result.user);
-      router.push("/bookings");
+      // PRD go-live 2 §6.1 — an account that must change its password goes there before anything else.
+      router.push(result.user.mustChangePassword ? CHANGE_PASSWORD_PATH : "/bookings");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Login failed.");
     } finally {

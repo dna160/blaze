@@ -6,6 +6,7 @@ import {
   getBookingModelStrategy,
   invoiceFsm,
   money,
+  ppnLabel,
   roundMoney,
   sumMoney,
   type BookingWindow,
@@ -411,7 +412,7 @@ export async function generateRentalOrderInvoice(
     lines.push({ description: "Security deposit", quantity: money(1), unitPrice: deposit, amount: deposit, lineType: "DEPOSIT" });
   }
   if (tax.taxAmount.greaterThan(0)) {
-    lines.push({ description: "PPN 11%", quantity: money(1), unitPrice: tax.taxAmount, amount: tax.taxAmount, lineType: "TAX" });
+    lines.push({ description: ppnLabel(), quantity: money(1), unitPrice: tax.taxAmount, amount: tax.taxAmount, lineType: "TAX" });
   }
 
   const subtotal = sumMoney(lines.filter((l) => l.lineType !== "TAX").map((l) => l.amount));

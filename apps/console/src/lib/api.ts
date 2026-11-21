@@ -5,9 +5,49 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public readonly status: number,
+    /** The API's machine-readable `code`, when it sent one. */
+    public readonly code?: string,
   ) {
     super(message);
   }
+}
+
+/** The page a session that must change its password is sent to (PRD go-live 2 §6.1). */
+export const CHANGE_PASSWORD_PATH = "/account/password";
+
+/**
+ * PRD go-live 2 §6.1 — the API refuses everything but change-password while an
+ * account must change its password (403 + this code). Whatever page made the
+ * call, the answer is the same: go and change it. Handled here, once, so no
+ * page has to know.
+ */
+function redirectIfPasswordChangeRequired(status: number, code: string | undefined): void {
+  if (status !== 403 || code !== "PASSWORD_CHANGE_REQUIRED" || typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem("rentos_staff_user");
+    if (raw) window.localStorage.setItem("rentos_staff_user", JSON.stringify({ ...JSON.parse(raw), mustChangePassword: true }));
+  } catch {
+    /* the redirect below is what matters */
+  }
+  if (!window.location.pathname.startsWith(CHANGE_PASSWORD_PATH)) window.location.assign(CHANGE_PASSWORD_PATH);
+}
+
+/**
+ * A 401 on a call that carried a token means the session is over: it expired,
+ * the account was suspended, or its password was changed somewhere else (which
+ * revokes every other session — PRD go-live 2 §6.1). Drop it and sign in again.
+ * A 401 without a token is just a wrong password on the login form.
+ */
+function redirectIfSessionEnded(status: number, hadToken: boolean): void {
+  if (status !== 401 || !hadToken || typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem("rentos_staff_token");
+    window.localStorage.removeItem("rentos_staff_user");
+  } catch {
+    /* the redirect below is what matters */
+  }
+  const here = window.location.pathname;
+  if (!here.startsWith("/login") && !here.startsWith("/set-password") && !here.startsWith("/platform")) window.location.assign("/login");
 }
 
 export interface ApiFetchOptions {
@@ -38,7 +78,9 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
 
   if (!res.ok) {
     const payload = await res.json().catch(() => ({ message: res.statusText }));
-    throw new ApiError(payload.message ?? "Request failed", res.status);
+    redirectIfPasswordChangeRequired(res.status, payload.code);
+    redirectIfSessionEnded(res.status, Boolean(options.token));
+    throw new ApiError(payload.message ?? "Request failed", res.status, payload.code);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -59,9 +101,23 @@ export async function apiFetchBlob(path: string, token: string | null): Promise<
   return res.blob();
 }
 
-/** CSV/report exports — fetch the blob (to carry the Bearer token) then trigger a save-as download with a real filename. */
+/**
+ * CSV/report exports — fetch the blob (to carry the Bearer token) then trigger a save-as download with a real filename.
+ * The API names report files itself (`{branchCode}_{report}_{from}_{to}.csv`, PRD go-live 2 §2.4) and exposes the
+ * Content-Disposition header; that name wins, and `filename` is only the fallback for a response that carries none.
+ */
 export async function apiDownload(path: string, token: string | null, filename: string): Promise<void> {
-  const blob = await apiFetchBlob(path, token);
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { "X-Tenant-Slug": TENANT_SLUG, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({ message: res.statusText }));
+    throw new ApiError(payload.message ?? res.statusText, res.status);
+  }
+  const named = /filename="?([^";]+)"?/i.exec(res.headers.get("Content-Disposition") ?? "")?.[1];
+  const blob = await res.blob();
+  if (named) filename = named;
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

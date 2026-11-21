@@ -89,6 +89,24 @@ describe("RBAC — scope axis", () => {
     expect(hasOrganizationScope([superFinance])).toBe(true);
     expect(hasOrganizationScope([finance])).toBe(false);
   });
+  it("an organization-scoped supervisor covers every branch (PRD go-live 2 §6.2)", () => {
+    const orgSpv: RoleAssignment = { role: "SUPERVISOR", scope: "ORGANIZATION", tenantIds: [] };
+    for (const t of [TENANT_A, TENANT_B]) {
+      expect(can([orgSpv], "approve_booking", t)).toBe(true);
+      expect(can([orgSpv], "request_booking_change", t)).toBe(true);
+      expect(can([orgSpv], "read_messages", t)).toBe(true);
+      // ...still a supervisor: no reports, no payment verification, no users.
+      expect(can([orgSpv], "run_reports", t)).toBe(false);
+      expect(can([orgSpv], "verify_payment", t)).toBe(false);
+      expect(can([orgSpv], "manage_users", t)).toBe(false);
+    }
+    expect(hasOrganizationScope([orgSpv])).toBe(true);
+  });
+  it("a supervisor of either scope does not run reports (PRD go-live 2 §6.2)", () => {
+    expect(can([spv], "run_reports", TENANT_A)).toBe(false);
+    expect(can([admin], "run_reports", TENANT_A)).toBe(true);
+    expect(can([finance], "run_reports", TENANT_A)).toBe(true);
+  });
   it("super finance can run reports across the org but cannot create bookings", () => {
     expect(can([superFinance], "run_reports", TENANT_B)).toBe(true);
     expect(can([superFinance], "create_booking", TENANT_B)).toBe(false);

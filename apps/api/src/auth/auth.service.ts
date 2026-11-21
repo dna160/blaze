@@ -1,9 +1,21 @@
-import { Injectable, Logger, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
+import {
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
-import { compare } from "bcryptjs";
+import { compare, hash } from "bcryptjs";
+import { PASSWORD_POLICY_MESSAGES, passwordPolicyError } from "@rentos/contracts";
 import { exchangeCustomerAccessToken } from "@rentos/database";
 
+import { AuditService } from "../audit/audit.service.js";
+import { BCRYPT_COST, passwordChangeMoment } from "../common/password-change.js";
 import { RedisService } from "../common/redis/redis.service.js";
+import type { AuthenticatedUser } from "../common/types/express-request.js";
 import { CrmService } from "../crm/crm.service.js";
 import { NotificationsService } from "../notifications/notifications.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -19,6 +31,10 @@ const LOGIN_LINK_TTL_DAYS = 15 / (24 * 60);
 
 /** One sign-in link per number per minute. An unauthenticated endpoint that sends WhatsApp messages costs real money to abuse. */
 const LOGIN_LINK_COOLDOWN_SECONDS = 60;
+
+/** PRD go-live 2 §6.1 — wrong guesses at the current password on change-password, per account. */
+const PASSWORD_CHANGE_MAX_FAILURES = 5;
+const PASSWORD_CHANGE_FAILURE_WINDOW_SECONDS = 15 * 60;
 
 interface CustomerLike {
   id: string;
@@ -37,6 +53,7 @@ export class AuthService {
     private readonly redis: RedisService,
     private readonly crm: CrmService,
     private readonly notifications: NotificationsService,
+    private readonly audit: AuditService,
   ) {}
 
   /** Console (staff) login — email + password (PRD §7.2.7 users & roles). */
@@ -50,34 +67,150 @@ export class AuthService {
     const valid = await compare(password, user.passwordHash);
     if (!valid) throw new UnauthorizedException("Invalid credentials.");
 
-    // BUILD-SPEC C2 — carry full role × scope assignments in the token so the
-    // CapabilityGuard can authorize per-tenant without a DB round-trip.
-    const roleAssignments = user.roles.map((r) => ({
-      role: r.role,
-      scope: r.scope,
-      tenantIds: r.tenantIds,
-    }));
-    const roles = roleAssignments.map((r) => r.role);
+    // A login always succeeds for a correct password — but while the account
+    // must change it (PRD go-live 2 §6.1), the session this returns can do
+    // nothing else: `mustChangePassword` rides on the response for the console
+    // to route on, and JwtAuthGuard enforces it server-side on every request.
+    return this.issueStaffSession(user, { tenantId: tenant.id, organizationId: tenant.organizationId });
+  }
+
+  /**
+   * One place a staff token is minted (login, and the fresh one after a
+   * password change).
+   *
+   * BUILD-SPEC C2 — it carries the full role × scope assignments so the
+   * CapabilityGuard can authorize per-tenant without a DB round-trip.
+   *
+   * `iat` is set explicitly: never earlier than the account's
+   * `passwordChangedAt`, which JwtStrategy compares against to revoke the
+   * sessions that predate a password change. `passwordChangedAt` is stored one
+   * second ahead of the change (see `passwordChangeMoment`), so a login in the
+   * same second as the change still gets a token that survives it.
+   */
+  private async issueStaffSession(
+    user: {
+      id: string;
+      email: string;
+      displayName: string | null;
+      mustChangePassword: boolean;
+      passwordChangedAt: Date | null;
+      roles: Array<{ role: string; scope: string; tenantIds: string[] }>;
+    },
+    session: { tenantId: string | null; organizationId: string | null },
+  ) {
+    const now = Math.floor(Date.now() / 1000);
+    const iat = Math.max(now, user.passwordChangedAt ? Math.floor(user.passwordChangedAt.getTime() / 1000) : 0);
+    const roles = user.roles.map((r) => r.role);
+    // The vendor platform admin (no tenant) holds no in-tenant assignments.
+    const roleAssignments = session.tenantId ? user.roles.map((r) => ({ role: r.role, scope: r.scope, tenantIds: r.tenantIds })) : [];
     const accessToken = await this.jwt.signAsync({
       sub: user.id,
-      tenantId: tenant.id,
-      organizationId: tenant.organizationId,
+      tenantId: session.tenantId,
+      ...(session.tenantId ? { organizationId: session.organizationId } : {}),
       kind: "STAFF",
       roles,
       roleAssignments,
+      iat,
     });
     return {
       accessToken,
       user: {
         id: user.id,
-        tenantId: tenant.id,
-        organizationId: tenant.organizationId,
+        ...(session.tenantId ? { tenantId: session.tenantId, organizationId: session.organizationId } : {}),
         email: user.email,
         displayName: user.displayName,
         roles,
-        roleAssignments,
+        ...(session.tenantId ? { roleAssignments } : {}),
+        mustChangePassword: user.mustChangePassword,
       },
     };
+  }
+
+  /** The staff account behind a session, read in the context its tenancy calls for. */
+  private loadStaffAccount(actor: { id: string; tenantId: string | null }) {
+    return actor.tenantId
+      ? this.prisma.runInTenantContext(actor.tenantId, (tx) => tx.user.findUnique({ where: { id: actor.id }, include: { roles: true } }))
+      : this.prisma.runInPlatformContext((tx) => tx.user.findFirst({ where: { id: actor.id, tenantId: null }, include: { roles: true } }));
+  }
+
+  /** Who am I, as the account stands now — the console re-reads this to know whether a password change is still pending. */
+  async staffMe(actor: AuthenticatedUser) {
+    const user = await this.loadStaffAccount(actor);
+    if (!user) throw new UnauthorizedException("This account is no longer active. Sign in again.");
+    const roles = user.roles.map((r) => r.role);
+    return {
+      user: {
+        id: user.id,
+        tenantId: actor.tenantId,
+        organizationId: actor.organizationId,
+        email: user.email,
+        displayName: user.displayName,
+        roles,
+        roleAssignments: actor.tenantId ? user.roles.map((r) => ({ role: r.role, scope: r.scope, tenantIds: r.tenantIds })) : [],
+        mustChangePassword: user.mustChangePassword,
+      },
+    };
+  }
+
+  /**
+   * PRD go-live 2 §6.1 — change my own password.
+   *
+   * Needs the current password (a session left open on a shared desk must not
+   * be enough to take the account over), applies the one password policy, and
+   * then: clears `mustChangePassword`, revokes every other session of this
+   * account (JwtStrategy refuses tokens issued before `passwordChangedAt`),
+   * kills any set-password link still outstanding, and hands THIS session a
+   * fresh token so the person who just changed it stays signed in.
+   *
+   * Wrong guesses at the current password are counted per account: after
+   * five in fifteen minutes the endpoint answers 429 until the window passes.
+   */
+  async changeStaffPassword(actor: AuthenticatedUser, currentPassword: string, newPassword: string) {
+    const failKey = `staff-password-change-fail:${actor.id}`;
+    const failures = Number((await this.redis.client.get(failKey)) ?? 0);
+    if (failures >= PASSWORD_CHANGE_MAX_FAILURES) {
+      throw new HttpException(
+        { code: "TOO_MANY_ATTEMPTS", message: "Terlalu banyak percobaan. Coba lagi dalam 15 menit. / Too many attempts. Try again in 15 minutes." },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const user = await this.loadStaffAccount(actor);
+    if (!user || !user.passwordHash || user.status !== "ACTIVE") {
+      throw new UnauthorizedException("This account is no longer active. Sign in again.");
+    }
+    if (!(await compare(currentPassword, user.passwordHash))) {
+      await this.redis.client.multi().incr(failKey).expire(failKey, PASSWORD_CHANGE_FAILURE_WINDOW_SECONDS).exec();
+      // 400, not 401: the session is fine, the form is wrong — a 401 would sign the console out.
+      throw new BadRequestException({ code: "CURRENT_PASSWORD_WRONG", message: "Kata sandi saat ini salah. / The current password is wrong." });
+    }
+
+    const problem = passwordPolicyError(newPassword, { email: user.email, displayName: user.displayName });
+    if (problem) throw new BadRequestException({ code: "PASSWORD_POLICY", message: problem });
+    if (await compare(newPassword, user.passwordHash)) {
+      const m = PASSWORD_POLICY_MESSAGES.SAME_AS_CURRENT;
+      throw new BadRequestException({ code: "PASSWORD_POLICY", message: `${m.id} / ${m.en}` });
+    }
+
+    const passwordHash = await hash(newPassword, BCRYPT_COST);
+    const passwordChangedAt = passwordChangeMoment();
+    const data = { passwordHash, mustChangePassword: false, passwordChangedAt };
+    const updated = actor.tenantId
+      ? await this.prisma.runInTenantContext(actor.tenantId, (tx) => tx.user.update({ where: { id: user.id }, data, include: { roles: true } }))
+      : await this.prisma.runInPlatformContext((tx) => tx.user.update({ where: { id: user.id }, data, include: { roles: true } }));
+    await this.prisma.raw.userPasswordToken.updateMany({ where: { userId: user.id, usedAt: null }, data: { usedAt: new Date() } });
+    await this.redis.client.del(failKey);
+    if (actor.tenantId) {
+      await this.audit.record({
+        tenantId: actor.tenantId,
+        actorUserId: user.id,
+        action: "STAFF_PASSWORD_CHANGED",
+        entityType: "User",
+        entityId: user.id,
+        metadata: { forced: user.mustChangePassword },
+      });
+    }
+    return this.issueStaffSession(updated, { tenantId: actor.tenantId, organizationId: actor.organizationId });
   }
 
   /**
@@ -104,12 +237,7 @@ export class AuthService {
     // platform admin (BaseRole describes what someone may do inside a tenant,
     // which is what this user is outside of), and the lookup above already
     // filters on it. PlatformAdminGuard admits exactly this session shape.
-    const roles = user.roles.map((r) => r.role);
-    const accessToken = await this.jwt.signAsync({ sub: user.id, tenantId: null, kind: "STAFF", roles, roleAssignments: [] });
-    return {
-      accessToken,
-      user: { id: user.id, email: user.email, displayName: user.displayName, roles },
-    };
+    return this.issueStaffSession(user, { tenantId: null, organizationId: null });
   }
 
   /**
