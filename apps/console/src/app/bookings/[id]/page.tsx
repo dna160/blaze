@@ -62,7 +62,8 @@ export default function BookingDetailPage() {
       const b = await apiFetch<BookingWithRelations>(`/bookings/${id}`, { token });
       setBooking(b);
       if (!["DRAFT", "WAITLISTED", "PENDING_APPROVAL", "NEEDS_INFO"].includes(b.status)) {
-        const c = await apiFetch<ContractRow | null>(`/contracts/by-booking/${id}`, { token });
+        // No contract yet comes back as an empty body; that is "none", not a failure to load the booking.
+        const c = await apiFetch<ContractRow | null>(`/contracts/by-booking/${id}`, { token }).catch(() => null);
         setContract(c);
       }
       // Pipeline stage + the booking's invoices (schedule) — both tolerate failure so the page still renders.
