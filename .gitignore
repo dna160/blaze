@@ -40,3 +40,6 @@ coverage/
 
 # Redis dump (local dev artifact)
 *.rdb
+
+# per-worktree local env (scratch setup script)
+.wt.env
