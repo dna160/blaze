@@ -163,3 +163,4 @@ export {
   type LegacyPaymentRef,
   type CustomerLegacyPayments,
 } from "./legacy-settlement.js";
+export { mergeCustomers, customerNumberAliases, CustomerMergeError, type CustomerMergePlan } from "./customer-merge.js";

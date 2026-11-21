@@ -1,6 +1,6 @@
-import { Body, Controller, ForbiddenException, Get, Param, Patch, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, ForbiddenException, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
-import { ClientListQuerySchema, StaffTaxProfileRequestSchema, UpdateTaxProfileRequestSchema } from "@rentos/contracts";
+import { ClientListQuerySchema, MergeCustomersRequestSchema, StaffTaxProfileRequestSchema, UpdateTaxProfileRequestSchema } from "@rentos/contracts";
 import { can } from "@rentos/domain";
 
 import { CurrentTenantId } from "../common/decorators/current-tenant.decorator.js";
@@ -68,6 +68,25 @@ export class CrmController {
   @UseGuards(StaffGuard)
   get(@CurrentTenantId() tenantId: string, @Param("id") id: string) {
     return this.crm.getById(tenantId, id);
+  }
+
+  /**
+   * PRD go-live 2 §7.2 — "Gabungkan pelanggan". `:id` is the SURVIVOR; the body
+   * names the duplicate. Dry run unless `apply: true`. Organization-scoped
+   * ADMIN (super admin) only: a merge rewrites who owns money and documents.
+   */
+  @Post(":id/merge")
+  @UseGuards(StaffGuard)
+  merge(
+    @CurrentTenantId() tenantId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(MergeCustomersRequestSchema)) body: ReturnType<typeof MergeCustomersRequestSchema.parse>,
+  ) {
+    if (!user.roleAssignments.some((r) => r.role === "ADMIN" && r.scope === "ORGANIZATION")) {
+      throw new ForbiddenException("Only a super admin (organization-wide Admin) can merge customers.");
+    }
+    return this.crm.mergeCustomers(tenantId, id, body.duplicateId, body.apply === true, user.id);
   }
 
   /** PRD go-live §7.4 — the client page's document vault. KYC files only for roles that review KYC. */

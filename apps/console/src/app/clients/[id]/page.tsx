@@ -12,7 +12,8 @@ import { KycPanel } from "@/components/KycPanel";
 import { CustomerLegacyPaymentsBlock, LegacyPaidChip, type CustomerLegacyPayments, type LegacyInvoiceSettlement } from "@/components/LegacyPaid";
 import { SignedScanUpload } from "@/components/SignedScanUpload";
 import { apiFetch, apiFetchBlob, ApiError } from "@/lib/api";
-import { authClient } from "@/lib/auth-client";
+import { authClient, isOrgAdmin } from "@/lib/auth-client";
+import { CustomerMergeDialog } from "@/components/CustomerMergeDialog";
 import { canDo } from "@/lib/capabilities";
 
 interface ClientDetail {
@@ -56,6 +57,7 @@ interface ClientDetail {
   notifications: Array<{ id: string; templateKey: string; channel: string; status: string; recipient: string; createdAt: string }>;
   legacy?: CustomerLegacyPayments;
   legacyByInvoice?: Record<string, LegacyInvoiceSettlement>;
+  numberAliases?: Array<{ aliasNumber: number; mergedFromName: string | null; createdAt: string }>;
 }
 
 function formatIDR(amount: string | number): string {
@@ -322,6 +324,20 @@ export default function ClientDetailPage() {
         </div>
       </section>
 
+      {data.numberAliases && data.numberAliases.length > 0 && (
+        <p className="mt-2 text-xs text-brand-700/60">
+          Juga dikenal sebagai: {data.numberAliases.map((a) => `#${a.aliasNumber}${a.mergedFromName ? ` (${a.mergedFromName})` : ""}`).join(", ")}
+        </p>
+      )}
+      {isOrgAdmin(me) && (
+        <div className="mt-4">
+          <CustomerMergeDialog
+            survivorId={customer.id}
+            survivorLabel={`#${customer.customerNumber ?? "-"} ${customer.fullName ?? customer.phone ?? ""}`}
+            onMerged={load}
+          />
+        </div>
+      )}
       <CustomerLegacyPaymentsBlock legacy={data.legacy} />
 
       <section className="mt-8">

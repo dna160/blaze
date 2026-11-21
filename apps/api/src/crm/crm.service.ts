@@ -1,5 +1,5 @@
-import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { legacyPaymentsForCustomer, legacySettlementForInvoices, type Prisma } from "@rentos/database";
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { CustomerMergeError, legacyPaymentsForCustomer, legacySettlementForInvoices, mergeCustomers, type Prisma } from "@rentos/database";
 import { classifyCustomerHealth, money, roundMoney, type CustomerHealth } from "@rentos/domain";
 import type { ClientListItem, ClientListQuery, ClientListResponse } from "@rentos/contracts";
 import { isKycVerified } from "@rentos/contracts";
@@ -419,11 +419,15 @@ export class CrmService {
       const counts: Record<CustomerHealth, number> = { HEALTHY: 0, RISKY: 0, OVERDUE: 0, INACTIVE: 0 };
       for (const item of items) counts[item.health] += 1;
 
+      // PRD go-live 2 §7.2 — "36" or "#36" finds customer #36, and the survivor of a merge by the duplicate's old number.
       const needle = query.search?.trim().toLowerCase();
+      const numberNeedle = needle && /^#?\d+$/.test(needle) ? Number(needle.replace("#", "")) : null;
+      const aliasOwner = numberNeedle !== null ? (await tx.customerNumberAlias.findFirst({ where: { aliasNumber: numberNeedle }, select: { customerId: true } }))?.customerId ?? null : null;
       const filtered = items.filter((item) => {
         if (query.status && item.health !== query.status) return false;
         if (query.locationId && !item.locationIds.includes(query.locationId)) return false;
         if (!needle) return true;
+        if (numberNeedle !== null && (item.customerNumber === numberNeedle || item.id === aliasOwner)) return true;
         const haystack = [item.fullName, item.phone, item.email, ...item.units.map((u) => u.code), ...item.units.map((u) => u.locationName)]
           .filter(Boolean)
           .join(" ")
@@ -435,6 +439,34 @@ export class CrmService {
       const pageItems = filtered.slice(start, start + query.pageSize).map(({ locationIds: _ignored, ...item }) => item);
       return { items: pageItems, page: query.page, pageSize: query.pageSize, total: filtered.length, counts };
     });
+  }
+
+  /**
+   * PRD go-live 2 §7.2 — merge `duplicateId` into `survivorId`. Dry run unless
+   * `apply`; org-scoped ADMIN only (checked by the controller). The plan the
+   * dry run returns is exactly what apply does.
+   */
+  async mergeCustomers(tenantId: string, survivorId: string, duplicateId: string, apply: boolean, userId: string) {
+    try {
+      return await this.prisma.runInTenantContext(
+        tenantId,
+        (tx) => mergeCustomers(tx, { tenantId, survivorId, duplicateId, apply, userId }),
+        { timeout: 60_000, maxWait: 10_000 },
+      );
+    } catch (e) {
+      if (e instanceof CustomerMergeError) {
+        if (e.code === "NOT_FOUND") throw new NotFoundException(e.message);
+        throw new BadRequestException(e.message);
+      }
+      throw e;
+    }
+  }
+
+  /** Customer numbers merged into this customer (PRD go-live 2 §7.2). */
+  async numberAliases(tenantId: string, customerId: string) {
+    return this.prisma.runInTenantContext(tenantId, (tx) =>
+      tx.customerNumberAlias.findMany({ where: { customerId }, orderBy: { createdAt: "asc" }, select: { aliasNumber: true, mergedFromName: true, createdAt: true } }),
+    );
   }
 
   /** Client detail drill-down (PRD v2 §5.2): everything about one customer on one screen. */
@@ -472,6 +504,7 @@ export class CrmService {
       const map = await legacySettlementForInvoices(tx, invoices);
       return { legacyByInvoice: Object.fromEntries(map), legacy: await legacyPaymentsForCustomer(tx, detail) };
     });
-    return { customer: detail, summary: health, notifications, legacy, legacyByInvoice };
+    const numberAliases = await this.numberAliases(tenantId, customerId);
+    return { customer: detail, summary: health, notifications, legacy, legacyByInvoice, numberAliases };
   }
 }
