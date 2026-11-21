@@ -66,7 +66,13 @@ export const ArAgingResponseSchema = z.object({
   d31_60: z.number(),
   d60_plus: z.number(),
 });
-export type ArAgingResponse = z.infer<typeof ArAgingResponseSchema>;
+export type ArAgingResponse = z.infer<typeof ArAgingResponseSchema> & {
+  /** go-live 2 §2.5 — the report date as a branch-timezone calendar date, and the invoices behind the buckets. */
+  asOfDate?: string;
+  timeZone?: string;
+  branch?: import("./reports.js").ReportBranchInfo;
+  rows?: import("./reports.js").ArAgingRow[];
+};
 
 export const PaymentStatusSchema = z.enum(["PENDING", "SUCCEEDED", "FAILED", "REFUNDED", "PARTIALLY_REFUNDED"]);
 

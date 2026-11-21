@@ -1,5 +1,5 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
-import { computeDeposit, computeTax, money, parseContractTerms, roundMoney, type DepositRule, type ParsedContractTerms } from "@rentos/domain";
+import { computeDeposit, computeTax, effectivePpnRate, money, parseContractTerms, ppnLabel, resolvePpnRate, roundMoney, type DepositRule, type ParsedContractTerms } from "@rentos/domain";
 
 import { onlinePaymentsStatus } from "../payments/online-payments.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -85,7 +85,7 @@ export class DocumentsService {
       block,
       isPkp: t.isPkp,
       organizationId: t.organization.id,
-      taxConfig: (t.organization.taxConfig ?? {}) as { pphWithholdingEnabled?: boolean; pphRates?: Record<string, number>; defaultPphType?: string },
+      taxConfig: (t.organization.taxConfig ?? {}) as { pphWithholdingEnabled?: boolean; pphRates?: Record<string, number>; defaultPphType?: string; ppnRate?: number },
       featureFlags: (t.featureFlags ?? {}) as Record<string, unknown>,
       storefront,
     };
@@ -152,7 +152,11 @@ export class DocumentsService {
     const proforma = invoices.find((i) => i.scheduleIndex === 0) ?? invoices[0];
     // PKP as it was when the contract was billed, not as it is today (§8.1).
     const pkp = proforma ? Number(proforma.taxAmount.toString()) > 0 : branch.isPkp;
-    const tax = computeTax(base, { isTenantPkp: pkp, taxInclusive: snapshot.taxInclusive ?? false });
+    // go-live 2 §2.6 — the rate the proforma was really billed at; the organization's
+    // configured rate (default 11%) only when nothing has been billed yet.
+    const proformaTaxable = proforma ? proforma.lines.filter((l) => l.lineType !== "DEPOSIT" && l.lineType !== "TAX").reduce((n, l) => n + Number(l.amount.toString()), 0) : 0;
+    const ppnRate = (proforma ? effectivePpnRate(proforma.taxAmount.toString(), proformaTaxable) : null) ?? resolvePpnRate(branch.taxConfig);
+    const tax = computeTax(base, { isTenantPkp: pkp, taxInclusive: snapshot.taxInclusive ?? false, taxRate: ppnRate });
     const heldDeposit = contract.booking?.deposits[0]?.amount;
     const depositLine = proforma?.lines.find((l) => l.lineType === "DEPOSIT")?.amount;
     const deposit = heldDeposit ?? depositLine ?? computeDeposit(snapshot.depositRule, base);
@@ -184,6 +188,7 @@ export class DocumentsService {
         currency,
         subtotal: tax.netAmount.toFixed(2),
         taxAmount: pkp ? tax.taxAmount.toFixed(2) : null,
+        taxLabel: ppnLabel(ppnRate),
         total: tax.grossAmount.toFixed(2),
         deposit: Number(deposit.toString()) > 0 ? deposit.toString() : null,
         due: null,
@@ -297,6 +302,8 @@ export class DocumentsService {
         currency: invoice.currency,
         subtotal: money2(subtotal),
         taxAmount: taxAmount > 0 ? money2(taxAmount) : null,
+        // The label states the rate THIS invoice carries, not today's setting.
+        taxLabel: ppnLabel(effectivePpnRate(taxAmount, subtotal) ?? resolvePpnRate(branch.taxConfig)),
         total: money2(subtotal + taxAmount),
         deposit: deposit > 0 ? money2(deposit) : null,
         due: money2(due),
