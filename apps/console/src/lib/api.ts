@@ -59,9 +59,23 @@ export async function apiFetchBlob(path: string, token: string | null): Promise<
   return res.blob();
 }
 
-/** CSV/report exports — fetch the blob (to carry the Bearer token) then trigger a save-as download with a real filename. */
+/**
+ * CSV/report exports — fetch the blob (to carry the Bearer token) then trigger a save-as download with a real filename.
+ * The API names report files itself (`{branchCode}_{report}_{from}_{to}.csv`, PRD go-live 2 §2.4) and exposes the
+ * Content-Disposition header; that name wins, and `filename` is only the fallback for a response that carries none.
+ */
 export async function apiDownload(path: string, token: string | null, filename: string): Promise<void> {
-  const blob = await apiFetchBlob(path, token);
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { "X-Tenant-Slug": TENANT_SLUG, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({ message: res.statusText }));
+    throw new ApiError(payload.message ?? res.statusText, res.status);
+  }
+  const named = /filename="?([^";]+)"?/i.exec(res.headers.get("Content-Disposition") ?? "")?.[1];
+  const blob = await res.blob();
+  if (named) filename = named;
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
