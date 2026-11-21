@@ -42,17 +42,3 @@ export type SignMethodValue = z.infer<typeof SignMethodSchema>;
 
 /** Body of POST /bookings/:id/generate-contract and POST /contracts/:id/sign-method. */
 export const SignMethodRequestSchema = z.object({ signMethod: SignMethodSchema.optional() });
-
-/** PRD go-live 2 §5.3 — default days a customer has to sign on paper at the office (`featureFlags.offlineSignDays`). */
-export const DEFAULT_OFFLINE_SIGN_DAYS = 7;
-/** Days before the deadline at which the customer is reminded. */
-export const OFFLINE_SIGN_REMINDER_DAYS: readonly number[] = [3, 1];
-
-export function resolveOfflineSignDays(featureFlags: unknown): number {
-  const v = (featureFlags as Record<string, unknown> | null)?.["offlineSignDays"];
-  return typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 90 ? v : DEFAULT_OFFLINE_SIGN_DAYS;
-}
-
-export function resolveDefaultSignMethod(featureFlags: unknown): SignMethodValue {
-  return (featureFlags as Record<string, unknown> | null)?.["defaultSignMethod"] === "OFFLINE" ? "OFFLINE" : "ONLINE";
-}

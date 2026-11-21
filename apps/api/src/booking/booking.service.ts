@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import { assetFsm, termEndDate } from "@rentos/domain";
+import { assetFsm, resolveDefaultSignMethod, resolveOfflineSignDays, termEndDate } from "@rentos/domain";
 import {
   computePooledAvailableCount,
   findAvailableNonPooledAsset,
@@ -15,7 +15,7 @@ import {
   type Prisma,
 } from "@rentos/database";
 import type { CreateBookingResponse, PipelineBookingDto } from "@rentos/contracts";
-import { isKycVerified, resolveDefaultSignMethod, resolveOfflineSignDays, type SignMethodValue } from "@rentos/contracts";
+import { isKycVerified, type SignMethodValue } from "@rentos/contracts";
 
 import { AuditService } from "../audit/audit.service.js";
 import { CrmService } from "../crm/crm.service.js";

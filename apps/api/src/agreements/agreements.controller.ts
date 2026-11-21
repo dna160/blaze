@@ -15,6 +15,7 @@ import {
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { ApiTags } from "@nestjs/swagger";
+import { SignMethodRequestSchema } from "@rentos/contracts";
 import type { Request, Response } from "express";
 
 import { BookingService } from "../booking/booking.service.js";
@@ -81,25 +82,52 @@ export class AgreementsController {
     res.send(result.buffer);
   }
 
-  /** Either the customer (self-serve) or ops/finance staff (recording a paper contract) can upload the signed document. */
+  /**
+   * PRD go-live 2 §5.3 B — staff upload the scan of a contract signed on paper
+   * at the office. Stored as it is; never sent to an e-sign provider.
+   * Multipart: `file`, `signedByName`, optional `companyStampPresent` ("true").
+   */
   @Post("by-booking/:bookingId/sign")
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("create_booking", "approve_booking")
   @UseInterceptors(FileInterceptor("file"))
   async sign(
     @CurrentTenant() tenant: ResolvedTenant,
     @CurrentUser() user: AuthenticatedUser,
     @Param("bookingId") bookingId: string,
     @Body("signedByName") signedByName: string,
+    @Body("companyStampPresent") companyStampPresent: string | undefined,
     @UploadedFile() file: Express.Multer.File | undefined,
   ) {
-    await this.assertAccess(tenant, user, bookingId);
+    if (user.kind !== "STAFF") {
+      throw new ForbiddenException("Kontrak ditandatangani di halaman kontrak atau di kantor kami — unggah dokumen dilakukan oleh staf. / Staff upload paper contracts.");
+    }
     if (!file) throw new BadRequestException("No file uploaded.");
-    if (!signedByName) throw new BadRequestException("signedByName is required.");
-    return this.contracts.sign(tenant, bookingId, signedByName, {
-      buffer: file.buffer,
-      mimetype: file.mimetype,
-      size: file.size,
-    });
+    if (!signedByName?.trim()) throw new BadRequestException("signedByName is required.");
+    return this.contracts.uploadSignedScan(
+      tenant,
+      bookingId,
+      { signedByName, companyStampPresent: companyStampPresent === "true" || companyStampPresent === "1", staffUserId: user.id },
+      { buffer: file.buffer, mimetype: file.mimetype, size: file.size },
+    );
+  }
+
+  /** PRD go-live 2 §5.3 A — send the generated agreement to the e-sign provider (Privy). Refused without one. */
+  @Post("by-booking/:bookingId/esign")
+  @UseGuards(JwtAuthGuard)
+  async esign(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("bookingId") bookingId: string) {
+    await this.assertAccess(tenant, user, bookingId);
+    return this.contracts.sendForEsign(tenant, bookingId, user.kind === "STAFF" ? user.id : null);
+  }
+
+  /** PRD go-live 2 §5.3 — staff switch an unsigned contract between ONLINE and OFFLINE. Body: { signMethod }. */
+  @Post(":id/sign-method")
+  @UseGuards(JwtAuthGuard, CapabilityGuard)
+  @RequireCapability("create_booking", "approve_booking")
+  async setSignMethod(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string, @Body() body: unknown) {
+    const parsed = SignMethodRequestSchema.safeParse(body ?? {});
+    if (!parsed.success || !parsed.data.signMethod) throw new BadRequestException('signMethod must be "ONLINE" or "OFFLINE".');
+    return this.contracts.setSignMethod(tenant, id, parsed.data.signMethod, user.id);
   }
 
   /** PRD go-live §7.2 — sign on the portal's signature pad. Body: { signedByName, signaturePng: "data:image/png;base64,..." }. */
