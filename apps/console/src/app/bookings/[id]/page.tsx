@@ -6,7 +6,9 @@ import Link from "next/link";
 import type { BookingDto, ContractDto, InvoiceDto, PipelineBookingDto } from "@rentos/contracts";
 
 import { ConsoleShell } from "@/components/ConsoleShell";
-import { apiFetch, apiFetchBlob, apiUpload, ApiError } from "@/lib/api";
+import { KycPanel } from "@/components/KycPanel";
+import { SignedScanUpload } from "@/components/SignedScanUpload";
+import { apiFetch, apiFetchBlob, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import { canDo } from "@/lib/capabilities";
 
@@ -16,10 +18,11 @@ type ContractRow = ContractDto & {
   confirmedAt?: string | null;
   documentUrl?: string | null;
   signatureImageKey?: string | null;
+  companyStampPresent?: boolean | null;
 };
 
 interface BookingWithRelations extends BookingDto {
-  customer: { id: string; fullName: string | null; phone: string | null; email: string | null; kycStatus: string; preferredChannel: string };
+  customer: { id: string; fullName: string | null; phone: string | null; email: string | null; kycStatus: string; preferredChannel: string; type?: "INDIVIDUAL" | "BUSINESS" };
   assetType: { name: string };
   asset: { code: string } | null;
   location: { name: string } | null;
@@ -44,10 +47,10 @@ export default function BookingDetailPage() {
   const [pipeline, setPipeline] = useState<PipelineBookingDto | null>(null);
   const [invoices, setInvoices] = useState<InvoiceDto[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
-  const [signedByName, setSignedByName] = useState("");
-  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stayActionBusy, setStayActionBusy] = useState(false);
+  // PRD go-live 2 §5.3 — how the contract will be signed, chosen at the contract step.
+  const [signMethod, setSignMethod] = useState<"ONLINE" | "OFFLINE">("ONLINE");
 
   async function load() {
     const token = authClient.getToken();
@@ -74,14 +77,14 @@ export default function BookingDetailPage() {
     }
   }
 
-  async function pipelineAction(path: string, success: string) {
+  async function pipelineAction(path: string, success: string, body: Record<string, unknown> = {}) {
     const token = authClient.getToken();
     if (!token) return;
     setStayActionBusy(true);
     setError(null);
     setNotice(null);
     try {
-      await apiFetch(`/bookings/${id}/${path}`, { token, method: "POST", body: {} });
+      await apiFetch(`/bookings/${id}/${path}`, { token, method: "POST", body });
       setNotice(success);
       await load();
     } catch (err) {
@@ -136,21 +139,21 @@ export default function BookingDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  async function uploadOnBehalf(file: File) {
+  /** PRD go-live 2 §5.3 — switch an unsigned contract between online and paper signing. */
+  async function changeSignMethod(next: "ONLINE" | "OFFLINE") {
     const token = authClient.getToken();
-    if (!token || !signedByName) return;
-    setUploading(true);
+    if (!token || !contract) return;
+    setStayActionBusy(true);
     setError(null);
+    setNotice(null);
     try {
-      const formData = new FormData();
-      formData.append("signedByName", signedByName);
-      formData.append("file", file);
-      await apiUpload(`/contracts/by-booking/${id}/sign`, token, formData);
+      await apiFetch(`/contracts/${contract.id}/sign-method`, { token, method: "POST", body: { signMethod: next } });
+      setNotice(next === "OFFLINE" ? "Diubah ke tanda tangan di kantor — pelanggan diberi tahu batas waktunya." : "Diubah ke tanda tangan online di portal.");
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Upload failed.");
+      setError(err instanceof ApiError ? err.message : "Gagal mengubah cara tanda tangan.");
     } finally {
-      setUploading(false);
+      setStayActionBusy(false);
     }
   }
 
@@ -232,9 +235,25 @@ export default function BookingDetailPage() {
               </button>
             )}
             {stage === "CONTRACT" && (
-              <button onClick={() => pipelineAction("generate-contract", "Contract + proforma generated and sent.")} disabled={stayActionBusy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-                Generate contract + proforma
-              </button>
+              <div className="flex flex-wrap items-center gap-3" data-testid="sign-method-choice">
+                <fieldset className="flex items-center gap-3 text-sm">
+                  <legend className="sr-only">Cara tanda tangan</legend>
+                  <span className="text-brand-700/60">Tanda tangan:</span>
+                  <label className="flex items-center gap-1">
+                    <input type="radio" name="signMethod" checked={signMethod === "ONLINE"} onChange={() => setSignMethod("ONLINE")} /> Online di portal
+                  </label>
+                  <label className="flex items-center gap-1">
+                    <input type="radio" name="signMethod" checked={signMethod === "OFFLINE"} onChange={() => setSignMethod("OFFLINE")} /> Di kantor (kertas)
+                  </label>
+                </fieldset>
+                <button
+                  onClick={() => pipelineAction("generate-contract", signMethod === "OFFLINE" ? "Kontrak + proforma dibuat; pelanggan diminta tanda tangan di kantor." : "Contract + proforma generated and sent.", { signMethod })}
+                  disabled={stayActionBusy}
+                  className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  Generate contract + proforma
+                </button>
+              </div>
             )}
             {stage === "FINANCE" && pipeline.firstInvoice && (
               <Link href={`/invoices/${pipeline.firstInvoice.id}`} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white">
@@ -405,33 +424,41 @@ export default function BookingDetailPage() {
               Sent for e-signature via {contract.esignProvider} — waiting for the signature to complete.
             </p>
           ) : (
-            <p className="mt-2 text-sm text-brand-700/60">Not signed yet — waiting on the customer, or record one collected in person below.</p>
+            <div className="mt-2 space-y-1 text-sm" data-testid="sign-method-status">
+              {contract.signMethod === "OFFLINE" ? (
+                <p className="text-amber-800">
+                  Tanda tangan di kantor (kertas) — batas {contract.signDeadlineAt ? fmtDate(contract.signDeadlineAt) : "—"}. Setelah batas waktu, pemesanan
+                  dibatalkan otomatis dan unit dilepas.
+                </p>
+              ) : (
+                <p className="text-brand-700/60">
+                  Tanda tangan online di portal ({contract.esignAvailable ? "layanan tanda tangan elektronik" : "kotak tanda tangan"}) — menunggu pelanggan.
+                </p>
+              )}
+              {booking.status === "APPROVED" && (
+                <button
+                  type="button"
+                  onClick={() => void changeSignMethod(contract.signMethod === "OFFLINE" ? "ONLINE" : "OFFLINE")}
+                  disabled={stayActionBusy}
+                  className="text-xs text-accent-500 underline disabled:opacity-50"
+                >
+                  {contract.signMethod === "OFFLINE" ? "Ubah ke tanda tangan online" : "Ubah ke tanda tangan di kantor"}
+                </button>
+              )}
+            </div>
           )}
 
           {canUploadContract && (
-            <div className="mt-4 space-y-2 border-t border-brand-600/10 pt-4">
-              <p className="text-sm font-medium">Record a paper contract collected in person</p>
-              <input
-                required
-                value={signedByName}
-                onChange={(e) => setSignedByName(e.target.value)}
-                placeholder="Signed by (full name)"
-                className="w-full rounded border border-brand-600/20 px-2 py-1 text-sm"
-              />
-              <input
-                type="file"
-                accept="application/pdf,image/jpeg,image/png"
-                disabled={uploading || !signedByName}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) uploadOnBehalf(file);
-                }}
-                className="w-full text-sm"
-              />
-              {error && <p className="text-sm text-red-600">{error}</p>}
-              {uploading && <p className="text-xs text-brand-700/60">Uploading...</p>}
+            <div className="mt-4 border-t border-brand-600/10 pt-4">
+              <SignedScanUpload bookingId={id} isCompany={booking.customer.type === "BUSINESS"} onDone={() => { setNotice("Kontrak bertanda tangan disimpan."); void load(); }} />
             </div>
           )}
+        </div>
+      )}
+
+      {booking.status === "APPROVED" && !["VERIFIED", "VERIFIED_LEGACY"].includes(booking.customer.kycStatus) && (
+        <div className="mt-6">
+          <KycPanel customerId={booking.customer.id} bookingId={booking.id} onChanged={() => void load()} />
         </div>
       )}
 
