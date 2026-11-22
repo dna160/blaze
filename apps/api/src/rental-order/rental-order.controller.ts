@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, ForbiddenException, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, ForbiddenException, Get, NotFoundException, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
@@ -56,10 +56,13 @@ export class RentalOrderController {
     return this.orders.detailForConsole(tenant, id);
   }
 
+  /** Staff read any order of the branch; a customer only their own (it carries invoices and contracts). */
   @Get(":id")
   @UseGuards(JwtAuthGuard)
-  get(@CurrentTenant() tenant: ResolvedTenant, @Param("id") id: string) {
-    return this.orders.get(tenant, id);
+  async get(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
+    const order = await this.orders.get(tenant, id);
+    if (user.kind === "CUSTOMER" && order.customerId !== user.id) throw new NotFoundException("Rental order not found.");
+    return order;
   }
 
   /** Staff approve + assign the specific unit, issuing contract + invoice. */
