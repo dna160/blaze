@@ -86,6 +86,11 @@ function storeLocale(locale: Locale) {
   } catch {
     /* not remembered; the account's saved choice still applies at next login */
   }
+  // The same choice as a cookie, so the server render (app/layout.tsx) is
+  // already in the reader's language and hydration matches.
+  if (typeof document !== "undefined") {
+    document.cookie = `${STORAGE_KEY}=${locale}; path=/; max-age=31536000; samesite=lax`;
+  }
 }
 
 /** The locale outside React (toasts built in plain functions); kept in step by the provider. */
@@ -131,14 +136,18 @@ export function announceLocale(locale: Locale) {
   if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(LOCALE_EVENT, { detail: locale }));
 }
 
-export function I18nProvider({ children }: { children: ReactNode }) {
-  // The server render (and the first client render) is Indonesian; the saved
-  // choice is applied after mount, so hydration matches.
-  const [locale, setLocaleState] = useState<Locale>(DEFAULT_LOCALE);
+export function I18nProvider({ children, initialLocale }: { children: ReactNode; initialLocale?: Locale }) {
+  // The server render uses the locale cookie (Indonesian without one), and the
+  // first client render matches it. A choice saved only in localStorage (from
+  // before the cookie existed) is applied after mount and then cookied.
+  const [locale, setLocaleState] = useState<Locale>(initialLocale ?? DEFAULT_LOCALE);
 
   useEffect(() => {
     const saved = storedLocale();
-    if (saved) setLocaleState(saved);
+    if (saved) {
+      storeLocale(saved);
+      setLocaleState(saved);
+    }
     const onAnnounce = (e: Event) => setLocaleState(normalizeLocale((e as CustomEvent).detail));
     window.addEventListener(LOCALE_EVENT, onAnnounce);
     return () => window.removeEventListener(LOCALE_EVENT, onAnnounce);
