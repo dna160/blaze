@@ -343,6 +343,55 @@ If anything could be issued between steps 6 and 7, pin them instead with
 the import prints them as "counters continue"). Never use the reset for the
 wipe in step 2: there is no import after it to raise the counters again.
 
+### Releasing part 2 (PRD go-live 2)
+
+1. **Passwords.** On release every existing staff account with a password must
+   choose a new one at next login (the migration sets `mustChangePassword`).
+   Accounts without a password still need their set-password link.
+   `PROMOTE_ADMIN_PASSWORD` now sets a one-time password. Admins can no longer
+   type a password for anyone: Settings → Pengguna → "Kirim tautan atur ulang"
+   gives a 72-hour link (emailed if email is configured, otherwise shown once).
+2. **Booking changes.** After approval a booking is cancelled or re-dated only
+   through Permintaan. Staff file the request; cancellations are approved by
+   the super admin, date changes by a supervisor or admin covering the branch.
+   Cancelling after money has come in is blocked: refund by hand first.
+3. **Reports.** Every report and export takes `from`/`to` as inclusive WIB dates;
+   an export with no dates returns everything. Supervisors no longer see reports.
+4. **Offline signing.** `featureFlags.offlineSignDays` (default 7) and
+   `featureFlags.defaultSignMethod` (ONLINE/OFFLINE). Job `offline-sign-deadline`,
+   `OFFLINE_SIGN_DEADLINE_CRON`, default `15 2 * * *` (09:15 WIB): reminders at
+   3 and 1 days, then the booking LAPSES and its unit is released. It leaves
+   ONLINE contracts, imported rentals and paid bookings alone.
+5. **Privy (online e-sign)**, once City Storage has an account: set
+   `ESIGN_PROVIDER=privy`, `PRIVY_API_KEY`, `PRIVY_MERCHANT_KEY`; check
+   `apps/api/src/agreements/providers/privy-esign.provider.ts` against Privy's
+   sandbox; point Privy's webhook at `/api/contracts/webhook/<tenant-slug>`.
+   Until then online signing uses the signature pad.
+6. **Money rules** (late fee, overstay, overtime, deposit refund task, arrears
+   badge) are all OFF until City Storage confirms them: Settings → Profil cabang
+   → "Aturan biaya". Job `money-rules`, `MONEY_RULES_CRON` default `30 17 * * *`
+   (00:30 WIB). Staff alerts go to `featureFlags.adminNotifyRecipient`.
+7. **PPh net settlement**: `taxConfig.pphWithholdingEnabled` turns on net
+   settlement and short payments for the whole organization.
+8. **Customer merge**: super admin only, from the client page. The Booqable
+   importer lists a phone that already belongs to another customer as
+   "possible duplicate — merge?" instead of refusing.
+9. **WhatsApp Cloud templates** (only if moving off the linked device): new or
+   changed — `kyc_requested`, `kyc_rejected`, `contract_sign_offline`,
+   `contract_sign_reminder`, `contract_sign_lapsed`, `booking_cancelled`,
+   `booking_date_changed`, `deposit_refund_task`, `connection_test`. Run
+   `pnpm wa:templates push` and wait for Meta's approval. The linked device
+   needs nothing.
+10. **Domains** (§12 Q8), when decided: `CORS_ORIGINS` (api),
+    `CONSOLE_BASE_URL` (set-password links), `STOREFRONT_BASE_URL`,
+    `NEXT_PUBLIC_API_URL` (console and storefront, build-time). No cookie domain.
+11. **Pairing check (§8.4, 2026-11-21, from the wa-bridge logs):** City
+    Storage's organization is paired as +62 811-1660-8331 (paired 2026-11-17)
+    and is the only instance active since 2026-11-10. The demo organization's
+    old pairing (a different number) has been silent since 2026-11-10 but was
+    not confirmed unlinked: as a Gudang Aman admin, Settings → Messaging →
+    unlink if it shows connected, and check its saved auto-reply text.
+
 ## 9. Storefront domain (needs B6)
 
 ```sql

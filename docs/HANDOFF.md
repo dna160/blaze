@@ -1747,6 +1747,56 @@ feature in question is cheap insurance against repeating this.
 
 ## Resume here
 
+### Kebon Jeruk go-live, part 2 (2026-11-22) — read this first
+
+Spec: `docs/PRD-kebon-jeruk-go-live-2.md`. All of §2–§10 is built on
+`claude/inspiring-euler-fgr1zv`, not yet on `main` or live. Nine migrations
+`20261121120000`–`20261121140000`.
+
+- **Dates.** One rule for every report and export: `from`/`to` are inclusive
+  dates in `Tenant.timezone`, converted by `resolveReportRange`
+  (`packages/contracts/src/report-range.ts`, shared with the console's
+  `ReportRange` control). CSV conventions in `apps/api/src/reporting/csv.util.ts`.
+  Evidence: `tsx apps/api/scripts/reports-range-verify.ts` (45 checks).
+- **Deposits.** Every movement writes a `DepositEvent` beside its ledger
+  entries; `GET /deposits/report` recomputes held-at-end-of-range from events
+  and compares it with DEPOSIT_LIABILITY (red badge on Console → Deposit if they
+  differ). Refund due = lease end + 30 days (`syncDepositRefundDue`).
+- **Messaging.** `outboundBlock(prisma, tenantId, recipient)` — every sender
+  passes the recipient; it returns `{code, message}` (PAUSED wins over
+  NOT_ON_TEST_ALLOWLIST). Suppressed rows carry `suppression_code`. Copy deck:
+  `pnpm wa:templates copy --format md` → `docs/COPY-whatsapp-messages.md`; a test
+  pins the file, so regenerate it whenever a template changes.
+- **Passwords.** No typed passwords; links via `UserPasswordToken`.
+  `User.mustChangePassword` is enforced in `JwtAuthGuard` (only routes marked
+  `@AllowPendingPasswordChange()` pass); a token older than
+  `User.passwordChangedAt` is refused. The part-2 migration forces every existing
+  account with a password to change it.
+- **Change requests.** `apps/api/src/change-requests/`; who approves comes from
+  `Organization.approvalPolicy` evaluated in
+  `packages/domain/src/rbac/approval-policy.ts`. `BookingService.reject()` refuses
+  APPROVED bookings; cancellation runs through `cancelBooking`/`closeBooking`.
+  The worker's offline-sign expiry uses the database-level
+  `cancelUnstartedBooking` — two implementations of "cancel an unstarted
+  booking"; unify when next touched.
+- **KYC / signing.** `kycRequirements` / `missingKycDocuments` (contracts) is the
+  one definition of what is required. `KycRequest` batches documents.
+  `Contract.signMethod` ONLINE/OFFLINE; a scan upload and an e-sign send are
+  separate paths (`decideSigning`), so a scan never reaches a provider.
+- **Console language.** `apps/console/src/lib/i18n.tsx` + `messages/id.json` /
+  `en.json`. `pnpm --filter @rentos/console test` fails on English literals in the
+  checked pages and on key drift. Not yet translated: catalog-setup, api-access,
+  ota-sync, automation, swap-requests, platform/*.
+- **P1.** Customer merge (`POST /customers/:id/merge`, dry run unless `apply`),
+  aliases in `customer_number_aliases`; money rules in `featureFlags.moneyRules`
+  (all off) + worker job `money-rules`; PPh net settlement behind
+  `taxConfig.pphWithholdingEnabled`.
+
+Known gaps: PPN rate config changes the PDF label only (issuing still 11%,
+§12 Q4); fees are untaxed; overstay only for leases still running past their
+end; late fees on bookings only; a date change does not move an OFFLINE
+contract's signing deadline; Privy not connected (§12 Q9).
+
 ### Kebon Jeruk go-live (2026-11-08) — read this first
 
 Spec: [`docs/PRD-kebon-jeruk-go-live.md`](./PRD-kebon-jeruk-go-live.md) (wins over
