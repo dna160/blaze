@@ -48,7 +48,10 @@ const SOURCE_TONE: Record<MessagingConfig["source"], string> = {
 export default function MessagingSettingsPage() {
   const { t, intl } = useT();
   const router = useRouter();
-  const me = authClient.getUser();
+  // Read after mount: the session lives in localStorage, which the server
+  // render cannot see, so reading it during render broke hydration.
+  const [me, setMe] = useState<ReturnType<typeof authClient.getUser>>(null);
+  useEffect(() => setMe(authClient.getUser()), []);
   // PRD go-live §9.5 — the number, pairing, auto-reply and pause belong to the
   // whole organization, so only an organization-scoped Admin changes them.
   const canEdit = isOrgAdmin(me);
