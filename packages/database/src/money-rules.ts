@@ -94,7 +94,9 @@ export async function accrueLateFees(
       status: { in: [...UNPAID] },
       dueDate: { lt: new Date(`${today}T00:00:00.000Z`) },
       booking: { status: { in: [...RUNNING] }, ...(held ? { legacyBookingNumber: null } : {}) },
-      NOT: { scheduleIndex: 0 }, // the proforma is not an extension; an unpaid one lapses the booking instead
+      // The proforma (scheduleIndex 0) is not an extension; an unpaid one lapses the booking instead.
+      // (Spelled out with null: NOT on a NULL column is NULL in SQL, which would drop every unscheduled invoice.)
+      OR: [{ scheduleIndex: null }, { scheduleIndex: { not: 0 } }],
     },
     include: { lines: true },
   });
