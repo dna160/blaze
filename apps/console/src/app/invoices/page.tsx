@@ -8,6 +8,7 @@ import type { InvoiceDto } from "@rentos/contracts";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { apiFetch } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { useT } from "@/lib/i18n";
 
 const STATUS_COLORS: Record<string, string> = {
   ISSUED: "bg-blue-100 text-blue-800",
@@ -25,6 +26,7 @@ function formatIDR(amount: string | number): string {
 
 /** PRD §7.2.4 Finance module — invoice list (P0 core; AR aging lives on /reports). */
 export default function InvoicesPage() {
+  const { t, s, intl } = useT();
   const router = useRouter();
   const [invoices, setInvoices] = useState<InvoiceDto[] | null>(null);
 
@@ -41,19 +43,19 @@ export default function InvoicesPage() {
 
   return (
     <ConsoleShell>
-      <h1 className="text-2xl font-semibold">Invoices</h1>
+      <h1 className="text-2xl font-semibold">{t("invoices.title")}</h1>
       {!invoices ? (
-        <p className="mt-6">Loading...</p>
+        <p className="mt-6">{t("common.loading")}</p>
       ) : (
         <div className="mt-6 overflow-hidden rounded-lg border border-brand-600/10 bg-white">
           <table className="w-full text-sm">
             <thead className="bg-brand-700/5 text-left">
               <tr>
-                <th className="p-3">Invoice #</th>
-                <th className="p-3">Status</th>
-                <th className="p-3">Issued</th>
-                <th className="p-3">Due</th>
-                <th className="p-3 text-right">Total</th>
+                <th className="p-3">{t("invoices.colNumber")}</th>
+                <th className="p-3">{t("common.status")}</th>
+                <th className="p-3">{t("invoices.colIssued")}</th>
+                <th className="p-3">{t("invoices.colDue")}</th>
+                <th className="p-3 text-right">{t("common.total")}</th>
               </tr>
             </thead>
             <tbody>
@@ -66,11 +68,11 @@ export default function InvoicesPage() {
                   </td>
                   <td className="p-3">
                     <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_COLORS[inv.status] ?? ""}`}>
-                      {inv.status}
+                      {s(inv.status)}
                     </span>
                   </td>
-                  <td className="p-3">{new Date(inv.issueDate).toLocaleDateString("id-ID")}</td>
-                  <td className="p-3">{new Date(inv.dueDate).toLocaleDateString("id-ID")}</td>
+                  <td className="p-3">{new Date(inv.issueDate).toLocaleDateString(intl)}</td>
+                  <td className="p-3">{new Date(inv.dueDate).toLocaleDateString(intl)}</td>
                   <td className="p-3 text-right">{formatIDR(inv.totalAmount)}</td>
                 </tr>
               ))}

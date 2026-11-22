@@ -22,10 +22,10 @@ Jumlah pesan / Messages: 33
 
 1. **`connection_test`** — untuk staf / to staff
 
-    Subjek email / Email subject: Pesan percobaan RentOS / RentOS test message
+    Subjek email / Email subject: Pesan percobaan / Test message
 
-    > Ini pesan percobaan dari RentOS. Jika Anda menerimanya, koneksi WhatsApp cabang Anda sudah aktif.
-    > This is a test message from RentOS. If you received it, your branch's WhatsApp connection is working.
+    > Ini pesan percobaan dari console cabang Anda. Jika Anda menerimanya, koneksi WhatsApp cabang Anda sudah aktif.
+    > This is a test message from your branch console. If you received it, your branch's WhatsApp connection is working.
 
     *Data:* —
 
@@ -158,14 +158,14 @@ Jumlah pesan / Messages: 33
 
 11. **`staff_set_password`** — untuk staf / to staff
 
-    Subjek email / Email subject: Akun RentOS Anda / Your RentOS console account
+    Subjek email / Email subject: Akun City Storage Anda / Your City Storage console account
 
-    > Halo Risa, akun console RentOS untuk City Storage Kebon Jeruk sudah dibuat. Buat kata sandi Anda melalui tautan di bawah (sekali pakai, berlaku 72 jam).
-    > Your RentOS console account for City Storage Kebon Jeruk is ready. Set your password with the link below (single use, valid 72 hours).
+    > Halo Risa, akun console City Storage untuk City Storage Kebon Jeruk sudah dibuat. Buat kata sandi Anda melalui tautan di bawah (sekali pakai, berlaku 72 jam).
+    > Your City Storage console account for City Storage Kebon Jeruk is ready. Set your password with the link below (single use, valid 72 hours).
     >
     > https://sewa.citystorage.co.id/m/8f2c1a
 
-    *Data:* `displayName`, `branchName`, `link`
+    *Data:* `consoleName`, `displayName`, `branchName`, `link`
 
     **Perubahan / Change:**
 
@@ -296,14 +296,14 @@ Jumlah pesan / Messages: 33
 
 21. **`staff_password_reset`** — untuk pelanggan / to the customer
 
-    Subjek email / Email subject: Atur ulang kata sandi console / Reset your console password
+    Subjek email / Email subject: Atur ulang kata sandi console City Storage / Reset your City Storage console password
 
     > Halo Risa, admin City Storage Kebon Jeruk mengirim tautan untuk mengatur ulang kata sandi console Anda. Kata sandi lama sudah tidak berlaku. Buat yang baru melalui tautan di bawah (sekali pakai, berlaku 72 jam).
     > An administrator at City Storage Kebon Jeruk sent you a link to reset your console password. Your old password no longer works. Set a new one with the link below (single use, valid 72 hours).
     >
     > https://sewa.citystorage.co.id/m/8f2c1a
 
-    *Data:* `displayName`, `branchName`, `link`
+    *Data:* `consoleName`, `displayName`, `branchName`, `link`
 
     **Perubahan / Change:**
 

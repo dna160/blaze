@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 
 import { apiDownload, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { getLocale, hasMessage, tr, useT } from "@/lib/i18n";
 
 /** Shared pieces of the reports page (PRD go-live 2 §2). */
 
@@ -12,50 +13,30 @@ export function formatIDR(amount: number | string | null | undefined): string {
   return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(amount));
 }
 
-/** 2026-11-17 -> 17 Nov 2026; 2026-11 -> Nov 2026. Calendar strings from the API are shown as they are, never re-zoned. */
+/** 2026-11-17 -> 17 Nov 2026; 2026-11 -> Nov 2026, in the reader's language. Calendar strings from the API are shown as they are, never re-zoned. */
 export function formatDay(ymd: string | null | undefined): string {
   if (!ymd) return "—";
-  const [y, m, d] = ymd.split("-");
-  const month = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"][Number(m) - 1] ?? m;
-  return d ? `${Number(d)} ${month} ${y}` : `${month} ${y}`;
+  const [y, m, d] = ymd.split("-").map(Number);
+  const at = new Date(Date.UTC(y!, (m ?? 1) - 1, d ?? 1));
+  const intl = getLocale() === "en" ? "en-GB" : "id-ID";
+  return d
+    ? at.toLocaleDateString(intl, { timeZone: "UTC", day: "numeric", month: "short", year: "numeric" })
+    : at.toLocaleDateString(intl, { timeZone: "UTC", month: "short", year: "numeric" });
 }
 
-export const PAYMENT_METHOD_LABEL: Record<string, string> = {
-  MANUAL_TRANSFER: "Transfer bank",
-  CASH: "Tunai",
-  VIRTUAL_ACCOUNT: "Virtual account (Xendit)",
-  QRIS: "QRIS (Xendit)",
-  EWALLET: "E-wallet (Xendit)",
-  CARD: "Kartu (Xendit)",
-};
-
-export const PAYMENT_STATUS_LABEL: Record<string, string> = {
-  SUCCEEDED: "Sukses",
-  PENDING: "Menunggu verifikasi",
-  FAILED: "Gagal",
-  REFUNDED: "Dikembalikan",
-  PARTIALLY_REFUNDED: "Dikembalikan sebagian",
-};
-
-export const INVOICE_STATUS_LABEL: Record<string, string> = {
-  ISSUED: "Terbit",
-  OVERDUE: "Terlambat",
-  SCHEDULED: "Terjadwal",
-};
-
-export const LEDGER_ACCOUNT_LABEL: Record<string, string> = {
-  CASH: "Kas",
-  ACCOUNTS_RECEIVABLE: "Piutang usaha",
-  PREPAID_TAX_PPH: "PPh dibayar di muka",
-  REVENUE: "Pendapatan",
-  TAX_PAYABLE: "Utang PPN",
-  DEPOSIT_LIABILITY: "Deposit pelanggan (kewajiban)",
-  REFUND: "Pengembalian dana",
-  OPENING_BALANCE: "Saldo awal (impor)",
-};
+/** `reports.<group>.<value>` when there is one, else the value itself. */
+function labelFrom(group: string, value: string): string {
+  const key = `reports.${group}.${value}`;
+  return hasMessage(key) ? tr(key) : value;
+}
+export const paymentMethodLabel = (v: string) => labelFrom("method", v);
+export const paymentStatusLabel = (v: string) => labelFrom("paymentStatus", v);
+export const invoiceStatusLabel = (v: string) => labelFrom("invoiceStatus", v);
+export const ledgerAccountLabel = (v: string) => labelFrom("ledgerAccount", v);
 
 /** "Unduh CSV" — downloads `path` and lets the API name the file. */
-export function DownloadCsvButton({ path, label = "Unduh CSV", fallbackName }: { path: string; label?: string; fallbackName: string }) {
+export function DownloadCsvButton({ path, label, fallbackName }: { path: string; label?: string; fallbackName: string }) {
+  const { t } = useT();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function run() {
@@ -64,7 +45,7 @@ export function DownloadCsvButton({ path, label = "Unduh CSV", fallbackName }: {
     try {
       await apiDownload(path, authClient.getToken(), fallbackName);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unduhan gagal.");
+      setError(err instanceof ApiError ? err.message : t("reports.downloadFailed"));
     } finally {
       setBusy(false);
     }
@@ -77,7 +58,7 @@ export function DownloadCsvButton({ path, label = "Unduh CSV", fallbackName }: {
         disabled={busy}
         className="rounded border border-brand-600/20 bg-white px-3 py-1.5 text-sm font-medium hover:bg-brand-700/5 disabled:opacity-50"
       >
-        {busy ? "Mengunduh…" : label}
+        {busy ? t("common.downloading") : (label ?? t("common.downloadCsv"))}
       </button>
       {error && <span className="text-xs text-red-600">{error}</span>}
     </span>

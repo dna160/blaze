@@ -23,6 +23,12 @@ export class BranchController {
     return this.branch.getPublicProfile(tenant.id);
   }
 
+  /** PRD go-live 2 §9.2 — public: the console's name and logo for the sign-in page. */
+  @Get("branding")
+  branding(@CurrentTenant() tenant: ResolvedTenant) {
+    return this.branch.getConsoleBranding(tenant.id);
+  }
+
   /** Console Settings → Branch. Every staff role may read; editing is checked in the service. */
   @Get("settings")
   @UseGuards(JwtAuthGuard, StaffGuard)

@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { hasMessage, tr, useT } from "@/lib/i18n";
 
 /**
  * PRD go-live 2 §7.2 — "Gabungkan pelanggan / Merge customers", on the client
@@ -21,30 +22,14 @@ interface MergePlan {
   applied: boolean;
 }
 
-const MOVE_LABELS: Record<string, string> = {
-  bookings: "Sewa (booking)",
-  rentalOrders: "Pesanan sewa",
-  contracts: "Kontrak",
-  invoices: "Invoice",
-  payments: "Pembayaran",
-  deposits: "Deposit",
-  depositEvents: "Riwayat deposit",
-  changeRequests: "Permintaan perubahan",
-  kycDocuments: "Dokumen KYC",
-  kycRequests: "Permintaan KYC",
-  phones: "Nomor tambahan",
-  accessTokens: "Tautan masuk pelanggan",
-  legacyRecords: "Arsip Booqable",
-  notifications: "Riwayat pesan",
-  waitlistEntries: "Daftar tunggu",
-  masterAgreements: "Perjanjian induk",
-};
+const moveLabel = (k: string) => (hasMessage(`merge.moves.${k}`) ? tr(`merge.moves.${k}`) : k);
 
 function who(c: { customerNumber: number | null; fullName: string | null; phone: string | null }) {
-  return `#${c.customerNumber ?? "-"} ${c.fullName ?? "(tanpa nama)"}${c.phone ? ` · ${c.phone}` : ""}`;
+  return `#${c.customerNumber ?? "-"} ${c.fullName ?? tr("merge.noName")}${c.phone ? ` · ${c.phone}` : ""}`;
 }
 
 export function CustomerMergeDialog({ survivorId, survivorLabel, onMerged }: { survivorId: string; survivorLabel: string; onMerged: () => void }) {
+  const { t, s } = useT();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<ClientListItem[] | null>(null);
@@ -69,7 +54,7 @@ export function CustomerMergeDialog({ survivorId, survivorLabel, onMerged }: { s
       const r = await apiFetch<{ items: ClientListItem[] }>(`/customers/clients?search=${encodeURIComponent(query.trim())}&pageSize=10`, { token: authClient.getToken() });
       setResults(r.items.filter((i) => i.id !== survivorId));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Pencarian gagal.");
+      setError(err instanceof ApiError ? err.message : t("merge.searchFailed"));
     } finally {
       setBusy(false);
     }
@@ -81,7 +66,7 @@ export function CustomerMergeDialog({ survivorId, survivorLabel, onMerged }: { s
     try {
       setPlan(await apiFetch<MergePlan>(`/customers/${survivorId}/merge`, { token: authClient.getToken(), method: "POST", body: { duplicateId } }));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Ringkasan penggabungan gagal dimuat.");
+      setError(err instanceof ApiError ? err.message : t("merge.previewFailed"));
     } finally {
       setBusy(false);
     }
@@ -89,17 +74,17 @@ export function CustomerMergeDialog({ survivorId, survivorLabel, onMerged }: { s
 
   async function apply() {
     if (!plan) return;
-    if (!window.confirm(`Gabungkan ${who(plan.duplicate)} ke ${who(plan.survivor)}? Pelanggan duplikat akan dihapus dan tidak bisa dikembalikan.`)) return;
+    if (!window.confirm(t("merge.confirm", { duplicate: who(plan.duplicate), survivor: who(plan.survivor) }))) return;
     setBusy(true);
     setError(null);
     try {
       const r = await apiFetch<MergePlan>(`/customers/${survivorId}/merge`, { token: authClient.getToken(), method: "POST", body: { duplicateId: plan.duplicate.id, apply: true } });
-      setDone(`Pelanggan ${who(r.duplicate)} sudah digabung ke ${who(r.survivor)}.`);
+      setDone(t("merge.done", { duplicate: who(r.duplicate), survivor: who(r.survivor) }));
       setOpen(false);
       reset();
       onMerged();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Penggabungan gagal.");
+      setError(err instanceof ApiError ? err.message : t("merge.failed"));
     } finally {
       setBusy(false);
     }
@@ -110,16 +95,14 @@ export function CustomerMergeDialog({ survivorId, survivorLabel, onMerged }: { s
       {done && <p className="mb-2 rounded bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{done}</p>}
       {!open ? (
         <button type="button" onClick={() => setOpen(true)} className="rounded border border-brand-600/20 px-3 py-1.5 text-sm hover:bg-brand-700/5">
-          Gabungkan pelanggan
+          {t("merge.title")}
         </button>
       ) : (
         <div className="rounded-lg border border-amber-300 bg-amber-50/40 p-4">
           <div className="flex items-start justify-between gap-2">
             <div>
-              <h3 className="font-medium">Gabungkan pelanggan</h3>
-              <p className="text-xs text-brand-700/70">
-                Pelanggan ini ({survivorLabel}) dipertahankan. Semua sewa, invoice, deposit, dokumen dan riwayat dari pelanggan duplikat dipindahkan ke sini, lalu duplikat dihapus. Nomor pelanggan duplikat tetap bisa dicari.
-              </p>
+              <h3 className="font-medium">{t("merge.title")}</h3>
+              <p className="text-xs text-brand-700/70">{t("merge.intro", { label: survivorLabel })}</p>
             </div>
             <button
               type="button"
@@ -129,7 +112,7 @@ export function CustomerMergeDialog({ survivorId, survivorLabel, onMerged }: { s
               }}
               className="text-sm text-brand-700/60 hover:underline"
             >
-              Tutup
+              {t("common.close")}
             </button>
           </div>
 
@@ -139,14 +122,14 @@ export function CustomerMergeDialog({ survivorId, survivorLabel, onMerged }: { s
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Cari duplikat: nama, nomor HP, email, atau #nomor pelanggan"
+                  placeholder={t("merge.searchPlaceholder")}
                   className="w-full rounded border border-brand-600/20 px-2 py-1.5 text-sm"
                 />
                 <button type="submit" disabled={busy || !query.trim()} className="rounded bg-brand-700 px-3 py-1.5 text-sm text-white disabled:opacity-40">
-                  Cari
+                  {t("common.search")}
                 </button>
               </form>
-              {results && results.length === 0 && <p className="mt-2 text-sm text-brand-700/60">Tidak ada pelanggan lain yang cocok.</p>}
+              {results && results.length === 0 && <p className="mt-2 text-sm text-brand-700/60">{t("merge.noMatch")}</p>}
               {results && results.length > 0 && (
                 <ul className="mt-2 divide-y divide-brand-600/10 rounded border border-brand-600/10 bg-white text-sm">
                   {results.map((c) => (
@@ -156,7 +139,7 @@ export function CustomerMergeDialog({ survivorId, survivorLabel, onMerged }: { s
                         {c.units.length ? ` · ${c.units.map((u) => u.code ?? u.assetTypeName).join(", ")}` : ""}
                       </span>
                       <button type="button" disabled={busy} onClick={() => preview(c.id)} className="rounded border border-brand-600/20 px-2 py-1 text-xs hover:bg-brand-700/5">
-                        Lihat ringkasan
+                        {t("merge.preview")}
                       </button>
                     </li>
                   ))}
@@ -169,32 +152,32 @@ export function CustomerMergeDialog({ survivorId, survivorLabel, onMerged }: { s
             <div className="mt-3 space-y-3 text-sm" data-testid="merge-plan">
               <div className="grid gap-2 sm:grid-cols-2">
                 <div className="rounded border border-emerald-300 bg-white p-2">
-                  <div className="text-xs text-brand-700/60">Dipertahankan</div>
+                  <div className="text-xs text-brand-700/60">{t("merge.kept")}</div>
                   <div className="font-medium">{who(plan.survivor)}</div>
-                  <div className="text-xs">KYC: {plan.survivor.kycStatus}</div>
+                  <div className="text-xs">KYC: {s(plan.survivor.kycStatus)}</div>
                 </div>
                 <div className="rounded border border-red-300 bg-white p-2">
-                  <div className="text-xs text-brand-700/60">Digabung lalu dihapus</div>
+                  <div className="text-xs text-brand-700/60">{t("merge.removed")}</div>
                   <div className="font-medium">{who(plan.duplicate)}</div>
-                  <div className="text-xs">KYC: {plan.duplicate.kycStatus}</div>
+                  <div className="text-xs">KYC: {s(plan.duplicate.kycStatus)}</div>
                 </div>
               </div>
               <div>
-                <div className="text-xs font-medium text-brand-700/70">Yang dipindahkan</div>
+                <div className="text-xs font-medium text-brand-700/70">{t("merge.moved")}</div>
                 <ul className="mt-1 grid grid-cols-2 gap-x-4 sm:grid-cols-3">
                   {Object.entries(plan.moves)
                     .filter(([, n]) => n > 0)
                     .map(([k, n]) => (
                       <li key={k}>
-                        {MOVE_LABELS[k] ?? k}: <b>{n}</b>
+                        {moveLabel(k)}: <b>{n}</b>
                       </li>
                     ))}
-                  {Object.values(plan.moves).every((n) => n === 0) && <li>Tidak ada data yang dipindahkan.</li>}
+                  {Object.values(plan.moves).every((n) => n === 0) && <li>{t("merge.nothingMoves")}</li>}
                 </ul>
               </div>
               {plan.outcomes.length > 0 && (
                 <div>
-                  <div className="text-xs font-medium text-brand-700/70">Perubahan pada pelanggan yang dipertahankan</div>
+                  <div className="text-xs font-medium text-brand-700/70">{t("merge.changes")}</div>
                   <ul className="mt-1 list-disc pl-5">
                     {plan.outcomes.map((o) => (
                       <li key={o}>{o}</li>
@@ -204,10 +187,10 @@ export function CustomerMergeDialog({ survivorId, survivorLabel, onMerged }: { s
               )}
               <div className="flex gap-2">
                 <button type="button" disabled={busy} onClick={apply} className="rounded bg-red-600 px-3 py-1.5 text-white disabled:opacity-40">
-                  Gabungkan sekarang
+                  {t("merge.apply")}
                 </button>
                 <button type="button" disabled={busy} onClick={() => setPlan(null)} className="rounded border border-brand-600/20 px-3 py-1.5">
-                  Pilih pelanggan lain
+                  {t("merge.pickAnother")}
                 </button>
               </div>
             </div>

@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 
+import { BrandMark } from "@/components/BrandMark";
 import { PasswordRules, passwordFormProblem } from "@/components/PasswordRules";
 import { apiFetch, ApiError } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 /**
  * PRD go-live §4.4 — a new staff member's single-use "set your password" link
@@ -14,6 +16,7 @@ import { apiFetch, ApiError } from "@/lib/api";
  * refuses it once used or after 72 hours.
  */
 function SetPasswordForm() {
+  const { t } = useT();
   const params = useSearchParams();
   const token = params.get("token") ?? "";
   const [password, setPassword] = useState("");
@@ -36,24 +39,22 @@ function SetPasswordForm() {
       });
       setDone({ email: result.email });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not set the password.");
+      setError(err instanceof ApiError ? err.message : t("password.setFailed"));
     } finally {
       setBusy(false);
     }
   }
 
   if (!token) {
-    return <p className="text-sm text-red-600">This link is incomplete. Open the full link from your invitation, or ask your administrator for a new one.</p>;
+    return <p className="text-sm text-red-600">{t("password.linkIncomplete")}</p>;
   }
 
   if (done) {
     return (
       <div className="space-y-3">
-        <p className="text-sm text-green-700">
-          Password set for <b>{done.email}</b>. You can now sign in.
-        </p>
+        <p className="text-sm text-green-700">{t("password.setDone", { email: done.email })}</p>
         <Link href="/login" className="inline-block rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white">
-          Go to sign in
+          {t("password.goToSignIn")}
         </Link>
       </div>
     );
@@ -62,7 +63,7 @@ function SetPasswordForm() {
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       <label className="block text-sm">
-        <span className="text-brand-700/80">New password</span>
+        <span className="text-brand-700/80">{t("password.new")}</span>
         <input
           type="password"
           autoComplete="new-password"
@@ -74,7 +75,7 @@ function SetPasswordForm() {
         />
       </label>
       <label className="block text-sm">
-        <span className="text-brand-700/80">Repeat it</span>
+        <span className="text-brand-700/80">{t("password.repeat")}</span>
         <input
           type="password"
           autoComplete="new-password"
@@ -86,22 +87,25 @@ function SetPasswordForm() {
         />
       </label>
       <PasswordRules password={password} confirm={confirm} />
-      <p className="text-xs text-brand-700/60">Tautan ini hanya bisa dipakai sekali.</p>
+      <p className="text-xs text-brand-700/60">{t("password.singleUse")}</p>
       {error && <p className="text-sm text-red-600">{error}</p>}
       <button disabled={busy} className="w-full rounded bg-brand-700 px-4 py-2 font-medium text-white disabled:opacity-50">
-        {busy ? "Saving…" : "Set password"}
+        {busy ? t("common.saving") : t("password.setButton")}
       </button>
     </form>
   );
 }
 
 export default function SetPasswordPage() {
+  const { t } = useT();
   return (
     <main className="flex min-h-screen items-center justify-center p-6">
       <div className="w-full max-w-sm rounded-lg border border-brand-600/10 bg-white p-6">
-        <h1 className="mb-1 text-xl font-semibold">Set your password</h1>
-        <p className="mb-5 text-sm text-brand-700/60">RentOS Console</p>
-        <Suspense fallback={<p className="text-sm">Loading…</p>}>
+        <div className="mb-4">
+          <BrandMark />
+        </div>
+        <h1 className="mb-5 text-xl font-semibold">{t("password.setTitle")}</h1>
+        <Suspense fallback={<p className="text-sm">{t("common.loading")}</p>}>
           <SetPasswordForm />
         </Suspense>
       </div>

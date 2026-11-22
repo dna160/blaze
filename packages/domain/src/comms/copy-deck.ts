@@ -21,6 +21,7 @@ import { DYNAMIC_MESSAGE_TEMPLATE_KEYS, messageTemplateKeys, renderMessage } fro
  */
 export const MESSAGE_SAMPLE_VALUES: Readonly<Record<string, string>> = {
   customerName: "Budi Santoso",
+  consoleName: "City Storage",
   documents: "Selfie",
   documentsEn: "Selfie",
   // deposit_refund_task (staff): the deposits past their refund date.

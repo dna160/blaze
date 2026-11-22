@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { passwordPolicyError, type StaffPasswordLink } from "@rentos/contracts";
+import { consoleNameOf, passwordPolicyError, type StaffPasswordLink } from "@rentos/contracts";
 import {
   applyUserImport,
   hashPasswordToken,
@@ -68,13 +68,13 @@ export class UsersService {
     const links = [];
     for (const c of created) {
       const link = `${base}/set-password?token=${c.token}&branch=${c.branchSlug}`;
-      const branch = await this.prisma.raw.tenant.findUnique({ where: { id: c.tenantId }, select: { name: true } });
+      const branch = await this.prisma.raw.tenant.findUnique({ where: { id: c.tenantId }, select: { name: true, organization: { select: { branding: true } } } });
       await this.notifications.notify({
         tenantId: c.tenantId,
         channel: "EMAIL",
         templateKey: "staff_set_password",
         recipient: c.email,
-        variables: { displayName: c.displayName, branchName: branch?.name ?? "", link },
+        variables: { displayName: c.displayName, branchName: branch?.name ?? "", consoleName: consoleNameOf(branch?.organization.branding), link },
       });
       links.push({ email: c.email, displayName: c.displayName, branchSlug: c.branchSlug, link });
     }
@@ -266,12 +266,13 @@ export class UsersService {
     const expiresAt = new Date(Date.now() + PASSWORD_LINK_TTL_HOURS * 3600_000).toISOString();
     const emailed = await this.notifications.emailWouldBeDelivered(tenant.id, user.email);
     if (emailed) {
+      const org = await this.prisma.raw.organization.findUnique({ where: { id: tenant.organizationId }, select: { branding: true } });
       await this.notifications.notify({
         tenantId: tenant.id,
         channel: "EMAIL",
         templateKey,
         recipient: user.email,
-        variables: { displayName: user.displayName ?? "", branchName: tenant.name, link },
+        variables: { displayName: user.displayName ?? "", branchName: tenant.name, consoleName: consoleNameOf(org?.branding), link },
       });
     }
     return { id: user.id, email: user.email, displayName: user.displayName, emailed, link: emailed ? null : link, expiresAt };

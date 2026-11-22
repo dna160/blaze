@@ -6,7 +6,8 @@ import type { AvailableUnitsForDateDto, ChangeRequestDto, ChangeRequestOptionsDt
 
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
-import { CHANGE_STATUS_LABEL, CHANGE_STATUS_STYLE, CHANGE_TYPE_LABEL, fmtDateTime, fmtDay, notifyChangeRequestsChanged } from "@/lib/change-requests";
+import { CHANGE_STATUS_STYLE, changeStatusLabel, changeTypeLabel, fmtDateTime, fmtDay, notifyChangeRequestsChanged } from "@/lib/change-requests";
+import { tr, useT } from "@/lib/i18n";
 
 /**
  * PRD go-live 2 §4 — the request forms and the request cards, shared by the
@@ -15,7 +16,7 @@ import { CHANGE_STATUS_LABEL, CHANGE_STATUS_STYLE, CHANGE_TYPE_LABEL, fmtDateTim
 
 function errorText(err: unknown): string {
   if (err instanceof ApiError) return err.message;
-  return "Terjadi kesalahan. Coba lagi.";
+  return tr("common.errorGeneric");
 }
 
 // ----------------------------------------------------------------- the form
@@ -31,6 +32,7 @@ export function ChangeRequestForm({
   onDone: (created: ChangeRequestDto) => void;
   onCancel: () => void;
 }) {
+  const { t } = useT();
   const [options, setOptions] = useState<ChangeRequestOptionsDto | null>(null);
   const [reason, setReason] = useState("");
   const [newStartDate, setNewStartDate] = useState("");
@@ -94,51 +96,49 @@ export function ChangeRequestForm({
     }
   }
 
-  const title = kind === "CANCEL" ? "Ajukan pembatalan" : "Ajukan ubah tanggal mulai";
+  const title = kind === "CANCEL" ? t("requests.form.titleCancel") : t("requests.form.titleDate");
 
   return (
     <form onSubmit={submit} className="space-y-3 rounded border border-brand-600/15 bg-white p-4 text-sm" data-testid={`change-request-form-${kind}`}>
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">{title}</h3>
         <button type="button" onClick={onCancel} className="text-xs text-brand-700/60 hover:text-brand-700">
-          Tutup
+          {t("common.close")}
         </button>
       </div>
-      {!options && !error && <p className="text-brand-700/60">Memuat…</p>}
+      {!options && !error && <p className="text-brand-700/60">{t("common.loading")}</p>}
       {blocked && <p className="rounded bg-amber-50 px-3 py-2 text-amber-800">{blocked}</p>}
       {options && !blocked && (
         <>
           {kind === "CANCEL" ? (
             <p className="text-brand-700/70">
-              {options.cancelIsImmediate
-                ? "Anda Super Admin: pembatalan langsung berlaku. Tagihan yang belum dibayar dibatalkan, unit dilepas, dan pelanggan diberi tahu."
-                : "Permintaan ini dikirim ke Super Admin untuk disetujui. Setelah disetujui, tagihan yang belum dibayar dibatalkan, unit dilepas, dan pelanggan diberi tahu."}
+              {options.cancelIsImmediate ? t("requests.form.cancelImmediate") : t("requests.form.cancelNeedsApproval")}
             </p>
           ) : (
             <>
               <p className="text-brand-700/70">
-                Tanggal mulai sekarang: <b>{fmtDay(options.startDate)}</b>
-                {options.assetCode ? ` · unit ${options.assetCode}` : ""}
-                {options.termMonths ? ` · ${options.termMonths} bulan` : ""}. Permintaan ini disetujui oleh supervisor atau admin.
+                {t("requests.form.currentStart", { date: fmtDay(options.startDate) })}
+                {options.assetCode ? <> · {t("requests.form.unitCode", { code: options.assetCode })}</> : null}
+                {options.termMonths ? <> · {t("requests.form.months", { months: options.termMonths })}</> : null}. {t("requests.form.approvedBy")}
               </p>
               <label className="flex flex-col gap-1">
-                <span className="text-xs text-brand-700/60">Tanggal mulai baru</span>
+                <span className="text-xs text-brand-700/60">{t("requests.form.newStart")}</span>
                 <input type="date" value={newStartDate} onChange={(e) => setNewStartDate(e.target.value)} className="w-48 rounded border border-brand-600/20 px-2 py-1.5" required />
               </label>
               {units && (
                 <div className="space-y-1">
                   {units.currentUnitFree ? (
-                    <p className="text-green-700">Unit {options.assetCode} tersedia untuk tanggal ini.</p>
+                    <p className="text-green-700">{t("requests.form.unitFree", { code: options.assetCode })}</p>
                   ) : noUnitFree ? (
-                    <p className="rounded bg-red-50 px-3 py-2 text-red-700">Tidak ada unit tipe ini yang kosong untuk tanggal tersebut. Pilih tanggal lain.</p>
+                    <p className="rounded bg-red-50 px-3 py-2 text-red-700">{t("requests.form.noUnitFree")}</p>
                   ) : (
-                    <p className="text-amber-800">Unit {options.assetCode ?? "sekarang"} tidak tersedia untuk tanggal ini — pilih unit lain:</p>
+                    <p className="text-amber-800">{t("requests.form.unitTaken", { code: options.assetCode ?? t("requests.form.currentUnit") })}</p>
                   )}
                   {units.units.length > 0 && (
                     <label className="flex flex-col gap-1">
-                      <span className="text-xs text-brand-700/60">Unit</span>
+                      <span className="text-xs text-brand-700/60">{t("common.unit")}</span>
                       <select value={assetId} onChange={(e) => setAssetId(e.target.value)} className="w-48 rounded border border-brand-600/20 px-2 py-1.5">
-                        {units.currentUnitFree && <option value="">{options.assetCode} (tetap)</option>}
+                        {units.currentUnitFree && <option value="">{t("requests.form.keep", { code: options.assetCode })}</option>}
                         {units.units
                           .filter((u) => !u.current)
                           .map((u) => (
@@ -153,25 +153,25 @@ export function ChangeRequestForm({
               )}
               {needsSignedChoice && (
                 <fieldset className="space-y-1">
-                  <legend className="text-xs text-brand-700/60">Kontrak sudah ditandatangani. Setelah tanggal diubah:</legend>
+                  <legend className="text-xs text-brand-700/60">{t("requests.form.signedQuestion")}</legend>
                   <label className="flex items-center gap-2">
                     <input type="radio" name="signed" checked={signedContract === "RESIGN"} onChange={() => setSignedContract("RESIGN")} />
-                    <span>Pelanggan menandatangani ulang kontrak versi baru</span>
+                    <span>{t("requests.form.resign")}</span>
                   </label>
                   <label className="flex items-center gap-2">
                     <input type="radio" name="signed" checked={signedContract === "RECONFIRM"} onChange={() => setSignedContract("RECONFIRM")} />
-                    <span>Tanda tangan tetap berlaku; staf mengonfirmasi ulang</span>
+                    <span>{t("requests.form.reconfirm")}</span>
                   </label>
                 </fieldset>
               )}
             </>
           )}
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-brand-700/60">Alasan (wajib)</span>
-            <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} className="rounded border border-brand-600/20 px-2 py-1.5" placeholder="Mis. pelanggan minta mundur seminggu" required />
+            <span className="text-xs text-brand-700/60">{t("requests.form.reason")}</span>
+            <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} className="rounded border border-brand-600/20 px-2 py-1.5" placeholder={t("requests.form.reasonPlaceholder")} required />
           </label>
           <button type="submit" disabled={!ready || busy} className={`rounded px-3 py-1.5 font-medium text-white disabled:opacity-40 ${kind === "CANCEL" ? "bg-red-600" : "bg-brand-700"}`}>
-            {busy ? "Mengirim…" : kind === "CANCEL" && options.cancelIsImmediate ? "Batalkan booking" : "Kirim permintaan"}
+            {busy ? t("common.sending") : kind === "CANCEL" && options.cancelIsImmediate ? t("requests.form.cancelNow") : t("requests.form.send")}
           </button>
         </>
       )}
@@ -184,6 +184,7 @@ export function ChangeRequestForm({
 
 /** "Ajukan pembatalan" / "Ajukan ubah tanggal" for one booking, with the form inline. */
 export function ChangeRequestActions({ bookingId, compact = false, onChanged }: { bookingId: string; compact?: boolean; onChanged?: (created: ChangeRequestDto) => void }) {
+  const { t } = useT();
   const [open, setOpen] = useState<"CANCEL" | "CHANGE_START_DATE" | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const btn = compact ? "px-2.5 py-1 text-xs" : "px-3 py-1.5 text-sm";
@@ -191,10 +192,10 @@ export function ChangeRequestActions({ bookingId, compact = false, onChanged }: 
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1.5">
         <button type="button" onClick={() => setOpen(open === "CHANGE_START_DATE" ? null : "CHANGE_START_DATE")} className={`rounded border border-brand-600/20 font-medium hover:bg-brand-700/5 ${btn}`}>
-          Ajukan ubah tanggal
+          {t("requests.actions.date")}
         </button>
         <button type="button" onClick={() => setOpen(open === "CANCEL" ? null : "CANCEL")} className={`rounded border border-red-300 font-medium text-red-600 hover:bg-red-50 ${btn}`}>
-          Ajukan pembatalan
+          {t("requests.actions.cancel")}
         </button>
       </div>
       {open && (
@@ -206,10 +207,10 @@ export function ChangeRequestActions({ bookingId, compact = false, onChanged }: 
             setOpen(null);
             setNotice(
               created.status === "APPROVED"
-                ? "Booking dibatalkan."
+                ? t("requests.actions.cancelled")
                 : created.type === "CANCEL"
-                  ? "Permintaan pembatalan terkirim — menunggu persetujuan Super Admin."
-                  : "Permintaan ubah tanggal terkirim — menunggu persetujuan supervisor atau admin.",
+                  ? t("requests.actions.cancelSent")
+                  : t("requests.actions.dateSent"),
             );
             onChanged?.(created);
           }}
@@ -223,6 +224,7 @@ export function ChangeRequestActions({ bookingId, compact = false, onChanged }: 
 // ------------------------------------------------------------ a request card
 
 export function ChangeRequestCard({ request, onChanged, showBooking = true }: { request: ChangeRequestDto; onChanged: () => void; showBooking?: boolean }) {
+  const { t } = useT();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState(false);
@@ -245,7 +247,7 @@ export function ChangeRequestCard({ request, onChanged, showBooking = true }: { 
   }
 
   async function withdraw() {
-    if (!window.confirm("Tarik permintaan ini?")) return;
+    if (!window.confirm(t("requests.card.withdrawConfirm"))) return;
     setBusy(true);
     setError(null);
     try {
@@ -266,8 +268,8 @@ export function ChangeRequestCard({ request, onChanged, showBooking = true }: { 
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <div className="flex items-center gap-2">
-            <span className="font-semibold">{CHANGE_TYPE_LABEL[r.type]}</span>
-            <span className={`rounded-full px-2 py-0.5 text-xs ${CHANGE_STATUS_STYLE[r.status]}`}>{CHANGE_STATUS_LABEL[r.status]}</span>
+            <span className="font-semibold">{changeTypeLabel(r.type)}</span>
+            <span className={`rounded-full px-2 py-0.5 text-xs ${CHANGE_STATUS_STYLE[r.status]}`}>{changeStatusLabel(r.status)}</span>
           </div>
           {showBooking && (
             <p className="mt-1 text-brand-700/70">
@@ -278,79 +280,81 @@ export function ChangeRequestCard({ request, onChanged, showBooking = true }: { 
               <Link href={`/bookings/${r.bookingId}`} className="hover:underline">
                 {r.booking.assetTypeName} {r.booking.assetCode ?? ""}
               </Link>
-              {r.booking.contractNumber ? ` · kontrak ${r.booking.contractNumber}` : ""}
+              {r.booking.contractNumber ? <> · {t("requests.card.contract", { number: r.booking.contractNumber })}</> : null}
             </p>
           )}
         </div>
         <p className="text-xs text-brand-700/60">
-          Diajukan {r.requestedBy.name} · {fmtDateTime(r.requestedAt)}
+          {t("requests.card.requestedBy", { name: r.requestedBy.name, when: fmtDateTime(r.requestedAt) })}
         </p>
       </div>
 
       {r.type === "CHANGE_START_DATE" && (
         <p className="mt-2">
-          Tanggal mulai <b>{fmtDay(p.previousStartDate ?? r.booking.startDate)}</b> → <b>{fmtDay(p.newStartDate)}</b>
-          {p.assetCode ? (
-            <>
-              {" "}
-              · pindah unit <b>{p.previousAssetCode ?? r.booking.assetCode}</b> → <b>{p.assetCode}</b>
-            </>
-          ) : null}
-          {p.signedContract === "RESIGN" ? " · kontrak ditandatangani ulang" : p.signedContract === "RECONFIRM" ? " · kontrak dikonfirmasi ulang" : ""}
+          {t("requests.card.dateLine", { from: fmtDay(p.previousStartDate ?? r.booking.startDate), to: fmtDay(p.newStartDate) })}
+          {p.assetCode ? <> · {t("requests.card.unitMove", { from: p.previousAssetCode ?? r.booking.assetCode, to: p.assetCode })}</> : null}
+          {p.signedContract === "RESIGN" ? <> · {t("requests.card.resign")}</> : p.signedContract === "RECONFIRM" ? <> · {t("requests.card.reconfirm")}</> : null}
         </p>
       )}
-      <p className="mt-1 text-brand-700/80">Alasan: {r.reason}</p>
+      <p className="mt-1 text-brand-700/80">{t("requests.card.reason", { reason: r.reason })}</p>
       {r.status === "PENDING" && r.unitFree === false && (
-        <p className="mt-2 rounded bg-red-50 px-3 py-2 text-red-700">
-          Unit yang diminta tidak lagi kosong untuk tanggal ini — persetujuan akan ditolak. Pengaju perlu memilih unit atau tanggal lain.
-        </p>
+        <p className="mt-2 rounded bg-red-50 px-3 py-2 text-red-700">{t("requests.card.unitNoLongerFree")}</p>
       )}
 
       {r.status !== "PENDING" && (
         <p className="mt-2 text-xs text-brand-700/60">
-          {CHANGE_STATUS_LABEL[r.status]}
-          {r.decidedBy ? ` oleh ${r.decidedBy.name}` : ""} · {fmtDateTime(r.decidedAt)}
+          {changeStatusLabel(r.status)}
+          {r.decidedBy ? <> {t("requests.card.decidedBy", { name: r.decidedBy.name })}</> : null} · {fmtDateTime(r.decidedAt)}
           {r.decisionNote ? ` — ${r.decisionNote}` : ""}
         </p>
       )}
       {r.status === "APPROVED" && result && r.type === "CHANGE_START_DATE" && (
         <p className="mt-1 text-xs text-brand-700/60">
-          {result.voidedInvoices?.length ? `Invoice dibatalkan: ${result.voidedInvoices.map((i) => i.invoiceNumber).join(", ")}. ` : ""}
-          {result.issuedInvoices?.length ? `Diterbitkan ulang: ${result.issuedInvoices.map((i) => i.invoiceNumber).join(", ")}. ` : ""}
-          {result.contract ? `Kontrak versi ${result.contract.version}${result.contract.signed === "RESIGN_REQUIRED" ? " — perlu tanda tangan ulang" : result.contract.signed === "RECONFIRM_REQUIRED" ? " — perlu konfirmasi ulang" : ""}.` : ""}
+          {result.voidedInvoices?.length ? <>{t("requests.card.voided", { list: result.voidedInvoices.map((i) => i.invoiceNumber).join(", ") })} </> : null}
+          {result.issuedInvoices?.length ? <>{t("requests.card.reissued", { list: result.issuedInvoices.map((i) => i.invoiceNumber).join(", ") })} </> : null}
+          {result.contract
+            ? t(
+                result.contract.signed === "RESIGN_REQUIRED"
+                  ? "requests.card.contractVersionResign"
+                  : result.contract.signed === "RECONFIRM_REQUIRED"
+                    ? "requests.card.contractVersionReconfirm"
+                    : "requests.card.contractVersion",
+                { version: result.contract.version },
+              )
+            : null}
         </p>
       )}
 
       {r.status === "PENDING" && (r.canDecide || r.canWithdraw || r.cannotDecideReason) && (
         <div className="mt-3 space-y-2">
-          {r.cannotDecideReason === "SELF_DECISION" && <p className="text-xs text-brand-700/60">Ini permintaan Anda — orang lain yang harus memutuskannya.</p>}
+          {r.cannotDecideReason === "SELF_DECISION" && <p className="text-xs text-brand-700/60">{t("requests.card.selfDecision")}</p>}
           {r.canDecide && rejecting && (
-            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="w-full rounded border border-brand-600/20 px-2 py-1.5" placeholder="Alasan penolakan (wajib)" />
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="w-full rounded border border-brand-600/20 px-2 py-1.5" placeholder={t("requests.card.rejectReason")} />
           )}
           <div className="flex flex-wrap gap-1.5">
             {r.canDecide && !rejecting && (
               <>
                 <button onClick={() => decide("APPROVE")} disabled={busy} className="rounded bg-brand-700 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">
-                  Setujui
+                  {t("requests.card.approve")}
                 </button>
                 <button onClick={() => setRejecting(true)} disabled={busy} className="rounded border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 disabled:opacity-50">
-                  Tolak
+                  {t("requests.card.reject")}
                 </button>
               </>
             )}
             {r.canDecide && rejecting && (
               <>
                 <button onClick={() => decide("REJECT")} disabled={busy || note.trim().length < 3} className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">
-                  Tolak permintaan
+                  {t("requests.card.rejectRequest")}
                 </button>
                 <button onClick={() => setRejecting(false)} disabled={busy} className="rounded border border-brand-600/20 px-3 py-1.5 text-xs">
-                  Batal
+                  {t("common.cancel")}
                 </button>
               </>
             )}
             {r.canWithdraw && (
               <button onClick={withdraw} disabled={busy} className="rounded border border-brand-600/20 px-3 py-1.5 text-xs disabled:opacity-50">
-                Tarik permintaan
+                {t("requests.card.withdraw")}
               </button>
             )}
           </div>
@@ -365,6 +369,7 @@ export function ChangeRequestCard({ request, onChanged, showBooking = true }: { 
 
 /** The pending request(s) and the history, for the booking page and the client page. */
 export function ChangeRequestPanel({ bookingId, customerId, reloadKey = 0 }: { bookingId?: string; customerId?: string; reloadKey?: number }) {
+  const { t } = useT();
   const [rows, setRows] = useState<ChangeRequestDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(() => {
@@ -376,8 +381,8 @@ export function ChangeRequestPanel({ bookingId, customerId, reloadKey = 0 }: { b
   useEffect(load, [load, reloadKey]);
 
   if (error) return <p className="text-sm text-red-600">{error}</p>;
-  if (!rows) return <p className="text-sm text-brand-700/60">Memuat permintaan…</p>;
-  if (rows.length === 0) return <p className="text-sm text-brand-700/60">Belum ada permintaan perubahan.</p>;
+  if (!rows) return <p className="text-sm text-brand-700/60">{t("requests.panel.loading")}</p>;
+  if (rows.length === 0) return <p className="text-sm text-brand-700/60">{t("requests.panel.empty")}</p>;
   const pending = rows.filter((r) => r.status === "PENDING");
   const done = rows.filter((r) => r.status !== "PENDING");
   return (
@@ -387,7 +392,7 @@ export function ChangeRequestPanel({ bookingId, customerId, reloadKey = 0 }: { b
       ))}
       {done.length > 0 && (
         <details open={pending.length === 0}>
-          <summary className="cursor-pointer text-xs text-brand-700/60">Riwayat permintaan ({done.length})</summary>
+          <summary className="cursor-pointer text-xs text-brand-700/60">{t("requests.panel.history", { count: done.length })}</summary>
           <div className="mt-2 space-y-2">
             {done.map((r) => (
               <ChangeRequestCard key={r.id} request={r} onChanged={load} showBooking={!bookingId} />

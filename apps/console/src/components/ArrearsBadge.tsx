@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { apiFetch } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { useT } from "@/lib/i18n";
 
 /**
  * PRD go-live 2 §10.3 (T&C V.5, VI.7) — "Akses ditolak — tunggakan" for the
@@ -19,14 +20,15 @@ export interface ArrearsInfo {
 }
 
 export function ArrearsChip({ arrears }: { arrears: ArrearsInfo | null | undefined }) {
+  const { t } = useT();
   if (!arrears?.denied) return null;
   return (
     <span
-      title={`${arrears.overdueCount} invoice lewat jatuh tempo, tertua ${arrears.oldestDueDate} (${arrears.daysOverdue} hari)`}
+      title={t("arrears.title", { count: arrears.overdueCount, date: arrears.oldestDueDate ?? "-", days: arrears.daysOverdue })}
       className="inline-flex items-center rounded-full bg-red-600 px-2 py-0.5 text-xs font-semibold text-white"
       data-testid="arrears-badge"
     >
-      Akses ditolak — tunggakan
+      {t("arrears.denied")}
     </span>
   );
 }

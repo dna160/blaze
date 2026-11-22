@@ -6,6 +6,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { CHANGE_PASSWORD_PATH } from "@/lib/api";
 import type { StaffSessionUser } from "@/lib/auth-client";
+import { LOCALES, useT } from "@/lib/i18n";
+import { chooseLocale } from "@/lib/locale-preference";
 
 /**
  * The top bar's user menu (PRD go-live 2 §6.1): who is signed in and as what,
@@ -13,6 +15,7 @@ import type { StaffSessionUser } from "@/lib/auth-client";
  * click or choosing an item.
  */
 export function UserMenu({ user, onLogout }: { user: StaffSessionUser | null; onLogout: () => void }) {
+  const { t, locale } = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -44,7 +47,7 @@ export function UserMenu({ user, onLogout }: { user: StaffSessionUser | null; on
         aria-expanded={open}
         className="flex items-center gap-1.5 rounded px-2 py-1 text-sm text-brand-700/70 hover:bg-brand-700/5"
       >
-        Akun
+        {t("nav.menu.account")}
         <svg aria-hidden viewBox="0 0 20 20" className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`}>
           <path d="M5 7.5l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -57,8 +60,27 @@ export function UserMenu({ user, onLogout }: { user: StaffSessionUser | null; on
             {roleLine && <p className="mt-1 text-xs text-brand-700/60">{roleLine}</p>}
           </div>
           <Link href={CHANGE_PASSWORD_PATH} role="menuitem" onClick={() => setOpen(false)} className="block px-4 py-2 text-sm hover:bg-brand-700/5">
-            Ganti kata sandi
+            {t("nav.menu.changePassword")}
           </Link>
+          {/* PRD go-live 2 §9.1 — saved on the account, so every browser follows. */}
+          <div className="border-y border-brand-600/10 px-4 py-2" role="group" aria-label={t("nav.menu.language")}>
+            <p className="mb-1 text-xs text-brand-700/60">{t("nav.menu.language")}</p>
+            <div className="flex gap-1">
+              {LOCALES.map((l) => (
+                <button
+                  key={l}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={locale === l}
+                  data-testid={`locale-${l}`}
+                  onClick={() => void chooseLocale(l)}
+                  className={`rounded px-2 py-1 text-xs ${locale === l ? "bg-brand-700 text-white" : "border border-brand-600/15 hover:bg-brand-700/5"}`}
+                >
+                  {l === "id" ? t("common.languageId") : t("common.languageEn")}
+                </button>
+              ))}
+            </div>
+          </div>
           <button
             type="button"
             role="menuitem"
@@ -68,7 +90,7 @@ export function UserMenu({ user, onLogout }: { user: StaffSessionUser | null; on
             }}
             className="block w-full px-4 py-2 text-left text-sm hover:bg-brand-700/5"
           >
-            Keluar
+            {t("nav.menu.logout")}
           </button>
         </div>
       )}

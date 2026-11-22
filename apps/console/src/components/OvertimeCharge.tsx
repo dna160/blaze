@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { useT } from "@/lib/i18n";
 
 /**
  * PRD go-live 2 §10.3 (T&C II.8) — staff record access outside opening hours
@@ -12,6 +13,7 @@ import { authClient } from "@/lib/auth-client";
  * has the rule off.
  */
 export function OvertimeCharge({ bookingId, onCharged }: { bookingId: string; onCharged?: () => void }) {
+  const { t } = useT();
   const [rate, setRate] = useState<number | null>(null);
   const [open, setOpen] = useState(false);
   const [hours, setHours] = useState("1");
@@ -41,11 +43,11 @@ export function OvertimeCharge({ bookingId, onCharged }: { bookingId: string; on
         method: "POST",
         body: { hours: h, date, note: note.trim() || null, target },
       });
-      setMsg({ ok: true, text: `Biaya Rp ${r.amount.toLocaleString("id-ID")} ditambahkan ke invoice ${r.invoiceNumber}${r.target === "ONE_OFF" ? " (invoice tersendiri)" : ""}.` });
+      setMsg({ ok: true, text: t(r.target === "ONE_OFF" ? "overtime.doneOneOff" : "overtime.done", { amount: `Rp ${r.amount.toLocaleString("id-ID")}`, invoice: r.invoiceNumber }) });
       setOpen(false);
       onCharged?.();
     } catch (err) {
-      setMsg({ ok: false, text: err instanceof ApiError ? err.message : "Gagal menambahkan biaya." });
+      setMsg({ ok: false, text: err instanceof ApiError ? err.message : t("overtime.failed") });
     } finally {
       setBusy(false);
     }
@@ -56,37 +58,37 @@ export function OvertimeCharge({ bookingId, onCharged }: { bookingId: string; on
       {msg && <p className={`mb-2 text-sm ${msg.ok ? "text-green-700" : "text-red-600"}`}>{msg.text}</p>}
       {!open ? (
         <button type="button" onClick={() => setOpen(true)} className="rounded border border-brand-600/20 px-3 py-1.5 text-sm hover:bg-brand-700/5">
-          Tambah biaya akses di luar jam
+          {t("overtime.open")}
         </button>
       ) : (
         <form onSubmit={submit} className="flex flex-wrap items-end gap-3 rounded border border-brand-600/15 bg-white p-3 text-sm">
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-brand-700/60">Tanggal</span>
+            <span className="text-xs text-brand-700/60">{t("common.date")}</span>
             <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="rounded border border-brand-600/20 px-2 py-1" />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-brand-700/60">Jam</span>
+            <span className="text-xs text-brand-700/60">{t("overtime.hours")}</span>
             <input type="number" min={0.5} step={0.5} value={hours} onChange={(e) => setHours(e.target.value)} className="w-20 rounded border border-brand-600/20 px-2 py-1" />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-brand-700/60">Catatan</span>
-            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="mis. ambil barang 20.00–22.00" className="w-56 rounded border border-brand-600/20 px-2 py-1" />
+            <span className="text-xs text-brand-700/60">{t("common.notes")}</span>
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder={t("overtime.notePlaceholder")} className="w-56 rounded border border-brand-600/20 px-2 py-1" />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-brand-700/60">Ditagihkan</span>
+            <span className="text-xs text-brand-700/60">{t("overtime.billed")}</span>
             <select value={target} onChange={(e) => setTarget(e.target.value as "NEXT_INVOICE" | "ONE_OFF")} className="rounded border border-brand-600/20 px-2 py-1">
-              <option value="NEXT_INVOICE">di invoice berikutnya</option>
-              <option value="ONE_OFF">invoice tersendiri</option>
+              <option value="NEXT_INVOICE">{t("overtime.nextInvoice")}</option>
+              <option value="ONE_OFF">{t("overtime.oneOff")}</option>
             </select>
           </label>
           <span className="text-xs text-brand-700/70">
-            {hours} jam × Rp {rate.toLocaleString("id-ID")} = <b>Rp {total.toLocaleString("id-ID")}</b>
+            {t("overtime.calc", { hours, rate: `Rp ${rate.toLocaleString("id-ID")}` })}<b>Rp {total.toLocaleString("id-ID")}</b>
           </span>
           <button type="submit" disabled={busy || total <= 0} className="rounded bg-brand-700 px-3 py-1.5 text-white disabled:opacity-40">
-            Tambahkan
+            {t("overtime.add")}
           </button>
           <button type="button" onClick={() => setOpen(false)} className="text-brand-700/60 hover:underline">
-            Batal
+            {t("common.cancel")}
           </button>
         </form>
       )}

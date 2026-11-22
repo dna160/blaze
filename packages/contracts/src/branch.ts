@@ -79,6 +79,9 @@ export const BranchSettingsSchema = BranchPublicProfileSchema.extend({
   branchCode: z.string().nullable(),
   timezone: z.string(),
   organizationLegalName: z.string().nullable(),
+  /** PRD go-live 2 §9.2 — the name the console shows; `consoleNameIsDefault` when none is saved. */
+  consoleName: z.string(),
+  consoleNameIsDefault: z.boolean(),
   bankAccounts: z.array(BankAccountSchema),
   numbering: NumberingSchema,
   /** The branch's own switch (featureFlags.onlinePaymentsEnabled). */
@@ -111,6 +114,8 @@ export const UpdateBranchSettingsRequestSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
   legalName: z.string().trim().max(160).nullable().optional(),
   organizationLegalName: z.string().trim().max(160).nullable().optional(),
+  /** PRD go-live 2 §9.2 — the console's product name (Organization.branding.consoleName). Empty = the default. */
+  consoleName: z.string().trim().max(60).nullable().optional(),
   branchCode: z
     .string()
     .trim()
@@ -132,6 +137,21 @@ export const UpdateBranchSettingsRequestSchema = z.object({
   testMode: z.boolean().optional(),
 });
 export type UpdateBranchSettingsRequest = z.infer<typeof UpdateBranchSettingsRequestSchema>;
+
+/** PRD go-live 2 §9.2 — what the console shows before anyone signs in. Public. */
+export const DEFAULT_CONSOLE_NAME = "City Storage";
+export const ConsoleBrandingSchema = z.object({
+  consoleName: z.string(),
+  branchName: z.string(),
+  logoDataUrl: z.string().nullable(),
+});
+export type ConsoleBranding = z.infer<typeof ConsoleBrandingSchema>;
+
+/** The organization's console name: `branding.consoleName`, else the default. */
+export function consoleNameOf(branding: unknown): string {
+  const v = (branding as { consoleName?: unknown } | null)?.consoleName;
+  return typeof v === "string" && v.trim() ? v.trim() : DEFAULT_CONSOLE_NAME;
+}
 
 /**
  * PRD go-live §10 — the legacy (Booqable) migration over HTTP: the same engine

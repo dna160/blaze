@@ -2,13 +2,15 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
-import type { BankAccount, BranchSettings, UpdateBranchSettingsRequest } from "@rentos/contracts";
+import { DEFAULT_CONSOLE_NAME, type BankAccount, type BranchSettings, type UpdateBranchSettingsRequest } from "@rentos/contracts";
 
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { MoneyRulesPanel } from "@/components/MoneyRulesPanel";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import { notifyBranchSettingsChanged } from "@/lib/branch-test-mode";
+import { refreshBranding } from "@/lib/branding";
+import { useT } from "@/lib/i18n";
 
 /**
  * PRD go-live §5.1 — Settings → Branch: the branch profile printed on every
@@ -16,6 +18,7 @@ import { notifyBranchSettingsChanged } from "@/lib/branch-test-mode";
  * the storefront facilities list, the tax (PKP) switch, document numbering
  * and the online-payment switch. An organization-scoped Admin edits; everyone
  * else sees it read-only. Every saved change is audited field by field.
+ * PRD go-live 2 §9.2 adds the console's name (organization-wide).
  */
 
 const input = "mt-1 w-full rounded border border-brand-600/20 px-3 py-2 text-sm disabled:bg-brand-700/5";
@@ -43,6 +46,7 @@ function Section({ title, children, description }: { title: string; description?
 const emptyBank: BankAccount = { bank: "", accountNumber: "", accountName: "", swift: "", showOnInvoice: true };
 
 export default function BranchSettingsPage() {
+  const { t } = useT();
   const router = useRouter();
   const [settings, setSettings] = useState<BranchSettings | null>(null);
   const [form, setForm] = useState<Required<Omit<UpdateBranchSettingsRequest, "contact" | "operatingHours" | "numbering" | "moneyRules">> & {
@@ -60,6 +64,7 @@ export default function BranchSettingsPage() {
       name: s.name,
       legalName: s.legalName,
       organizationLegalName: s.organizationLegalName,
+      consoleName: s.consoleNameIsDefault ? "" : s.consoleName,
       branchCode: s.branchCode,
       isPkp: s.isPkp,
       timezone: s.timezone,
@@ -94,11 +99,7 @@ export default function BranchSettingsPage() {
     e.preventDefault();
     if (!form || !settings) return;
     if (form.isPkp !== settings.isPkp) {
-      const ok = window.confirm(
-        form.isPkp
-          ? "Turn PPN ON for this branch? Invoices issued from now on will carry PPN 11%. Invoices already issued do not change."
-          : "Turn PPN OFF for this branch? Invoices issued from now on carry no PPN. Invoices already issued do not change.",
-      );
+      const ok = window.confirm(form.isPkp ? t("branch.confirmPkpOn") : t("branch.confirmPkpOff"));
       if (!ok) return;
     }
     setBusy(true);
@@ -109,6 +110,7 @@ export default function BranchSettingsPage() {
       name: form.name.trim(),
       legalName: blank(form.legalName),
       organizationLegalName: blank(form.organizationLegalName),
+      consoleName: blank(form.consoleName),
       branchCode: blank(form.branchCode)?.toUpperCase() ?? null,
       isPkp: form.isPkp,
       timezone: form.timezone.trim(),
@@ -138,8 +140,9 @@ export default function BranchSettingsPage() {
       fill(await apiFetch<BranchSettings>("/branch/settings", { token: authClient.getToken(), method: "PUT", body }));
       setSaved(true);
       notifyBranchSettingsChanged();
+      refreshBranding();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not save.");
+      setError(err instanceof ApiError ? err.message : t("branch.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -148,7 +151,7 @@ export default function BranchSettingsPage() {
   if (!form || !settings) {
     return (
       <ConsoleShell>
-        {error ? <p className="text-sm text-red-600">{error}</p> : <p>Loading…</p>}
+        {error ? <p className="text-sm text-red-600">{error}</p> : <p>{t("common.loading")}</p>}
       </ConsoleShell>
     );
   }
@@ -160,73 +163,76 @@ export default function BranchSettingsPage() {
     <ConsoleShell>
       <form onSubmit={save} className="max-w-3xl space-y-6">
         <div>
-          <h1 className="text-2xl font-semibold">Branch profile</h1>
-          <p className="mt-1 text-sm text-brand-700/60">
-            {settings.name} ({settings.slug}). Printed on every contract and invoice, shown on the storefront, and used by the
-            WhatsApp auto-reply to point customers to this branch&apos;s CS.
-          </p>
-          {ro && (
-            <p className="mt-2 rounded border border-brand-600/10 bg-brand-700/5 px-3 py-2 text-sm text-brand-700/80">
-              Read-only: only an organization-scoped Admin (Super Admin) can change the branch profile.
-            </p>
-          )}
+          <h1 className="text-2xl font-semibold">{t("branch.title")}</h1>
+          <p className="mt-1 text-sm text-brand-700/60">{t("branch.intro", { name: settings.name, slug: settings.slug })}</p>
+          {ro && <p className="mt-2 rounded border border-brand-600/10 bg-brand-700/5 px-3 py-2 text-sm text-brand-700/80">{t("branch.readOnly")}</p>}
         </div>
 
         {error && <div className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>}
 
         <fieldset disabled={ro} className="space-y-6">
-          <Section title="Identity">
+          <Section title={t("branch.identity.title")}>
             <div className="grid gap-3 md:grid-cols-2">
-              <Field label="Branch name">
+              <Field label={t("branch.identity.name")}>
                 <input value={form.name} onChange={(e) => set("name", e.target.value)} required className={input} />
               </Field>
-              <Field label="Branch code" hint="2–6 capital letters or digits, unique in the organization — the {BRANCH} in document numbers.">
+              <Field label={t("branch.identity.code")} hint={t("branch.identity.codeHint")}>
                 <input value={form.branchCode ?? ""} onChange={(e) => set("branchCode", e.target.value.toUpperCase())} maxLength={6} className={input} />
               </Field>
-              <Field label="Legal name on documents (branch)" hint="Leave blank to use the organization's.">
+              <Field label={t("branch.identity.legalName")} hint={t("branch.identity.legalNameHint")}>
                 <input value={form.legalName ?? ""} onChange={(e) => set("legalName", e.target.value)} className={input} />
               </Field>
-              <Field label="Organization legal name" hint="The lessor in the contract, e.g. PT Servis Storej Indonesia.">
+              <Field label={t("branch.identity.orgLegalName")} hint={t("branch.identity.orgLegalNameHint")}>
                 <input value={form.organizationLegalName ?? ""} onChange={(e) => set("organizationLegalName", e.target.value)} className={input} />
               </Field>
-              <Field label="Timezone" hint="Document numbers take their month and year from this timezone.">
+              <Field label={t("branch.identity.timezone")} hint={t("branch.identity.timezoneHint")}>
                 <input value={form.timezone} onChange={(e) => set("timezone", e.target.value)} className={input} />
               </Field>
             </div>
           </Section>
 
-          <Section title="Tax (PPN)">
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={form.isPkp} onChange={(e) => set("isPkp", e.target.checked)} />
-              <span>This branch is PKP — invoices carry PPN 11%</span>
-            </label>
-            <p className="text-xs text-brand-700/60">
-              Applies only to invoices issued after you save. Invoices already issued never change. While off, tax rows disappear
-              from invoices, contracts and the portal quote.
-            </p>
+          <Section title={t("branch.console.title")}>
+            <Field label={t("branch.console.label")} hint={t("branch.console.hint", { default: DEFAULT_CONSOLE_NAME })}>
+              <input
+                value={form.consoleName ?? ""}
+                onChange={(e) => set("consoleName", e.target.value)}
+                maxLength={60}
+                placeholder={DEFAULT_CONSOLE_NAME}
+                className={input}
+                data-testid="console-name"
+              />
+            </Field>
           </Section>
 
-          <Section title="Customer service contacts" description="Printed in the document header; the auto-reply uses the WhatsApp number.">
+          <Section title={t("branch.tax.title")}>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={form.isPkp} onChange={(e) => set("isPkp", e.target.checked)} />
+              <span>{t("branch.tax.pkp")}</span>
+            </label>
+            <p className="text-xs text-brand-700/60">{t("branch.tax.hint")}</p>
+          </Section>
+
+          <Section title={t("branch.contact.title")} description={t("branch.contact.description")}>
             <div className="grid gap-3 md:grid-cols-2">
-              <Field label="CS WhatsApp (E.164)" hint="The branch's own CS number, as on the website — not the system number that sends notifications.">
+              <Field label={t("branch.contact.whatsapp")} hint={t("branch.contact.whatsappHint")}>
                 <input value={form.contact.whatsapp ?? ""} onChange={(e) => set("contact", { ...form.contact, whatsapp: e.target.value })} className={input} />
               </Field>
-              <Field label="CS WhatsApp as printed" hint="e.g. +62 812-3456-7890">
+              <Field label={t("branch.contact.whatsappDisplay")} hint={t("branch.contact.whatsappDisplayHint")}>
                 <input value={form.contact.whatsappDisplay ?? ""} onChange={(e) => set("contact", { ...form.contact, whatsappDisplay: e.target.value })} className={input} />
               </Field>
-              <Field label="Phone">
+              <Field label={t("branch.contact.phone")}>
                 <input value={form.contact.phone ?? ""} onChange={(e) => set("contact", { ...form.contact, phone: e.target.value })} className={input} />
               </Field>
-              <Field label="Email">
+              <Field label={t("branch.contact.email")}>
                 <input type="email" value={form.contact.email ?? ""} onChange={(e) => set("contact", { ...form.contact, email: e.target.value })} className={input} />
               </Field>
-              <Field label="CS display name">
+              <Field label={t("branch.contact.csName")}>
                 <input value={form.contact.csDisplayName ?? ""} onChange={(e) => set("contact", { ...form.contact, csDisplayName: e.target.value })} className={input} />
               </Field>
             </div>
           </Section>
 
-          <Section title="Address" description="One line per row, as printed.">
+          <Section title={t("branch.address.title")} description={t("branch.address.description")}>
             {form.address.map((line, i) => (
               <div key={i} className="flex gap-2">
                 <input
@@ -236,77 +242,77 @@ export default function BranchSettingsPage() {
                 />
                 {!ro && (
                   <button type="button" onClick={() => set("address", form.address.filter((_, j) => j !== i))} className="text-xs text-brand-700/60 hover:text-red-600">
-                    Remove
+                    {t("common.remove")}
                   </button>
                 )}
               </div>
             ))}
             {!ro && form.address.length < 6 && (
               <button type="button" onClick={() => set("address", [...form.address, ""])} className="text-sm text-accent-500 underline">
-                Add line
+                {t("branch.address.addLine")}
               </button>
             )}
           </Section>
 
-          <Section title="Operating hours">
+          <Section title={t("branch.hours.title")}>
             <div className="grid gap-3 md:grid-cols-4">
-              <Field label="Days">
+              <Field label={t("branch.hours.days")}>
                 <input value={form.operatingHours.days ?? ""} onChange={(e) => set("operatingHours", { ...form.operatingHours, days: e.target.value })} className={input} />
               </Field>
-              <Field label="Open">
+              <Field label={t("branch.hours.open")}>
                 <input value={form.operatingHours.open ?? ""} onChange={(e) => set("operatingHours", { ...form.operatingHours, open: e.target.value })} placeholder="09:00" className={input} />
               </Field>
-              <Field label="Close">
+              <Field label={t("branch.hours.close")}>
                 <input value={form.operatingHours.close ?? ""} onChange={(e) => set("operatingHours", { ...form.operatingHours, close: e.target.value })} placeholder="17:30" className={input} />
               </Field>
-              <Field label="Zone label">
+              <Field label={t("branch.hours.zone")}>
                 <input value={form.operatingHours.tz ?? ""} onChange={(e) => set("operatingHours", { ...form.operatingHours, tz: e.target.value })} placeholder="WIB" className={input} />
               </Field>
             </div>
           </Section>
 
-          <Section title="Facilities" description="Listed on the storefront branch page.">
+          <Section title={t("branch.facilities.title")} description={t("branch.facilities.description")}>
             {form.facilities.map((f, i) => (
               <div key={i} className="flex gap-2">
                 <input value={f} onChange={(e) => set("facilities", form.facilities.map((x, j) => (j === i ? e.target.value : x)))} className={`${input} mt-0`} />
                 {!ro && (
                   <button type="button" onClick={() => set("facilities", form.facilities.filter((_, j) => j !== i))} className="text-xs text-brand-700/60 hover:text-red-600">
-                    Remove
+                    {t("common.remove")}
                   </button>
                 )}
               </div>
             ))}
             {!ro && form.facilities.length < 20 && (
               <button type="button" onClick={() => set("facilities", [...form.facilities, ""])} className="text-sm text-accent-500 underline">
-                Add facility
+                {t("branch.facilities.add")}
               </button>
             )}
           </Section>
 
-          <Section title="Bank accounts" description="Accounts marked “show on invoice” appear in the invoice's Payment Method block and in the portal's transfer instructions.">
+          <Section title={t("branch.bank.title")} description={t("branch.bank.description")}>
             {form.bankAccounts.map((b, i) => {
               const update = (patch: Partial<BankAccount>) => set("bankAccounts", form.bankAccounts.map((x, j) => (j === i ? { ...x, ...patch } : x)));
               return (
                 <div key={i} className="grid gap-2 rounded border border-brand-600/10 p-3 md:grid-cols-2">
-                  <Field label="Bank">
+                  <Field label={t("branch.bank.bank")}>
                     <input value={b.bank} onChange={(e) => update({ bank: e.target.value })} required className={input} />
                   </Field>
-                  <Field label="Account number">
+                  <Field label={t("branch.bank.accountNumber")}>
                     <input value={b.accountNumber} onChange={(e) => update({ accountNumber: e.target.value })} required className={input} />
                   </Field>
-                  <Field label="Account name">
+                  <Field label={t("branch.bank.accountName")}>
                     <input value={b.accountName} onChange={(e) => update({ accountName: e.target.value })} required className={input} />
                   </Field>
-                  <Field label="SWIFT">
+                  <Field label={t("branch.bank.swift")}>
                     <input value={b.swift ?? ""} onChange={(e) => update({ swift: e.target.value })} className={input} />
                   </Field>
                   <label className="flex items-center gap-2 text-sm">
                     <input type="checkbox" checked={b.showOnInvoice} onChange={(e) => update({ showOnInvoice: e.target.checked })} />
-                    Show on invoice
+                    {t("branch.bank.showOnInvoice")}
                   </label>
                   {!ro && (
                     <button type="button" onClick={() => set("bankAccounts", form.bankAccounts.filter((_, j) => j !== i))} className="justify-self-end text-xs text-brand-700/60 hover:text-red-600">
-                      Remove account
+                      {t("branch.bank.removeAccount")}
                     </button>
                   )}
                 </div>
@@ -314,49 +320,38 @@ export default function BranchSettingsPage() {
             })}
             {!ro && form.bankAccounts.length < 5 && (
               <button type="button" onClick={() => set("bankAccounts", [...form.bankAccounts, { ...emptyBank }])} className="text-sm text-accent-500 underline">
-                Add bank account
+                {t("branch.bank.add")}
               </button>
             )}
           </Section>
 
-          <Section
-            title="Document numbering"
-            description={
-              <>
-                Tokens: <code>{"{BRANCH}"}</code> branch code, <code>{"{M}"}</code>/<code>{"{MM}"}</code> month,{" "}
-                <code>{"{YYYY}"}</code> year, <code>{"{D}"}</code>/<code>{"{DD}"}</code> day, <code>{"{CUST}"}</code> customer number,{" "}
-                <code>{"{SEQ}"}</code> or <code>{"{SEQ:4}"}</code> the running number (zero-padded), and on invoices{" "}
-                <code>{"{CONTRACT}"}</code> the number of the contract it belongs to. Contracts and invoices count separately.
-              </>
-            }
-          >
+          <Section title={t("branch.numbering.title")} description={t("branch.numbering.tokens")}>
             <div className="grid gap-3 md:grid-cols-2">
-              <Field label="Contract number format">
+              <Field label={t("branch.numbering.contract")}>
                 <input value={form.numbering.contract ?? ""} onChange={(e) => set("numbering", { ...form.numbering, contract: e.target.value })} placeholder="{CUST}-{DD}{MM}{YYYY}-{SEQ}-{BRANCH}" className={input} />
               </Field>
-              <Field label="Invoice number format">
+              <Field label={t("branch.numbering.invoice")}>
                 <input value={form.numbering.invoice ?? ""} onChange={(e) => set("numbering", { ...form.numbering, invoice: e.target.value })} placeholder="{CUST}-{DD}{MM}{YYYY}-{CONTRACT}-{SEQ}" className={input} />
               </Field>
-              <Field label="Running number restarts">
+              <Field label={t("branch.numbering.reset")}>
                 <select
                   value={form.numbering.seqReset ?? ""}
                   onChange={(e) => set("numbering", { ...form.numbering, seqReset: (e.target.value || undefined) as "never" | "yearly" | "monthly" | undefined })}
                   className={input}
                 >
-                  <option value="">Default</option>
-                  <option value="never">Never (one running sequence)</option>
-                  <option value="yearly">Every year</option>
-                  <option value="monthly">Every month</option>
+                  <option value="">{t("branch.numbering.resetDefault")}</option>
+                  <option value="never">{t("branch.numbering.resetNever")}</option>
+                  <option value="yearly">{t("branch.numbering.resetYearly")}</option>
+                  <option value="monthly">{t("branch.numbering.resetMonthly")}</option>
                 </select>
               </Field>
             </div>
             <p className="text-xs text-brand-700/70">
-              With the saved format, for customer #36 and running number 40: contract <b>{settings.numberPreview.contract}</b>, invoice{" "}
-              <b>{settings.numberPreview.invoice}</b>. Save to refresh the preview.
+              {t("branch.numbering.preview", { contract: settings.numberPreview.contract, invoice: settings.numberPreview.invoice })}
             </p>
           </Section>
 
-          <Section title="Online payment">
+          <Section title={t("branch.online.title")}>
             <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
@@ -364,64 +359,48 @@ export default function BranchSettingsPage() {
                 disabled={ro || (!settings.gatewayReady && !form.onlinePaymentsEnabled)}
                 onChange={(e) => set("onlinePaymentsEnabled", e.target.checked)}
               />
-              <span>Customers can pay invoices online from the portal</span>
+              <span>{t("branch.online.toggle")}</span>
             </label>
             {!settings.gatewayReady ? (
-              <p className="text-xs text-amber-800">
-                This deployment has no payment gateway yet (Xendit is not configured), so online payment stays off. Customers see the
-                bank transfer details above and are asked to send their transfer proof to WhatsApp CS; payments are recorded by staff
-                and verified by a second person.
-              </p>
+              <p className="text-xs text-amber-800">{t("branch.online.noGateway")}</p>
             ) : (
               <p className="text-xs text-brand-700/60">
-                While off, the portal hides Pay and shows the bank transfer details instead. Currently{" "}
-                {settings.onlinePaymentsEnabled ? "on" : "off"} for customers.
+                {t("branch.online.offHint")} {settings.onlinePaymentsEnabled ? t("branch.online.currentlyOn") : t("branch.online.currentlyOff")}
               </p>
             )}
           </Section>
 
-          <Section title="API access">
+          <Section title={t("branch.api.title")}>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.apiAccessEnabled} disabled={ro} onChange={(e) => set("apiAccessEnabled", e.target.checked)} />
-              <span>Allow API keys, the read-only external API and outbound webhooks for this branch</span>
+              <span>{t("branch.api.toggle")}</span>
             </label>
-            <p className="text-xs text-brand-700/60">
-              Turns on the API Access page. A key reads this branch&apos;s bookings and invoices (customer data included) and stays
-              valid until revoked — create one per system and revoke any you no longer use.
-            </p>
+            <p className="text-xs text-brand-700/60">{t("branch.api.hint")}</p>
           </Section>
 
-          <Section title="Imported rentals (legacy system)">
+          <Section title={t("branch.legacy.title")}>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.legacyAutomationHold ?? false} disabled={ro} onChange={(e) => set("legacyAutomationHold", e.target.checked)} />
-              <span>Hold automatic invoices and payment reminders for rentals imported from the legacy system</span>
+              <span>{t("branch.legacy.toggle")}</span>
             </label>
-            <p className="text-xs text-brand-700/60">
-              While on, RentOS issues no monthly invoice and sends no due or overdue reminder for the rentals and invoices imported
-              from Booqable — they are still billed there. Bookings and invoices made in RentOS are not affected. Turn this off on
-              cut-over day, once Booqable is no longer used: RentOS then bills and reminds those customers itself.
-            </p>
+            <p className="text-xs text-brand-700/60">{t("branch.legacy.hint")}</p>
           </Section>
 
-          <Section title="Mode uji">
+          <Section title={t("branch.testMode.title")}>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.testMode ?? false} disabled={ro} onChange={(e) => set("testMode", e.target.checked)} />
-              <span>Cabang ini sedang dalam masa uji — data akan dihapus sebelum go-live</span>
+              <span>{t("branch.testMode.toggle")}</span>
             </label>
-            <p className="text-xs text-brand-700/60">
-              Selama menyala, setiap halaman konsol menampilkan peringatan bahwa penyewa, kontrak, dan invoice di cabang ini adalah data uji yang
-              akan dihapus sebelum go-live. Ini hanya penanda: tidak mengubah cara sistem bekerja. Matikan setelah data uji dihapus dan data asli
-              diimpor.
-            </p>
+            <p className="text-xs text-brand-700/60">{t("branch.testMode.hint")}</p>
           </Section>
         </fieldset>
 
         {!ro && (
           <div className="flex items-center gap-3">
             <button disabled={busy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-              {busy ? "Saving…" : "Save branch profile"}
+              {busy ? t("common.saving") : t("branch.saveButton")}
             </button>
-            {saved && <span className="text-sm text-green-700">Saved — the change is in the audit log.</span>}
+            {saved && <span className="text-sm text-green-700">{t("branch.savedNote")}</span>}
           </div>
         )}
       </form>

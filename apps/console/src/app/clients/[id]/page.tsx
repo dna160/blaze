@@ -16,6 +16,7 @@ import { authClient, isOrgAdmin } from "@/lib/auth-client";
 import { CustomerMergeDialog } from "@/components/CustomerMergeDialog";
 import { ArrearsChip, type ArrearsInfo } from "@/components/ArrearsBadge";
 import { canDo } from "@/lib/capabilities";
+import { getLocale, tr, useT } from "@/lib/i18n";
 
 interface ClientDetail {
   customer: {
@@ -65,11 +66,12 @@ interface ClientDetail {
 function formatIDR(amount: string | number): string {
   return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(amount));
 }
+const intl = () => (getLocale() === "en" ? "en-GB" : "id-ID");
 function fmtDate(value: string | null): string {
-  return value ? new Date(value).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : "—";
+  return value ? new Date(value).toLocaleDateString(intl(), { day: "numeric", month: "short", year: "numeric" }) : "—";
 }
 function fmtDateTime(value: string): string {
-  return new Date(value).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return new Date(value).toLocaleString(intl(), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 /** PRD go-live §7.4 — GET /customers/:id/documents. */
@@ -82,17 +84,7 @@ interface VaultDocument {
   href: string;
 }
 
-const KIND_LABEL: Record<VaultDocument["kind"], string> = {
-  CONTRACT: "Contract (generated)",
-  SIGNED_CONTRACT: "Contract (signed)",
-  INVOICE: "Invoice",
-  PAYMENT_PROOF: "Payment proof",
-  KYC: "KYC",
-};
-
-function kycLabel(status: string): string {
-  return status === "VERIFIED_LEGACY" ? "Verified (legacy)" : status;
-}
+const kindLabel = (k: VaultDocument["kind"]) => tr(`client.kind.${k}`);
 
 const PPH_TYPES = [
   { value: "PPH_4_2_FINAL", label: "PPh Final 4(2) 10%" },
@@ -105,6 +97,7 @@ const PPH_TYPES = [
  * every change is audited by the API.
  */
 function TaxPanel({ customer, canEdit, onSaved }: { customer: ClientDetail["customer"]; canEdit: boolean; onSaved: () => void }) {
+  const { t } = useT();
   const [withheld, setWithheld] = useState<"yes" | "no" | "unknown">(
     customer.pphWithheld === null ? "unknown" : customer.pphWithheld ? "yes" : "no",
   );
@@ -129,10 +122,10 @@ function TaxPanel({ customer, canEdit, onSaved }: { customer: ClientDetail["cust
           address: address.trim() || null,
         },
       });
-      setMsg("Saved.");
+      setMsg(t("common.saved"));
       onSaved();
     } catch (err) {
-      setMsg(err instanceof ApiError ? err.message : "Could not save.");
+      setMsg(err instanceof ApiError ? err.message : t("client.tax.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -140,30 +133,30 @@ function TaxPanel({ customer, canEdit, onSaved }: { customer: ClientDetail["cust
 
   return (
     <form onSubmit={save} className="space-y-3 rounded-lg border border-brand-600/10 bg-white p-4 text-sm">
-      <h2 className="text-lg font-medium">Tax &amp; billing details</h2>
+      <h2 className="text-lg font-medium">{t("client.tax.title")}</h2>
       <fieldset className="space-y-1" disabled={!canEdit}>
-        <legend className="font-medium">Apakah akan memotong PPh? / Will the company withhold PPh?</legend>
+        <legend className="font-medium">{t("client.tax.question")}</legend>
         <div className="flex gap-4">
           {(["yes", "no", "unknown"] as const).map((v) => (
             <label key={v} className="flex items-center gap-1.5">
               <input type="radio" name="pph" checked={withheld === v} onChange={() => setWithheld(v)} />
-              {v === "yes" ? "Ya / Yes" : v === "no" ? "Tidak / No" : "Belum dijawab / Not answered"}
+              {t(`client.tax.${v}`)}
             </label>
           ))}
         </div>
       </fieldset>
       <label className="block">
-        <span className="text-brand-700/70">PPh type</span>
+        <span className="text-brand-700/70">{t("client.tax.type")}</span>
         <select
           value={pphType}
           onChange={(e) => setPphType(e.target.value)}
           disabled={!canEdit || withheld !== "yes"}
           className="mt-1 w-full rounded border border-brand-600/20 px-3 py-2 disabled:bg-brand-700/5"
         >
-          <option value="">Default (PPh Final 4(2) for space rental)</option>
-          {PPH_TYPES.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
+          <option value="">{t("client.tax.typeDefault")}</option>
+          {PPH_TYPES.map((p) => (
+            <option key={p.value} value={p.value}>
+              {p.label}
             </option>
           ))}
         </select>
@@ -173,16 +166,14 @@ function TaxPanel({ customer, canEdit, onSaved }: { customer: ClientDetail["cust
         <input value={taxId} onChange={(e) => setTaxId(e.target.value)} disabled={!canEdit} className="mt-1 w-full rounded border border-brand-600/20 px-3 py-2 disabled:bg-brand-700/5" />
       </label>
       <label className="block">
-        <span className="text-brand-700/70">Address (printed on contracts and invoices)</span>
+        <span className="text-brand-700/70">{t("client.tax.address")}</span>
         <textarea value={address} onChange={(e) => setAddress(e.target.value)} disabled={!canEdit} rows={2} maxLength={300} className="mt-1 w-full rounded border border-brand-600/20 px-3 py-2 disabled:bg-brand-700/5" />
       </label>
-      <p className="text-xs text-brand-700/60">
-        The invoice total never changes: a withholding customer transfers the total minus the PPh and sends the bukti potong.
-      </p>
+      <p className="text-xs text-brand-700/60">{t("client.tax.note")}</p>
       {canEdit && (
         <div className="flex items-center gap-3">
           <button disabled={busy} className="rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-            {busy ? "Saving…" : "Save"}
+            {busy ? t("common.saving") : t("common.save")}
           </button>
           {msg && <span className="text-xs text-brand-700/70">{msg}</span>}
         </div>
@@ -202,6 +193,7 @@ const INVOICE_STYLE: Record<string, string> = {
 
 /** PRD v2 §5.2 — "When they click on the client they can look closer": profile, rentals with their payment schedules, deposits, KYC, message log. */
 export default function ClientDetailPage() {
+  const { t, s } = useT();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [data, setData] = useState<ClientDetail | null>(null);
@@ -221,10 +213,10 @@ export default function ClientDetailPage() {
     }
     apiFetch<ClientDetail>(`/customers/clients/${id}`, { token })
       .then(setData)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load client."));
+      .catch((err) => setError(err instanceof ApiError ? err.message : t("client.loadFailed")));
     apiFetch<VaultDocument[]>(`/customers/${id}/documents`, { token })
       .then(setDocuments)
-      .catch((err) => setDocError(err instanceof ApiError ? err.message : "Failed to load documents."));
+      .catch((err) => setDocError(err instanceof ApiError ? err.message : t("client.docsFailed")));
   }
 
   useEffect(() => {
@@ -247,7 +239,7 @@ export default function ClientDetailPage() {
       else window.open(url, "_blank");
     } catch (err) {
       tab?.close();
-      setDocError(err instanceof ApiError ? `${doc.label}: ${err.message || `error ${err.status}`}` : `${doc.label}: could not open.`);
+      setDocError(err instanceof ApiError ? `${doc.label}: ${err.message || `HTTP ${err.status}`}` : t("client.openFailed", { label: doc.label }));
     }
   }
 
@@ -261,18 +253,18 @@ export default function ClientDetailPage() {
   if (!data) {
     return (
       <ConsoleShell>
-        <p>Loading...</p>
+        <p>{t("common.loading")}</p>
       </ConsoleShell>
     );
   }
 
   const { customer, summary, notifications } = data;
-  const health = summary ? HEALTH_STYLE[summary.health] : null;
+  const health = summary ? { className: HEALTH_STYLE[summary.health].className, label: t(`clients.health.${summary.health}`), hint: t(`clients.health.${summary.health}Hint`) } : null;
 
   return (
     <ConsoleShell>
       <Link href="/clients" className="text-sm text-brand-700/60 hover:underline">
-        ← Clients
+        {t("client.back")}
       </Link>
       <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -286,24 +278,26 @@ export default function ClientDetailPage() {
             // Surfaced beside the name because it changes how this client is
             // invoiced, not just how they were verified.
             <p className="text-sm text-brand-700/70">
-              Company
-              {customer.fullName ? ` · signatory ${customer.fullName}` : ""}
+              {t("client.company")}
+              {customer.fullName ? <> · {t("client.signatory", { name: customer.fullName })}</> : null}
               {customer.nib ? ` · NIB ${customer.nib}` : ""}
               {customer.taxId ? ` · NPWP ${customer.taxId}` : ""}
-              {" · PPh "}
+              {" · "}
               {customer.pphWithheld === null
-                ? "not answered"
+                ? t("client.pphNotAnswered")
                 : customer.pphWithheld
-                  ? `withheld${customer.pphType ? ` (${PPH_TYPES.find((t) => t.value === customer.pphType)?.label ?? customer.pphType})` : ""}`
-                  : "not withheld"}
+                  ? `${t("client.pphWithheld")}${customer.pphType ? ` (${PPH_TYPES.find((p) => p.value === customer.pphType)?.label ?? customer.pphType})` : ""}`
+                  : t("client.pphNotWithheld")}
             </p>
           )}
           <p className="text-sm text-brand-700/60">
-            {customer.phone ?? "no phone"} · {customer.email ?? "no email"} · messages via {customer.preferredChannel === "EMAIL" ? "email" : "WhatsApp"} · KYC {kycLabel(customer.kycStatus)}
-            {customer.isBlocklisted ? ` · BLOCKLISTED${customer.blocklistReason ? ` (${customer.blocklistReason})` : ""}` : ""}
+            {customer.phone ?? t("booking.noPhone")} · {customer.email ?? t("booking.noEmail")} ·{" "}
+            {customer.preferredChannel === "EMAIL" ? t("booking.viaEmail") : t("booking.viaWhatsapp")} · {t("booking.kyc", { status: s(customer.kycStatus) })}
+            {customer.isBlocklisted ? <> · {t("client.blocklisted")}{customer.blocklistReason ? ` (${customer.blocklistReason})` : null}</> : null}
           </p>
           <p className="text-xs text-brand-700/40">
-            {customer.customerNumber !== null ? `Customer #${customer.customerNumber} · ` : ""}Customer since {fmtDate(customer.createdAt)}
+            {customer.customerNumber !== null ? <>{t("client.customerNo", { number: customer.customerNumber })} · </> : null}
+            {t("client.since", { date: fmtDate(customer.createdAt) })}
           </p>
         </div>
         {health && summary && (
@@ -312,16 +306,16 @@ export default function ClientDetailPage() {
             <p className="mt-1 text-xs text-brand-700/60">{health.hint}</p>
             {summary.nextDueDate && (
               <p className="text-xs text-brand-700/60">
-                Next due {fmtDate(summary.nextDueDate)} · {summary.nextDueAmount ? formatIDR(summary.nextDueAmount) : ""}
+                {t("client.nextDue", { date: fmtDate(summary.nextDueDate) })} · {summary.nextDueAmount ? formatIDR(summary.nextDueAmount) : ""}
               </p>
             )}
-            {Number(summary.outstandingAmount) > 0 && <p className="text-xs text-red-700">Outstanding {formatIDR(summary.outstandingAmount)}</p>}
+            {Number(summary.outstandingAmount) > 0 && <p className="text-xs text-red-700">{t("client.outstanding", { amount: formatIDR(summary.outstandingAmount) })}</p>}
           </div>
         )}
       </div>
 
       <section className="mt-8">
-        <h2 className="text-lg font-medium">Permintaan perubahan</h2>
+        <h2 className="text-lg font-medium">{t("client.changeRequests")}</h2>
         <div className="mt-2">
           <ChangeRequestPanel customerId={customer.id} reloadKey={changeReload} />
         </div>
@@ -329,7 +323,7 @@ export default function ClientDetailPage() {
 
       {data.numberAliases && data.numberAliases.length > 0 && (
         <p className="mt-2 text-xs text-brand-700/60">
-          Juga dikenal sebagai: {data.numberAliases.map((a) => `#${a.aliasNumber}${a.mergedFromName ? ` (${a.mergedFromName})` : ""}`).join(", ")}
+          {t("client.alsoKnownAs")} {data.numberAliases.map((a) => `#${a.aliasNumber}${a.mergedFromName ? ` (${a.mergedFromName})` : ""}`).join(", ")}
         </p>
       )}
       {isOrgAdmin(me) && (
@@ -344,28 +338,29 @@ export default function ClientDetailPage() {
       <CustomerLegacyPaymentsBlock legacy={data.legacy} />
 
       <section className="mt-8">
-        <h2 className="text-lg font-medium">Rentals</h2>
-        {customer.bookings.length === 0 && <p className="mt-2 text-sm text-brand-700/60">No rentals yet.</p>}
+        <h2 className="text-lg font-medium">{t("client.rentals")}</h2>
+        {customer.bookings.length === 0 && <p className="mt-2 text-sm text-brand-700/60">{t("client.noRentals")}</p>}
         <div className="mt-3 space-y-4">
           {customer.bookings.map((b) => (
             <div key={b.id} className="rounded-lg border border-brand-600/10 bg-white p-4">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <Link href={`/bookings/${b.id}`} className="font-medium hover:underline">
-                    {b.contracts[0]?.contractNumber ? `Contract #${b.contracts[0].contractNumber} · ` : ""}
+                    {b.contracts[0]?.contractNumber ? <>{t("client.contractNo", { number: b.contracts[0].contractNumber })} · </> : null}
                     {b.assetType.name}
                     {b.asset ? ` — ${b.asset.code}` : ""}
                   </Link>
                   <p className="text-sm text-brand-700/60">
                     {b.location?.name ? `${b.location.name} · ` : ""}
                     {fmtDate(b.startDate)}
-                    {b.endDate ? ` → ${fmtDate(b.endDate)}` : " → open-ended"}
-                    {b.termMonths ? ` · ${b.termMonths}-month term` : ""}
-                    {b.legacyBookingNumber ? ` · legacy booking #${b.legacyBookingNumber}` : ""}
-                    {b.paidThrough ? ` · paid through ${fmtDate(b.paidThrough)} (legacy)` : ""}
+                    {" → "}
+                    {b.endDate ? fmtDate(b.endDate) : t("client.openEnded")}
+                    {b.termMonths ? <> · {t("client.termMonths", { months: b.termMonths })}</> : null}
+                    {b.legacyBookingNumber ? <> · {t("client.legacyBooking", { number: b.legacyBookingNumber })}</> : null}
+                    {b.paidThrough ? <> · {t("client.paidThrough", { date: fmtDate(b.paidThrough) })}</> : null}
                   </p>
                 </div>
-                <span className="rounded-full bg-brand-700/10 px-3 py-1 text-xs font-medium">{b.status}</span>
+                <span className="rounded-full bg-brand-700/10 px-3 py-1 text-xs font-medium">{s(b.status)}</span>
               </div>
               {canDo(me, "request_booking_change") && ["PENDING_APPROVAL", "NEEDS_INFO", "APPROVED"].includes(b.status) && (
                 <div className="mt-2">
@@ -377,11 +372,11 @@ export default function ClientDetailPage() {
                 <table className="mt-3 w-full text-xs">
                   <thead className="text-left text-brand-700/60">
                     <tr>
-                      <th className="py-1">Payment</th>
-                      <th className="py-1">Due</th>
-                      <th className="py-1">Status</th>
-                      <th className="py-1 text-right">Amount</th>
-                      <th className="py-1 text-right">Paid</th>
+                      <th className="py-1">{t("client.colPayment")}</th>
+                      <th className="py-1">{t("common.dueDate")}</th>
+                      <th className="py-1">{t("common.status")}</th>
+                      <th className="py-1 text-right">{t("common.amount")}</th>
+                      <th className="py-1 text-right">{t("client.colPaid")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -389,14 +384,14 @@ export default function ClientDetailPage() {
                       <tr key={inv.id} className="border-t border-brand-600/10">
                         <td className="py-1">
                           <Link href={`/invoices/${inv.id}`} className="hover:underline">
-                            {inv.scheduleIndex === 0 ? "Proforma" : inv.scheduleIndex !== null ? `#${inv.scheduleIndex + 1}` : ""}{" "}
-                            {inv.invoiceNumber.startsWith("SCHEDULED/") ? "(numbered when issued)" : `Invoice #${inv.invoiceNumber}`}
+                            {inv.scheduleIndex === 0 ? t("client.proforma") : inv.scheduleIndex !== null ? `#${inv.scheduleIndex + 1}` : ""}{" "}
+                            {inv.invoiceNumber.startsWith("SCHEDULED/") ? t("client.numberedWhenIssued") : t("client.invoiceNo", { number: inv.invoiceNumber })}
                           </Link>{" "}
                           <LegacyPaidChip settlement={data.legacyByInvoice?.[inv.id]} />
                         </td>
                         <td className="py-1">{fmtDate(inv.dueDate)}</td>
                         <td className="py-1">
-                          <span className={`rounded-full px-2 py-0.5 ${INVOICE_STYLE[inv.status] ?? ""}`}>{inv.status}</span>
+                          <span className={`rounded-full px-2 py-0.5 ${INVOICE_STYLE[inv.status] ?? ""}`}>{s(inv.status)}</span>
                         </td>
                         <td className="py-1 text-right">{formatIDR(inv.totalAmount)}</td>
                         <td className="py-1 text-right">{inv.paidAt ? fmtDate(inv.paidAt) : "—"}</td>
@@ -407,25 +402,33 @@ export default function ClientDetailPage() {
               )}
               {(b.deposits.length > 0 || b.contracts.length > 0) && (
                 <p className="mt-2 text-xs text-brand-700/60">
-                  {b.deposits.map((d) => `Deposit ${formatIDR(d.amount)} (${d.status}${Number(d.appliedAmount) > 0 ? `, ${formatIDR(d.appliedAmount)} applied` : ""})`).join(" · ")}
-                  {b.contracts[0]
-                    ? ` · Contract${b.contracts[0].contractNumber ? ` #${b.contracts[0].contractNumber}` : ""} ${
-                        b.contracts[0].signedAt
-                          ? `signed ${fmtDate(b.contracts[0].signedAt)}${b.contracts[0].confirmedAt ? " · CONFIRMED" : ""}`
-                          : b.contracts[0].unsignedDocumentUrl
-                            ? "generated, unsigned"
-                            : "not generated"
-                      }`
-                    : ""}
-                  {b.contracts[0] && !b.contracts[0].signedAt && b.contracts[0].signMethod === "OFFLINE"
-                    ? ` · tanda tangan di kantor, batas ${fmtDate(b.contracts[0].signDeadlineAt ?? null)}`
-                    : ""}
+                  {b.deposits
+                    .map((d) =>
+                      Number(d.appliedAmount) > 0
+                        ? t("client.depositApplied", { amount: formatIDR(d.amount), status: s(d.status), applied: formatIDR(d.appliedAmount) })
+                        : t("client.deposit", { amount: formatIDR(d.amount), status: s(d.status) }),
+                    )
+                    .join(" · ")}
+                  {b.contracts[0] ? (
+                    <>
+                      {" · "}
+                      {b.contracts[0].contractNumber ? t("client.contractNo", { number: b.contracts[0].contractNumber }) : t("client.contract")}{" "}
+                      {b.contracts[0].signedAt
+                        ? `${t("client.contractSigned", { date: fmtDate(b.contracts[0].signedAt) })}${b.contracts[0].confirmedAt ? " · CONFIRMED" : ""}`
+                        : b.contracts[0].unsignedDocumentUrl
+                          ? t("client.contractUnsigned")
+                          : t("client.contractNotGenerated")}
+                    </>
+                  ) : null}
+                  {b.contracts[0] && !b.contracts[0].signedAt && b.contracts[0].signMethod === "OFFLINE" ? (
+                    <> · {t("client.offlineDeadline", { date: fmtDate(b.contracts[0].signDeadlineAt ?? null) })}</>
+                  ) : null}
                 </p>
               )}
               {/* PRD go-live 2 §5.3 — record a paper contract from here too, not only from the booking page. */}
               {b.status === "APPROVED" && b.contracts[0]?.unsignedDocumentUrl && !b.contracts[0].signedAt && b.contracts[0].esignStatus !== "PENDING" && canUploadScan && (
                 <details className="mt-3 rounded border border-brand-600/10 p-3">
-                  <summary className="cursor-pointer text-sm">Unggah kontrak bertanda tangan (kertas)</summary>
+                  <summary className="cursor-pointer text-sm">{t("client.uploadPaper")}</summary>
                   <div className="mt-2">
                     <SignedScanUpload bookingId={b.id} isCompany={customer.type === "BUSINESS"} onDone={() => void load()} />
                   </div>
@@ -438,21 +441,21 @@ export default function ClientDetailPage() {
 
       <div className="mt-8 grid gap-6 lg:grid-cols-2">
         <section>
-          <h2 className="text-lg font-medium">Documents</h2>
-          <p className="text-xs text-brand-700/60">Contracts, invoices, payment proofs and KYC files. Each opens in a new tab; opening a KYC file is logged.</p>
+          <h2 className="text-lg font-medium">{t("client.documents")}</h2>
+          <p className="text-xs text-brand-700/60">{t("client.documentsHint")}</p>
           {customer.customerNumber !== null && (
             <p className="mt-1 text-xs">
               <Link href={`/legacy?customer=${customer.customerNumber}`} className="text-amber-800 underline">
-                Legacy records from Booqable for this customer
+                {t("client.legacyLink")}
               </Link>{" "}
-              <span className="text-brand-700/60">— past orders, invoices, payments and the original signed contracts.</span>
+              <span className="text-brand-700/60">{t("client.legacyLinkHint")}</span>
             </p>
           )}
           {docError && <p className="mt-2 text-sm text-red-600">{docError}</p>}
           {!documents ? (
-            !docError && <p className="mt-2 text-sm text-brand-700/60">Loading…</p>
+            !docError && <p className="mt-2 text-sm text-brand-700/60">{t("common.loading")}</p>
           ) : documents.length === 0 ? (
-            <p className="mt-2 text-sm text-brand-700/60">No documents yet.</p>
+            <p className="mt-2 text-sm text-brand-700/60">{t("client.noDocuments")}</p>
           ) : (
             <ul className="mt-2 max-h-96 space-y-1 overflow-y-auto text-sm">
               {documents.map((d) => (
@@ -460,12 +463,12 @@ export default function ClientDetailPage() {
                   <button onClick={() => void openDocument(d)} className="text-left hover:underline">
                     <span className="block font-medium">{d.label}</span>
                     <span className="block text-xs text-brand-700/60">
-                      {KIND_LABEL[d.kind]}
+                      {kindLabel(d.kind)}
                       {d.detail ? ` · ${d.kind === "INVOICE" || d.kind === "PAYMENT_PROOF" ? formatIDR(d.detail) : d.detail}` : ""}
                     </span>
                   </button>
                   <span className="shrink-0 text-right text-xs text-brand-700/60">
-                    {d.status ? `${kycLabel(d.status)} · ` : ""}
+                    {d.status ? `${s(d.status)} · ` : ""}
                     {fmtDate(d.date)}
                   </span>
                 </li>
@@ -483,9 +486,9 @@ export default function ClientDetailPage() {
           {customer.notes && <p className="mt-3 rounded bg-brand-700/5 p-3 text-sm">{customer.notes}</p>}
         </section>
         <section>
-          <h2 className="text-lg font-medium">Messages sent</h2>
+          <h2 className="text-lg font-medium">{t("client.messages")}</h2>
           {notifications.length === 0 ? (
-            <p className="mt-2 text-sm text-brand-700/60">No messages yet.</p>
+            <p className="mt-2 text-sm text-brand-700/60">{t("client.noMessages")}</p>
           ) : (
             <ul className="mt-2 max-h-80 space-y-1 overflow-y-auto text-xs">
               {notifications.map((n) => (
@@ -494,7 +497,7 @@ export default function ClientDetailPage() {
                     {n.templateKey} <span className="text-brand-700/50">· {n.channel.toLowerCase()}</span>
                   </span>
                   <span className={n.status === "FAILED" ? "text-red-600" : "text-brand-700/60"}>
-                    {n.status} · {fmtDateTime(n.createdAt)}
+                    {s(n.status)} · {fmtDateTime(n.createdAt)}
                   </span>
                 </li>
               ))}

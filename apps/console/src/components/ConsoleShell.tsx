@@ -4,7 +4,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { BrandMark } from "@/components/BrandMark";
 import { UserMenu } from "@/components/UserMenu";
+import { useT } from "@/lib/i18n";
 import { CHANGE_PASSWORD_PATH } from "@/lib/api";
 import { authClient, isAdmin } from "@/lib/auth-client";
 import { canDo, type ConsoleCapability } from "@/lib/capabilities";
@@ -15,7 +17,10 @@ import { ConsoleBanners } from "./ConsoleBanners";
 import { usePendingApprovalCount } from "@/lib/pending-approvals";
 import { useUnreadMessageCount } from "@/lib/unread-messages";
 
-/** `capability`: shown only to a session that holds it (the page's API is gated on the same one). */
+/**
+ * `label` is a message key under `nav.` (PRD go-live 2 §9.1).
+ * `capability`: shown only to a session that holds it (the page's API is gated on the same one).
+ */
 type NavItem = { href: string; label: string; adminOnly?: boolean; capability?: ConsoleCapability };
 type NavGroup = { id: string; label: string; items: NavItem[] };
 
@@ -23,60 +28,61 @@ type NavGroup = { id: string; label: string; items: NavItem[] };
 const NAV_GROUPS: NavGroup[] = [
   {
     id: "operations",
-    label: "Operations",
+    label: "groups.operations",
     items: [
-      { href: "/bookings", label: "Approval Workbench" },
-      { href: "/change-requests", label: "Permintaan" },
-      { href: "/rental-orders", label: "Pesanan sewa" },
-      { href: "/swap-requests", label: "Swap Requests" },
-      { href: "/messaging", label: "Messages" },
+      { href: "/bookings", label: "items.bookings" },
+      { href: "/change-requests", label: "items.changeRequests" },
+      { href: "/rental-orders", label: "items.rentalOrders" },
+      { href: "/swap-requests", label: "items.swapRequests" },
+      { href: "/messaging", label: "items.messaging" },
     ],
   },
   {
     id: "customers",
-    label: "Customers",
+    label: "groups.customers",
     items: [
-      { href: "/clients", label: "Clients" },
-      { href: "/kyc", label: "KYC Review" },
-      { href: "/legacy", label: "Legacy Records" },
+      { href: "/clients", label: "items.clients" },
+      { href: "/kyc", label: "items.kyc" },
+      { href: "/legacy", label: "items.legacy" },
     ],
   },
   {
     id: "inventory",
-    label: "Inventory",
+    label: "groups.inventory",
     items: [
-      { href: "/assets", label: "Storage" },
-      { href: "/catalog-setup", label: "Catalog Setup" },
+      { href: "/assets", label: "items.assets" },
+      { href: "/catalog-setup", label: "items.catalogSetup" },
     ],
   },
   {
     id: "finance",
-    label: "Finance",
+    label: "groups.finance",
     items: [
-      { href: "/invoices", label: "Invoices" },
-      { href: "/deposits", label: "Deposits" },
-      { href: "/bukti-potong", label: "Bukti potong", capability: "record_payment" },
+      { href: "/invoices", label: "items.invoices" },
+      { href: "/deposits", label: "items.deposits" },
+      { href: "/bukti-potong", label: "items.buktiPotong", capability: "record_payment" },
       // PRD go-live 2 §6.2 — reports are Finance's and Admin's; a supervisor does not see them.
-      { href: "/reports", label: "Reports", capability: "run_reports" },
+      { href: "/reports", label: "items.reports", capability: "run_reports" },
     ],
   },
   {
     id: "integrations",
-    label: "Integrations",
+    label: "groups.integrations",
     items: [
-      { href: "/api-access", label: "API Access" },
-      { href: "/ota-sync", label: "OTA Sync" },
-      { href: "/automation", label: "Automation" },
+      { href: "/api-access", label: "items.apiAccess" },
+      { href: "/ota-sync", label: "items.otaSync" },
+      { href: "/automation", label: "items.automation" },
     ],
   },
   {
     id: "settings",
-    label: "Settings",
+    label: "groups.settings",
     items: [
-      { href: "/settings/branch", label: "Branch Profile" },
+      { href: "/settings/branch", label: "items.branchProfile" },
       // Admin-only (manage_users). BUILD-SPEC C2 user & role administration.
-      { href: "/settings/users", label: "Users & Roles", adminOnly: true },
-      { href: "/settings/messaging", label: "Messaging", adminOnly: true },
+      { href: "/settings/users", label: "items.users", adminOnly: true },
+      { href: "/settings/messaging", label: "items.messagingSettings", adminOnly: true },
+      { href: "/messaging/suppressed", label: "items.suppressed", adminOnly: true },
     ],
   },
 ];
@@ -98,6 +104,7 @@ function Badge({ count, label }: { count: number; label: string }) {
 
 /** Console shell — sidebar nav + top bar, shown once staff is authenticated. */
 export function ConsoleShell({ children }: { children: ReactNode }) {
+  const { t } = useT();
   const pathname = usePathname();
   const router = useRouter();
   // The signed-in user lives in localStorage, which the server render cannot
@@ -165,7 +172,9 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen">
       <aside className="w-56 border-r border-brand-600/10 bg-white p-4">
-        <div className="mb-6 px-2 text-lg font-semibold">RentOS Console</div>
+        <div className="mb-6 px-2">
+          <BrandMark />
+        </div>
         <nav className="space-y-1">
           {groups.map((group) => {
             const expanded = open[group.id] ?? false;
@@ -183,9 +192,9 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
                   }`}
                 >
                   <span className="flex items-center gap-2">
-                    {group.label}
+                    {t(`nav.${group.label}`)}
                     {/* Collapsed: the group carries its items' counts, so nothing waiting is hidden. */}
-                    {!expanded && groupBadge > 0 && <Badge count={groupBadge} label={`${groupBadge} waiting in ${group.label}`} />}
+                    {!expanded && groupBadge > 0 && <Badge count={groupBadge} label={t("nav.badgeGroup", { count: groupBadge, group: t(`nav.${group.label}`) })} />}
                     {!expanded && holdsCurrentPage && groupBadge === 0 && <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-brand-700" />}
                   </span>
                   <svg aria-hidden viewBox="0 0 20 20" className={`h-4 w-4 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}>
@@ -206,14 +215,16 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
                             active ? "bg-brand-700 text-white" : "hover:bg-brand-700/5"
                           }`}
                         >
-                          <span>{item.label}</span>
+                          <span>{t(`nav.${item.label}`)}</span>
                           {badge > 0 && (
                             <Badge
                               count={badge}
                               label={
                                 item.href === "/messaging"
-                                  ? `${badge} unread message${badge === 1 ? "" : "s"}`
-                                  : `${badge} booking${badge === 1 ? "" : "s"} awaiting approval`
+                                  ? t("nav.badgeUnread", { count: badge })
+                                  : item.href === "/change-requests"
+                                    ? t("nav.badgeRequests", { count: badge })
+                                    : t("nav.badgeApprovals", { count: badge })
                               }
                             />
                           )}

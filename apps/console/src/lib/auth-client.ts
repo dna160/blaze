@@ -20,6 +20,8 @@ export interface StaffSessionUser {
   roleAssignments?: RoleAssignment[];
   /** PRD go-live 2 §6.1 — true: this session can only change its password; the console goes there first. */
   mustChangePassword?: boolean;
+  /** PRD go-live 2 §9.1 — the console language this account chose ("id" default, "en"). */
+  locale?: "id" | "en";
 }
 
 /** True if the session holds an admin role (manage_users). */

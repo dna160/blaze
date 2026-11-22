@@ -8,6 +8,7 @@ import type { ConversationListResponse, ConversationSummary, ThreadMessage, Thre
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { getLocale, tr, useT } from "@/lib/i18n";
 import { notifyUnreadMessagesChanged } from "@/lib/unread-messages";
 
 const LIST_POLL_MS = 10_000;
@@ -16,12 +17,16 @@ const THREAD_POLL_MS = 5_000;
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return "now";
-  if (mins < 60) return `${mins}m`;
+  if (mins < 1) return tr("messages.now");
+  if (mins < 60) return tr("messages.minutes", { n: mins });
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
+  if (hours < 24) return tr("messages.hours", { n: hours });
   const days = Math.floor(hours / 24);
-  return days < 7 ? `${days}d` : new Date(iso).toLocaleDateString("id-ID", { day: "numeric", month: "short" });
+  return days < 7 ? tr("messages.days", { n: days }) : new Date(iso).toLocaleDateString(intlOf(), { day: "numeric", month: "short" });
+}
+
+function intlOf(): string {
+  return getLocale() === "en" ? "en-GB" : "id-ID";
 }
 
 function dayLabel(iso: string): string {
@@ -29,23 +34,23 @@ function dayLabel(iso: string): string {
   const today = new Date();
   const isToday = d.toDateString() === today.toDateString();
   const yesterday = new Date(today.getTime() - 86_400_000);
-  if (isToday) return "Today";
-  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return d.toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
+  if (isToday) return tr("messages.today");
+  if (d.toDateString() === yesterday.toDateString()) return tr("messages.yesterday");
+  return d.toLocaleDateString(intlOf(), { day: "numeric", month: "long", year: "numeric" });
 }
 
 /** Delivery state, as WhatsApp itself shows it. FAILED carries Meta's reason on hover. */
 function StatusGlyph({ status, error }: { status: string; error?: string | null }) {
   if (status === "FAILED") {
     return (
-      <span title={error ?? "Failed"} className="text-red-600">
-        failed
+      <span title={error ?? tr("messages.failedTitle")} className="text-red-600">
+        {tr("messages.failed")}
       </span>
     );
   }
-  if (status === "READ") return <span className="text-sky-600" title="Read">✓✓</span>;
-  if (status === "DELIVERED") return <span className="text-slate-400" title="Delivered">✓✓</span>;
-  if (status === "SENT") return <span className="text-slate-400" title="Sent">✓</span>;
+  if (status === "READ") return <span className="text-sky-600" title={tr("messages.read")}>✓✓</span>;
+  if (status === "DELIVERED") return <span className="text-slate-400" title={tr("messages.delivered")}>✓✓</span>;
+  if (status === "SENT") return <span className="text-slate-400" title={tr("messages.sent")}>✓</span>;
   return <span className="text-slate-300" title={status}>·</span>;
 }
 
@@ -58,6 +63,7 @@ function StatusGlyph({ status, error }: { status: string; error?: string | null 
  * a conversation feels stale.
  */
 export default function MessagingPage() {
+  const { t, intl } = useT();
   const router = useRouter();
   const [conversations, setConversations] = useState<ConversationSummary[] | null>(null);
   const [selected, setSelected] = useState<{ tenantId: string; phone: string } | null>(null);
@@ -174,25 +180,25 @@ export default function MessagingPage() {
         <aside className={`flex w-full flex-col rounded-lg border border-brand-600/10 bg-white md:w-80 ${selected ? "hidden md:flex" : "flex"}`}>
           <div className="space-y-2 border-b border-brand-600/10 p-3">
             <div className="flex items-center justify-between">
-              <h1 className="text-lg font-semibold">Messages</h1>
+              <h1 className="text-lg font-semibold">{t("messages.title")}</h1>
               <Link href="/settings/messaging" className="text-xs text-brand-700/60 hover:text-accent-500">
-                Number &amp; auto-reply
+                {t("messages.settingsLink")}
               </Link>
             </div>
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search name or number"
+              placeholder={t("messages.search")}
               className="w-full rounded border border-slate-300 px-3 py-1.5 text-sm"
             />
             <div className="flex items-center gap-3 text-xs">
               <label className="flex items-center gap-1.5">
                 <input type="checkbox" checked={unreadOnly} onChange={(e) => setUnreadOnly(e.target.checked)} />
-                Unread only
+                {t("messages.unreadOnly")}
               </label>
               {branches.length > 1 && (
                 <select value={branch} onChange={(e) => setBranch(e.target.value)} className="rounded border border-slate-300 px-2 py-1">
-                  <option value="">All branches</option>
+                  <option value="">{t("messages.allBranches")}</option>
                   {branches.map(([id, name]) => (
                     <option key={id} value={id}>{name}</option>
                   ))}
@@ -203,11 +209,9 @@ export default function MessagingPage() {
 
           <div className="flex-1 overflow-y-auto">
             {listError && <p className="p-3 text-sm text-red-700">{listError}</p>}
-            {conversations === null && <p className="p-3 text-sm text-brand-700/60">Loading…</p>}
+            {conversations === null && <p className="p-3 text-sm text-brand-700/60">{t("common.loading")}</p>}
             {conversations?.length === 0 && (
-              <p className="p-4 text-sm text-brand-700/60">
-                No conversations yet. Messages customers send to your WhatsApp number will appear here.
-              </p>
+              <p className="p-4 text-sm text-brand-700/60">{t("messages.empty")}</p>
             )}
             {conversations?.map((c) => {
               const active = c.tenantId === selected?.tenantId && c.phone === selected?.phone;
@@ -223,7 +227,7 @@ export default function MessagingPage() {
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-xs text-brand-700/60">
-                      {c.lastMessage.direction === "out" && "You: "}
+                      {c.lastMessage.direction === "out" && t("messages.you")}
                       {c.lastMessage.text}
                     </span>
                     {c.unreadCount > 0 ? (
@@ -247,14 +251,14 @@ export default function MessagingPage() {
         <section className={`flex flex-1 flex-col rounded-lg border border-brand-600/10 bg-white ${selected ? "flex" : "hidden md:flex"}`}>
           {!selected ? (
             <div className="flex flex-1 items-center justify-center p-6 text-sm text-brand-700/50">
-              Pick a conversation to read it.
+              {t("messages.pick")}
             </div>
           ) : (
             <>
               <header className="flex items-center justify-between border-b border-brand-600/10 px-4 py-3">
                 <div className="min-w-0">
                   <button onClick={() => setSelected(null)} className="mb-0.5 text-xs text-brand-700/60 md:hidden">
-                    ← All conversations
+                    {t("messages.allConversations")}
                   </button>
                   <div className="truncate text-sm font-semibold">
                     {thread?.customer?.fullName ?? selectedConversation?.displayName ?? `+${selected.phone}`}
@@ -264,20 +268,20 @@ export default function MessagingPage() {
                     {thread?.customer && (
                       <>
                         {" · "}
-                        <Link href={`/clients/${thread.customer.id}`} className="hover:text-accent-500">Open client</Link>
+                        <Link href={`/clients/${thread.customer.id}`} className="hover:text-accent-500">{t("messages.openClient")}</Link>
                       </>
                     )}
                   </div>
                 </div>
                 <span className={`shrink-0 rounded px-2 py-1 text-xs ${thread?.canReply ? "bg-green-100 text-green-800" : "bg-slate-200 text-slate-600"}`}>
                   {thread?.canReply
-                    ? `Reply window open until ${new Date(thread.windowOpenUntil!).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`
-                    : "Window closed — customer must message first"}
+                    ? t("messages.windowOpen", { time: new Date(thread.windowOpenUntil!).toLocaleTimeString(intl, { hour: "2-digit", minute: "2-digit" }) })
+                    : t("messages.windowClosed")}
                 </span>
               </header>
 
               <div className="flex-1 space-y-2 overflow-y-auto p-4">
-                {thread === null && <p className="text-sm text-brand-700/60">Loading…</p>}
+                {thread === null && <p className="text-sm text-brand-700/60">{t("common.loading")}</p>}
                 {thread?.messages.map((m, i) => {
                   const prev = thread.messages[i - 1];
                   const newDay = !prev || dayLabel(prev.at) !== dayLabel(m.at);
@@ -290,14 +294,14 @@ export default function MessagingPage() {
                         <div className={`max-w-[75%] rounded-lg px-3 py-2 text-sm ${m.direction === "out" ? "bg-brand-700 text-white" : "bg-slate-100 text-slate-900"}`}>
                           {m.kind === "media" && (
                             <div className="mb-1 text-xs opacity-70">
-                              [{String(m.payload.waMessageType ?? "attachment")}]
+                              [{String(m.payload.waMessageType ?? t("messages.attachment"))}]
                               {typeof m.payload.caption === "string" ? ` ${m.payload.caption}` : ""}
                             </div>
                           )}
                           <div className="whitespace-pre-wrap break-words">{m.text}</div>
                           <div className={`mt-1 flex items-center gap-1.5 text-[10px] ${m.direction === "out" ? "text-white/70" : "text-slate-500"}`}>
-                            <span>{new Date(m.at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}</span>
-                            {m.kind === "auto_reply" && <span>· Auto</span>}
+                            <span>{new Date(m.at).toLocaleTimeString(intl, { hour: "2-digit", minute: "2-digit" })}</span>
+                            {m.kind === "auto_reply" && <span>{t("messages.auto")}</span>}
                             {m.kind === "template" && <span>· {m.templateKey}</span>}
                             {m.direction === "out" && <StatusGlyph status={m.status} error={m.error} />}
                           </div>
@@ -324,7 +328,7 @@ export default function MessagingPage() {
                     disabled={!thread?.canReply || sending}
                     rows={2}
                     maxLength={4096}
-                    placeholder={thread?.canReply ? "Type a reply… (Enter to send, Shift+Enter for a new line)" : "You can only reply within 24 hours of the customer's last message."}
+                    placeholder={thread?.canReply ? t("messages.replyPlaceholder") : t("messages.replyClosed")}
                     className="flex-1 resize-none rounded border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50"
                   />
                   <button
@@ -332,7 +336,7 @@ export default function MessagingPage() {
                     disabled={!thread?.canReply || sending || !draft.trim()}
                     className="shrink-0 self-end rounded bg-brand-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                   >
-                    {sending ? "Sending…" : "Send"}
+                    {sending ? t("messages.sending") : t("messages.send")}
                   </button>
                 </div>
               </form>

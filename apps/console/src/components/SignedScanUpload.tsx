@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { apiUpload, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { useT } from "@/lib/i18n";
 
 /**
  * PRD go-live 2 §5.3 B — staff record a contract the customer signed on paper
@@ -13,6 +14,7 @@ import { authClient } from "@/lib/auth-client";
  * Used on the booking page and the client page.
  */
 export function SignedScanUpload({ bookingId, isCompany, onDone }: { bookingId: string; isCompany: boolean; onDone?: () => void }) {
+  const { t } = useT();
   const [name, setName] = useState("");
   const [stamp, setStamp] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -34,7 +36,7 @@ export function SignedScanUpload({ bookingId, isCompany, onDone }: { bookingId: 
       setFile(null);
       onDone?.();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unggah gagal.");
+      setError(err instanceof ApiError ? err.message : t("scan.failed"));
     } finally {
       setBusy(false);
     }
@@ -42,25 +44,25 @@ export function SignedScanUpload({ bookingId, isCompany, onDone }: { bookingId: 
 
   return (
     <form onSubmit={submit} className="space-y-2" data-testid="signed-scan-upload">
-      <p className="text-sm font-medium">Unggah kontrak bertanda tangan (kertas)</p>
+      <p className="text-sm font-medium">{t("scan.title")}</p>
       <input
         required
         value={name}
         onChange={(e) => setName(e.target.value)}
-        placeholder={isCompany ? "Nama direktur / penandatangan" : "Nama penandatangan"}
+        placeholder={isCompany ? t("scan.directorName") : t("scan.signerName")}
         className="w-full rounded border border-brand-600/20 px-2 py-1 text-sm"
       />
       {isCompany && (
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={stamp} onChange={(e) => setStamp(e.target.checked)} />
-          Stempel perusahaan ada
+          {t("scan.stamp")}
         </label>
       )}
       <input type="file" accept="application/pdf,image/jpeg,image/png" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="w-full text-sm" />
       <button type="submit" disabled={busy || !file || !name.trim()} className="rounded bg-brand-700 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40">
-        {busy ? "Mengunggah…" : "Simpan kontrak bertanda tangan"}
+        {busy ? t("scan.uploading") : t("scan.save")}
       </button>
-      <p className="text-xs text-brand-700/50">Pindaian disimpan apa adanya — tidak dikirim ke layanan tanda tangan elektronik.</p>
+      <p className="text-xs text-brand-700/50">{t("scan.note")}</p>
       {error && <p className="text-sm text-red-600">{error}</p>}
     </form>
   );

@@ -423,8 +423,8 @@ const TEMPLATES: Record<string, WhatsAppTemplateSpec> = {
     category: "UTILITY",
     params: [],
     body:
-      "Ini pesan percobaan dari RentOS. Jika Anda menerimanya, koneksi WhatsApp cabang Anda sudah aktif.\n" +
-      "This is a test message from RentOS. If you received it, your branch's WhatsApp connection is working.\n\n" +
+      "Ini pesan percobaan dari console cabang Anda. Jika Anda menerimanya, koneksi WhatsApp cabang Anda sudah aktif.\n" +
+      "This is a test message from your branch console. If you received it, your branch's WhatsApp connection is working.\n\n" +
       THANKS,
   },
 };

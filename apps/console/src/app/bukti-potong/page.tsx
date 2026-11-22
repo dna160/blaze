@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { useT } from "@/lib/i18n";
 
 /**
  * PRD go-live 2 §10.1 (part 1 §8.4) — "Bukti potong belum diterima": every
@@ -26,9 +27,10 @@ interface Row {
 }
 
 const idr = (n: string | number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(Number(n));
-const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" }) : "-");
+const day = (iso: string | null, intl: string) => (iso ? new Date(iso).toLocaleDateString(intl, { timeZone: "Asia/Jakarta" }) : "-");
 
 export default function BuktiPotongPage() {
+  const { t, intl } = useT();
   const router = useRouter();
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -41,41 +43,39 @@ export default function BuktiPotongPage() {
     }
     apiFetch<Row[]>("/payments/bukti-potong/outstanding", { token })
       .then(setRows)
-      .catch((e) => setError(e instanceof ApiError ? e.message : "Gagal memuat daftar."));
+      .catch((e) => setError(e instanceof ApiError ? e.message : t("common.errorLoad")));
   }, [router]);
 
   const total = rows?.reduce((s, r) => s + Number(r.pphWithheldAmount), 0) ?? 0;
 
   return (
     <ConsoleShell>
-      <h1 className="text-2xl font-semibold">Bukti potong belum diterima</h1>
-      <p className="mt-1 text-sm text-brand-700/70">
-        Pembayaran yang dipotong PPh oleh penyewa, tetapi bukti potongnya belum kami terima. Unggah bukti potong di halaman invoice.
-      </p>
+      <h1 className="text-2xl font-semibold">{t("bukti.title")}</h1>
+      <p className="mt-1 text-sm text-brand-700/70">{t("bukti.intro")}</p>
       {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
-      {!rows && !error && <p className="mt-4 text-sm text-brand-700/60">Memuat…</p>}
-      {rows && rows.length === 0 && <p className="mt-6 text-sm text-brand-700/60">Semua bukti potong sudah diterima.</p>}
+      {!rows && !error && <p className="mt-4 text-sm text-brand-700/60">{t("common.loading")}</p>}
+      {rows && rows.length === 0 && <p className="mt-6 text-sm text-brand-700/60">{t("bukti.allReceived")}</p>}
       {rows && rows.length > 0 && (
         <>
           <p className="mt-4 text-sm">
-            {rows.length} pembayaran · PPh dipotong {idr(total)}
+            {t("bukti.summary", { count: rows.length, total: idr(total) })}
           </p>
           <div className="mt-2 overflow-x-auto rounded border border-brand-600/10 bg-white">
             <table className="w-full text-sm">
               <thead className="bg-brand-700/5 text-left text-xs text-brand-700/70">
                 <tr>
-                  <th className="px-3 py-2">Tanggal</th>
-                  <th className="px-3 py-2">Pelanggan</th>
-                  <th className="px-3 py-2">Invoice</th>
-                  <th className="px-3 py-2">Status pembayaran</th>
-                  <th className="px-3 py-2 text-right">Ditransfer</th>
-                  <th className="px-3 py-2 text-right">PPh dipotong</th>
+                  <th className="px-3 py-2">{t("common.date")}</th>
+                  <th className="px-3 py-2">{t("common.customer")}</th>
+                  <th className="px-3 py-2">{t("common.invoice")}</th>
+                  <th className="px-3 py-2">{t("bukti.paymentStatus")}</th>
+                  <th className="px-3 py-2 text-right">{t("bukti.transferred")}</th>
+                  <th className="px-3 py-2 text-right">{t("bukti.withheld")}</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.paymentId} className="border-t border-brand-600/10">
-                    <td className="px-3 py-2">{day(r.paidAt ?? r.createdAt)}</td>
+                    <td className="px-3 py-2">{day(r.paidAt ?? r.createdAt, intl)}</td>
                     <td className="px-3 py-2">
                       <Link href={`/clients/${r.customer.id}`} className="hover:underline">
                         #{r.customer.customerNumber ?? "-"} {r.customer.companyName ?? r.customer.fullName}
@@ -86,7 +86,7 @@ export default function BuktiPotongPage() {
                         {r.invoice.invoiceNumber}
                       </Link>
                     </td>
-                    <td className="px-3 py-2">{r.status === "SUCCEEDED" ? "Terverifikasi" : "Menunggu verifikasi"}</td>
+                    <td className="px-3 py-2">{r.status === "SUCCEEDED" ? t("bukti.verified") : t("bukti.pending")}</td>
                     <td className="px-3 py-2 text-right">{idr(r.amount)}</td>
                     <td className="px-3 py-2 text-right">{idr(r.pphWithheldAmount)}</td>
                   </tr>

@@ -8,6 +8,7 @@ import type { LegacyRecordDetail, LegacyRecordListItem } from "@rentos/contracts
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
+import { getLocale, tr, useT } from "@/lib/i18n";
 
 /**
  * The legacy archive (owner, 2026-11-12): everything the previous system
@@ -16,17 +17,8 @@ import { authClient } from "@/lib/auth-client";
  * from go-live on are RentOS documents; the ones here are the backlog.
  */
 
-const TABS: Array<{ kind: string; label: string }> = [
-  { kind: "CONTRACT", label: "Contracts" },
-  { kind: "INVOICE", label: "Invoices" },
-  { kind: "PAYMENT", label: "Payments" },
-  { kind: "ORDER", label: "Orders" },
-  { kind: "CUSTOMER", label: "Customers" },
-  { kind: "NOTE", label: "Notes" },
-  { kind: "QUOTE", label: "Quotes" },
-  { kind: "EMAIL", label: "Emails" },
-  { kind: "CONFIG", label: "Settings" },
-];
+/** Record kinds in tab order; labels are `legacy.tab.<KIND>`. */
+const TABS = ["CONTRACT", "INVOICE", "PAYMENT", "ORDER", "CUSTOMER", "NOTE", "QUOTE", "EMAIL", "CONFIG"];
 
 interface Summary {
   kind: string;
@@ -50,7 +42,7 @@ function cents(v: unknown): string {
   return typeof v === "number" ? idr(v / 100) : "—";
 }
 function day(iso: string | null | undefined): string {
-  return iso ? new Date(iso).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+  return iso ? new Date(iso).toLocaleDateString(getLocale() === "en" ? "en-GB" : "id-ID", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 }
 function esc(s: string): string {
   return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -63,7 +55,11 @@ function contractHtml(r: LegacyRecordDetail): string {
   const rows = lines
     .map((l) => `<tr><td>${esc(String(l.quantity ?? 1))}x ${esc(l.title ?? "")}</td><td>${esc(l.charge_label ?? "")}</td><td style="text-align:right">${esc(cents(l.price_in_cents))}</td></tr>`)
     .join("");
-  const sig = typeof d.signatureImage === "string" ? `<p><b>Signature</b></p><img src="${esc(d.signatureImage)}" style="max-width:260px;border-bottom:1px solid #000" />` : "<p><i>No signature on file.</i></p>";
+  const sig =
+    typeof d.signatureImage === "string"
+      ? `<p><b>${esc(tr("legacy.contract.signature"))}</b></p><img src="${esc(d.signatureImage)}" style="max-width:260px;border-bottom:1px solid #000" />`
+      : `<p><i>${esc(tr("legacy.contract.noSignature"))}</i></p>`;
+  const c = (k: string) => esc(tr(`legacy.contract.${k}`));
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     body{font-family:Helvetica,Arial,sans-serif;font-size:12px;color:#111;margin:24px}
     table{border-collapse:collapse;width:100%} td{vertical-align:top;padding:3px 6px}
@@ -71,14 +67,15 @@ function contractHtml(r: LegacyRecordDetail): string {
   </style></head><body>
     <h2>${esc(r.title ?? "")}</h2>
     <table class="head"><tr><td><b>${esc(String(d.name ?? r.customerName ?? ""))}</b><br>${esc(String(d.address ?? "")).replace(/\n/g, "<br>")}</td>
-    <td style="text-align:right">Date ${esc(String(d.date ?? "—"))}<br>Order #${esc(String(d.orderNumber ?? "—"))}<br>From ${esc(day(d.starts_at as string))}<br>Until ${esc(day(d.stops_at as string))}<br>Units ${esc(((d.units as string[]) ?? []).join(", "))}</td></tr></table>
+    <td style="text-align:right">${c("date")} ${esc(String(d.date ?? "—"))}<br>${c("order")}${esc(String(d.orderNumber ?? "—"))}<br>${c("from")} ${esc(day(d.starts_at as string))}<br>${c("until")} ${esc(day(d.stops_at as string))}<br>${c("units")} ${esc(((d.units as string[]) ?? []).join(", "))}</td></tr></table>
     <br><table class="lines">${rows}</table>
-    <p style="text-align:right">Total <b>${esc(cents(d.grand_total_with_tax_in_cents))}</b> · Security deposit ${esc(cents(d.deposit_in_cents))}</p>
+    <p style="text-align:right">${c("total")} <b>${esc(cents(d.grand_total_with_tax_in_cents))}</b> · ${c("deposit")} ${esc(cents(d.deposit_in_cents))}</p>
     <hr>${r.bodyHtml ?? ""}${r.footerHtml ?? ""}<hr>${sig}
   </body></html>`;
 }
 
 function Detail({ id, onClose }: { id: string; onClose: () => void }) {
+  const { t } = useT();
   const [record, setRecord] = useState<LegacyRecordDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
@@ -86,7 +83,7 @@ function Detail({ id, onClose }: { id: string; onClose: () => void }) {
     setRecord(null);
     apiFetch<LegacyRecordDetail>(`/legacy/records/${id}`, { token: authClient.getToken() })
       .then(setRecord)
-      .catch((e) => setError(e instanceof ApiError ? e.message : "Could not load the record."));
+      .catch((e) => setError(e instanceof ApiError ? e.message : tr("legacy.recordFailed")));
   }, [id]);
 
   const d = (record?.data ?? {}) as Record<string, unknown>;
@@ -104,18 +101,18 @@ function Detail({ id, onClose }: { id: string; onClose: () => void }) {
       <div className="h-full w-full max-w-3xl overflow-y-auto bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Legacy record · {record?.source ?? "…"} · read-only</p>
-            <h2 className="text-xl font-semibold">{record?.title ?? "Loading…"}</h2>
+            <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">{t("legacy.badge", { source: record?.source ?? "…" })}</p>
+            <h2 className="text-xl font-semibold">{record?.title ?? t("common.loading")}</h2>
           </div>
           <button onClick={onClose} className="rounded border border-brand-600/20 px-3 py-1 text-sm">
-            Close
+            {t("common.close")}
           </button>
         </div>
         {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
         {record && (
           <div className="mt-4 space-y-4 text-sm">
             <dl className="grid grid-cols-2 gap-x-6 gap-y-1">
-              <dt className="text-brand-700/60">Customer</dt>
+              <dt className="text-brand-700/60">{t("common.customer")}</dt>
               <dd>
                 {record.customerId ? (
                   <Link href={`/clients/${record.customerId}`} className="underline">
@@ -124,31 +121,31 @@ function Detail({ id, onClose }: { id: string; onClose: () => void }) {
                 ) : (
                   <>
                     {record.customerName ?? "—"}
-                    {record.customerNumber ? ` (#${record.customerNumber}, not in RentOS)` : ""}
+                    {record.customerNumber ? <> {t("legacy.notInConsole", { number: record.customerNumber })}</> : null}
                   </>
                 )}
               </dd>
-              <dt className="text-brand-700/60">Number</dt>
+              <dt className="text-brand-700/60">{t("legacy.number")}</dt>
               <dd>{record.number ?? "—"}</dd>
-              <dt className="text-brand-700/60">Date</dt>
+              <dt className="text-brand-700/60">{t("common.date")}</dt>
               <dd>{day(record.occurredAt)}</dd>
-              <dt className="text-brand-700/60">Status</dt>
+              <dt className="text-brand-700/60">{t("common.status")}</dt>
               <dd>{record.status ?? "—"}</dd>
-              <dt className="text-brand-700/60">Amount</dt>
+              <dt className="text-brand-700/60">{t("common.amount")}</dt>
               <dd>{idr(record.amount)}</dd>
               {isDocument && (
                 <>
-                  <dt className="text-brand-700/60">Paid / still to pay</dt>
+                  <dt className="text-brand-700/60">{t("legacy.paidToPay")}</dt>
                   <dd>
                     {cents(d.paid_in_cents)} / {cents(d.to_be_paid_in_cents)}
                   </dd>
-                  <dt className="text-brand-700/60">Deposit</dt>
+                  <dt className="text-brand-700/60">{t("legacy.contract.deposit")}</dt>
                   <dd>{cents(d.deposit_in_cents)}</dd>
                 </>
               )}
               {Array.isArray(d.units) && d.units.length > 0 && (
                 <>
-                  <dt className="text-brand-700/60">Units</dt>
+                  <dt className="text-brand-700/60">{t("legacy.units")}</dt>
                   <dd>{(d.units as Array<string | { unit: string }>).map((u) => (typeof u === "string" ? u : u.unit)).filter((v, i, a) => a.indexOf(v) === i).join(", ")}</dd>
                 </>
               )}
@@ -158,9 +155,9 @@ function Detail({ id, onClose }: { id: string; onClose: () => void }) {
               <table className="w-full text-left">
                 <thead className="text-xs uppercase text-brand-700/50">
                   <tr>
-                    <th className="py-1">Line</th>
-                    <th>Period</th>
-                    <th className="text-right">Amount</th>
+                    <th className="py-1">{t("legacy.line")}</th>
+                    <th>{t("common.period")}</th>
+                    <th className="text-right">{t("common.amount")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -179,7 +176,7 @@ function Detail({ id, onClose }: { id: string; onClose: () => void }) {
 
             {Array.isArray(d.notes) && d.notes.length > 0 && (
               <div>
-                <p className="font-medium">Notes</p>
+                <p className="font-medium">{t("common.notes")}</p>
                 {(d.notes as Array<{ body: string; created_at: string }>).map((n, i) => (
                   <p key={i} className="text-brand-700/80">
                     {day(n.created_at)} — {n.body}
@@ -190,14 +187,14 @@ function Detail({ id, onClose }: { id: string; onClose: () => void }) {
 
             {record.kind === "CONTRACT" && (
               <div>
-                <p className="mb-1 font-medium">The contract as it was made</p>
+                <p className="mb-1 font-medium">{t("legacy.asMade")}</p>
                 {/* sandbox with no allowances: the stored HTML can never run script or reach the console's session */}
-                <iframe title="Legacy contract" sandbox="" srcDoc={contractHtml(record)} className="h-[70vh] w-full rounded border border-brand-600/20 bg-white" />
+                <iframe title={t("legacy.iframeTitle")} sandbox="" srcDoc={contractHtml(record)} className="h-[70vh] w-full rounded border border-brand-600/20 bg-white" />
               </div>
             )}
 
             <button onClick={() => setShowRaw((v) => !v)} className="text-xs underline">
-              {showRaw ? "Hide" : "Show"} every field as exported
+              {showRaw ? t("legacy.hideRaw") : t("legacy.showRaw")}
             </button>
             {showRaw && <pre className="max-h-96 overflow-auto rounded bg-slate-50 p-3 text-xs">{raw}</pre>}
           </div>
@@ -208,6 +205,7 @@ function Detail({ id, onClose }: { id: string; onClose: () => void }) {
 }
 
 function LegacyArchive() {
+  const { t } = useT();
   const router = useRouter();
   const params = useSearchParams();
   const customerNumber = params.get("customer");
@@ -225,7 +223,7 @@ function LegacyArchive() {
     if (!token) return router.push("/login");
     apiFetch<Summary[]>(`/legacy/summary${customerNumber ? `?customerNumber=${customerNumber}` : ""}`, { token })
       .then(setSummary)
-      .catch((e) => (e instanceof ApiError && e.status === 401 ? router.push("/login") : setError("Could not load the archive.")));
+      .catch((e) => (e instanceof ApiError && e.status === 401 ? router.push("/login") : setError(tr("legacy.archiveFailed"))));
   }, [router, customerNumber]);
 
   useEffect(() => {
@@ -234,12 +232,12 @@ function LegacyArchive() {
     const q = new URLSearchParams({ kind, page: String(page), pageSize: "50" });
     if (customerNumber) q.set("customerNumber", customerNumber);
     if (search.trim()) q.set("search", search.trim());
-    const t = window.setTimeout(() => {
+    const timer = window.setTimeout(() => {
       apiFetch<{ total: number; items: LegacyRecordListItem[] }>(`/legacy/records?${q}`, { token })
         .then(setList)
-        .catch(() => setError("Could not load the records."));
+        .catch(() => setError(tr("legacy.recordsFailed")));
     }, 200);
-    return () => window.clearTimeout(t);
+    return () => window.clearTimeout(timer);
   }, [kind, page, search, customerNumber]);
 
   const count = (k: string) => summary?.find((s) => s.kind === k)?.count ?? 0;
@@ -247,34 +245,33 @@ function LegacyArchive() {
 
   return (
     <ConsoleShell>
-      <h1 className="text-2xl font-semibold">Legacy records</h1>
+      <h1 className="text-2xl font-semibold">{t("legacy.title")}</h1>
       <p className="mt-1 max-w-3xl text-sm text-brand-700/60">
-        Everything from the previous system (Booqable), kept as it was made: past and current orders, invoices, payments, contracts with their
-        signatures, and notes. Read-only history — it does not change RentOS invoices, payments or accounts.
+        {t("legacy.intro")}
         {customerNumber && (
           <>
             {" "}
-            Showing customer <b>#{customerNumber}</b>.{" "}
+            {t("legacy.showingCustomer", { number: customerNumber })}{" "}
             <Link href="/legacy" className="underline">
-              Show everyone
+              {t("legacy.showEveryone")}
             </Link>
           </>
         )}
       </p>
       {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
-      {summary && summary.length === 0 && <p className="mt-6 text-sm text-brand-700/60">No legacy records have been imported.</p>}
+      {summary && summary.length === 0 && <p className="mt-6 text-sm text-brand-700/60">{t("legacy.noneImported")}</p>}
 
       <div className="mt-6 flex flex-wrap gap-2">
-        {TABS.filter((t) => count(t.kind) > 0).map((t) => (
+        {TABS.filter((k) => count(k) > 0).map((k) => (
           <button
-            key={t.kind}
+            key={k}
             onClick={() => {
-              setKind(t.kind);
+              setKind(k);
               setPage(1);
             }}
-            className={`rounded-full px-3 py-1 text-sm ${kind === t.kind ? "bg-brand-700 text-white" : "border border-brand-600/20 hover:bg-brand-700/5"}`}
+            className={`rounded-full px-3 py-1 text-sm ${kind === k ? "bg-brand-700 text-white" : "border border-brand-600/20 hover:bg-brand-700/5"}`}
           >
-            {t.label} <span className="opacity-70">{count(t.kind)}</span>
+            {t(`legacy.tab.${k}`)} <span className="opacity-70">{count(k)}</span>
           </button>
         ))}
       </div>
@@ -285,7 +282,7 @@ function LegacyArchive() {
           setSearch(e.target.value);
           setPage(1);
         }}
-        placeholder="Search number, customer or text"
+        placeholder={t("legacy.searchPlaceholder")}
         className="mt-4 w-full max-w-md rounded border border-brand-600/20 px-3 py-2 text-sm"
       />
 
@@ -293,12 +290,12 @@ function LegacyArchive() {
         <table className="w-full text-left text-sm">
           <thead className="text-xs uppercase text-brand-700/50">
             <tr>
-              <th className="px-3 py-2">Date</th>
-              <th>Number</th>
-              <th>Record</th>
-              <th>Customer</th>
-              <th>Status</th>
-              <th className="px-3 text-right">Amount</th>
+              <th className="px-3 py-2">{t("common.date")}</th>
+              <th>{t("legacy.number")}</th>
+              <th>{t("legacy.record")}</th>
+              <th>{t("common.customer")}</th>
+              <th>{t("common.status")}</th>
+              <th className="px-3 text-right">{t("common.amount")}</th>
             </tr>
           </thead>
           <tbody>
@@ -318,7 +315,7 @@ function LegacyArchive() {
             {list && list.items.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-3 py-6 text-center text-brand-700/50">
-                  Nothing here.
+                  {t("legacy.nothing")}
                 </td>
               </tr>
             )}
@@ -329,13 +326,11 @@ function LegacyArchive() {
       {list && pages > 1 && (
         <div className="mt-3 flex items-center gap-3 text-sm">
           <button disabled={page <= 1} onClick={() => setPage(page - 1)} className="rounded border border-brand-600/20 px-3 py-1 disabled:opacity-40">
-            Previous
+            {t("common.previous")}
           </button>
-          <span>
-            Page {page} of {pages} · {list.total} records
-          </span>
+          <span>{t("legacy.pageLine", { page, pages, total: list.total })}</span>
           <button disabled={page >= pages} onClick={() => setPage(page + 1)} className="rounded border border-brand-600/20 px-3 py-1 disabled:opacity-40">
-            Next
+            {t("common.next")}
           </button>
         </div>
       )}
