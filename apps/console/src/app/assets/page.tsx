@@ -10,6 +10,7 @@ import { ConsoleShell } from "@/components/ConsoleShell";
 import { CsvImportPanel } from "@/components/CsvImportPanel";
 import { apiFetch } from "@/lib/api";
 import { authClient, isOrgAdmin } from "@/lib/auth-client";
+import { getLocale, tr, useT } from "@/lib/i18n";
 
 type AssetStatus = "AVAILABLE" | "RESERVED" | "OCCUPIED" | "MAINTENANCE" | "RETIRED";
 
@@ -62,7 +63,7 @@ interface UnitImportPlan {
  * one fall back to the code's leading letters ("A-01" -> "A").
  */
 function rowOf(asset: { code: string; zone: string | null }): string {
-  if (asset.zone) return `Zone ${asset.zone}`;
+  if (asset.zone) return tr("assets.zone", { zone: asset.zone });
   return asset.code.match(/^[A-Za-z]+/)?.[0] ?? asset.code;
 }
 
@@ -74,11 +75,12 @@ function unitOrder(a: UnitMapAsset): number {
 }
 
 function formatDate(iso: string | null | undefined): string {
-  return iso ? new Date(iso).toLocaleDateString("id-ID") : "—";
+  return iso ? new Date(iso).toLocaleDateString(getLocale() === "en" ? "en-GB" : "id-ID") : "—";
 }
 
 /** PRD §7.2.2: visual unit map (grid/floor layout, P1) + occupancy view (who's in which unit, since when, paid-through date; P0), combined into one staff-only view. */
 export default function AssetsPage() {
+  const { t, s, locale } = useT();
   const router = useRouter();
   const [assets, setAssets] = useState<UnitMapAsset[] | null>(null);
   const [view, setView] = useState<"grid" | "list">("grid");
@@ -105,7 +107,7 @@ export default function AssetsPage() {
     if (!assets) return [];
     const byLocation = new Map<string, Map<string, UnitMapAsset[]>>();
     for (const asset of assets) {
-      const locKey = asset.location?.name ?? "No location";
+      const locKey = asset.location?.name ?? t("assets.noLocation");
       if (!byLocation.has(locKey)) byLocation.set(locKey, new Map());
       const byRow = byLocation.get(locKey)!;
       const rowKey = rowOf(asset);
@@ -118,24 +120,25 @@ export default function AssetsPage() {
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([row, units]) => [row, [...units].sort((x, y) => unitOrder(x) - unitOrder(y) || x.code.localeCompare(y.code))] as const),
     }));
-  }, [assets]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assets, locale]);
 
   return (
     <ConsoleShell>
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Storage</h1>
+        <h1 className="text-2xl font-semibold">{t("assets.title")}</h1>
         <div className="flex gap-2 text-sm">
           <button
             onClick={() => setView("grid")}
             className={`rounded px-3 py-1.5 font-medium ${view === "grid" ? "bg-brand-700 text-white" : "border border-brand-600/20 hover:bg-brand-700/5"}`}
           >
-            Unit map
+            {t("assets.unitMap")}
           </button>
           <button
             onClick={() => setView("list")}
             className={`rounded px-3 py-1.5 font-medium ${view === "list" ? "bg-brand-700 text-white" : "border border-brand-600/20 hover:bg-brand-700/5"}`}
           >
-            List
+            {t("assets.list")}
           </button>
         </div>
       </div>
@@ -143,32 +146,30 @@ export default function AssetsPage() {
       {canImport && (
         <div className="mt-4">
           <CsvImportPanel<UnitImportPlan>
-            title="Import units (CSV)"
+            title={t("assets.importTitle")}
             description={
               <>
-                Columns: <code>unit_number, unit_code, zone, unit_type_slug, notes</code> (the go-live data pack&apos;s
-                kebon-jeruk-units.csv). Units are matched by code and created or updated — never deleted; a unit missing from the
-                file is only listed. Every row needs a zone and a known unit type. A rented unit&apos;s type can&apos;t change.
+                {t("assets.columns")} <code>{"unit_number, unit_code, zone, unit_type_slug, notes"}</code> {t("assets.importHelp")}
               </>
             }
             endpoint="/catalog/assets/import"
             canApply={(p) => p.canApply}
-            applyLabel="Import units"
+            applyLabel={t("assets.importApply")}
             onApplied={() => load()}
             renderResult={(plan) => (
               <div className="space-y-3 text-sm">
                 <p>
-                  Create <b>{plan.summary.create}</b> · update <b>{plan.summary.update}</b> · unchanged <b>{plan.summary.unchanged}</b> ·{" "}
-                  <span className={plan.summary.error ? "font-semibold text-red-700" : ""}>errors {plan.summary.error}</span>
+                  {t("assets.create")} <b>{plan.summary.create}</b> · {t("assets.update")} <b>{plan.summary.update}</b> · {t("assets.unchanged")} <b>{plan.summary.unchanged}</b> ·{" "}
+                  <span className={plan.summary.error ? "font-semibold text-red-700" : ""}>{t("assets.errors", { count: plan.summary.error })}</span>
                 </p>
                 {plan.summary.error > 0 && (
                   <div className="max-h-72 overflow-auto rounded border border-red-200">
                     <table className="w-full text-xs">
                       <thead className="sticky top-0 bg-red-50 text-left">
                         <tr>
-                          <th className="p-2">Line</th>
-                          <th className="p-2">Code</th>
-                          <th className="p-2">Problem</th>
+                          <th className="p-2">{t("assets.line")}</th>
+                          <th className="p-2">{t("assets.code")}</th>
+                          <th className="p-2">{t("assets.problem")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -187,7 +188,7 @@ export default function AssetsPage() {
                 )}
                 {plan.missingFromFile.length > 0 && (
                   <p className="text-xs text-brand-700/70">
-                    In RentOS but not in the file (kept, not removed): {plan.missingFromFile.join(", ")}
+                    {t("assets.missingFromFile")} {plan.missingFromFile.join(", ")}
                   </p>
                 )}
               </div>
@@ -197,18 +198,18 @@ export default function AssetsPage() {
       )}
 
       {!assets ? (
-        <p className="mt-6">Loading...</p>
+        <p className="mt-6">{t("common.loading")}</p>
       ) : view === "list" ? (
         <div className="mt-6 overflow-hidden rounded-lg border border-brand-600/10 bg-white">
           <table className="w-full text-sm">
             <thead className="bg-brand-700/5 text-left">
               <tr>
-                <th className="p-3">Code</th>
-                <th className="p-3">Location</th>
-                <th className="p-3">Zone</th>
-                <th className="p-3">Type</th>
-                <th className="p-3">Status</th>
-                <th className="p-3">Occupant</th>
+                <th className="p-3">{t("assets.code")}</th>
+                <th className="p-3">{t("assets.location")}</th>
+                <th className="p-3">{t("assets.zoneCol")}</th>
+                <th className="p-3">{t("assets.type")}</th>
+                <th className="p-3">{t("common.status")}</th>
+                <th className="p-3">{t("assets.occupant")}</th>
               </tr>
             </thead>
             <tbody>
@@ -227,7 +228,7 @@ export default function AssetsPage() {
                     </td>
                     <td className="p-3">
                       <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_COLORS[a.status]}`}>
-                        {a.status}
+                        {s(a.status)}
                       </span>
                     </td>
                     <td className="p-3 text-brand-700/70">
@@ -242,10 +243,10 @@ export default function AssetsPage() {
       ) : (
         <div className="mt-6 space-y-8">
           <div className="flex flex-wrap gap-4 text-xs">
-            {(Object.keys(GRID_COLORS) as AssetStatus[]).map((s) => (
-              <div key={s} className="flex items-center gap-1.5">
-                <span className={`h-3 w-3 rounded ${GRID_COLORS[s].split(" ")[0]}`} />
-                {s}
+            {(Object.keys(GRID_COLORS) as AssetStatus[]).map((st) => (
+              <div key={st} className="flex items-center gap-1.5">
+                <span className={`h-3 w-3 rounded ${GRID_COLORS[st].split(" ")[0]}`} />
+                {s(st)}
               </div>
             ))}
           </div>
@@ -284,34 +285,34 @@ export default function AssetsPage() {
                     {unitSizeLabel(selected.assetType.attributesSchema) ? ` · ${unitSizeLabel(selected.assetType.attributesSchema)}` : ""}
                   </h3>
                   <p className="mt-1 text-sm text-brand-700/60">
-                    {selected.location?.name ?? "No location"}
-                    {selected.zone ? ` · Zone ${selected.zone}` : ""} · <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[selected.status]}`}>{selected.status}</span>
+                    {selected.location?.name ?? t("assets.noLocation")}
+                    {selected.zone ? ` · ${t("assets.zone", { zone: selected.zone })}` : ""} · <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[selected.status]}`}>{s(selected.status)}</span>
                   </p>
                 </div>
                 <button onClick={() => setSelected(null)} className="text-sm text-brand-700/50 hover:text-brand-700">
-                  Close
+                  {t("common.close")}
                 </button>
               </div>
-              {selected.statusReason && <p className="mt-2 text-sm text-brand-700/70">Reason: {selected.statusReason}</p>}
+              {selected.statusReason && <p className="mt-2 text-sm text-brand-700/70">{t("assets.reason", { reason: selected.statusReason })}</p>}
               {selected.bookings[0] ? (
                 <dl className="mt-3 grid grid-cols-3 gap-4 text-sm">
                   <div>
-                    <dt className="text-brand-700/50">Occupant</dt>
+                    <dt className="text-brand-700/50">{t("assets.occupant")}</dt>
                     <dd>
                       {selected.bookings[0].customer.fullName ?? selected.bookings[0].customer.phone} <ArrearsChip arrears={selected.bookings[0].arrears} />
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-brand-700/50">Since</dt>
+                    <dt className="text-brand-700/50">{t("assets.since")}</dt>
                     <dd>{formatDate(selected.bookings[0].startDate)}</dd>
                   </div>
                   <div>
-                    <dt className="text-brand-700/50">Paid through</dt>
+                    <dt className="text-brand-700/50">{t("assets.paidThrough")}</dt>
                     <dd>{formatDate(selected.bookings[0].invoices[0]?.periodEnd ?? selected.bookings[0].paidThrough ?? null)}</dd>
                   </div>
                 </dl>
               ) : (
-                <p className="mt-3 text-sm text-brand-700/60">No active tenant.</p>
+                <p className="mt-3 text-sm text-brand-700/60">{t("assets.noTenant")}</p>
               )}
             </div>
           )}

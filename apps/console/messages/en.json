@@ -1540,5 +1540,32 @@
     "withheld": "PPh withheld",
     "verified": "Verified",
     "pending": "Awaiting verification"
+  },
+  "assets": {
+    "zone": "Zone {zone}",
+    "noLocation": "No location",
+    "title": "Storage",
+    "unitMap": "Unit map",
+    "list": "List",
+    "importTitle": "Import units (CSV)",
+    "columns": "Columns:",
+    "importHelp": "(the go-live data pack's kebon-jeruk-units.csv). Units are matched by code and created or updated — never deleted; a unit missing from the file is only listed. Every row needs a zone and a known unit type. A rented unit's type can't change.",
+    "importApply": "Import units",
+    "create": "Create",
+    "update": "update",
+    "unchanged": "unchanged",
+    "errors": "errors {count}",
+    "line": "Line",
+    "code": "Code",
+    "problem": "Problem",
+    "missingFromFile": "In the console but not in the file (kept, not removed):",
+    "location": "Location",
+    "zoneCol": "Zone",
+    "type": "Type",
+    "occupant": "Occupant",
+    "reason": "Reason: {reason}",
+    "since": "Since",
+    "paidThrough": "Paid through",
+    "noTenant": "No active tenant."
   }
 }

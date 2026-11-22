@@ -1540,5 +1540,32 @@
     "withheld": "PPh dipotong",
     "verified": "Terverifikasi",
     "pending": "Menunggu verifikasi"
+  },
+  "assets": {
+    "zone": "Zona {zone}",
+    "noLocation": "Tanpa lokasi",
+    "title": "Unit penyimpanan",
+    "unitMap": "Peta unit",
+    "list": "Daftar",
+    "importTitle": "Impor unit (CSV)",
+    "columns": "Kolom:",
+    "importHelp": "(kebon-jeruk-units.csv dari paket data go-live). Unit dicocokkan berdasarkan kode lalu dibuat atau diperbarui — tidak pernah dihapus; unit yang tidak ada di file hanya didaftar. Setiap baris wajib punya zona dan tipe unit yang dikenal. Tipe unit yang sedang disewa tidak bisa diubah.",
+    "importApply": "Impor unit",
+    "create": "Baru",
+    "update": "diperbarui",
+    "unchanged": "tetap",
+    "errors": "galat {count}",
+    "line": "Baris",
+    "code": "Kode",
+    "problem": "Masalah",
+    "missingFromFile": "Ada di console tapi tidak di file (tetap disimpan, tidak dihapus):",
+    "location": "Lokasi",
+    "zoneCol": "Zona",
+    "type": "Tipe",
+    "occupant": "Penyewa",
+    "reason": "Alasan: {reason}",
+    "since": "Sejak",
+    "paidThrough": "Dibayar sampai",
+    "noTenant": "Tidak ada penyewa aktif."
   }
 }

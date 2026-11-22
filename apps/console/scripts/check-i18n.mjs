@@ -67,6 +67,7 @@ const ALLOW = [
   /^[✓✗\s\d.,:;!?·•—–\-+/%()[\]#&*×=<>"'`~|@_→←↑↓…]*$/u, // no letters at all
   /^[{}A-Z0-9:\-_ ]+$/, // document-number formats and codes: {CUST}-{DD}{MM}{YYYY}, KTP, PPh 23 …
   /^\+?62[\d\s-]*$/, // phone samples
+  /^[a-z0-9_]+(, ?[a-z0-9_]+)+$/, // CSV column names: unit_number, unit_code, zone
   /^(Rp|IDR|WIB|CSV|PDF|KTP|NPWP|NIB|PPN|PPh|KYC|WhatsApp|Booqable|Privy|Xendit|QRIS|VA|API|URL|ID|OK|E\.164|m²|m³|x|×|SPV)$/,
 ];
 
