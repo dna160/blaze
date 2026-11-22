@@ -14,6 +14,7 @@ import { SignedScanUpload } from "@/components/SignedScanUpload";
 import { apiFetch, apiFetchBlob, ApiError } from "@/lib/api";
 import { authClient, isOrgAdmin } from "@/lib/auth-client";
 import { CustomerMergeDialog } from "@/components/CustomerMergeDialog";
+import { ArrearsChip, type ArrearsInfo } from "@/components/ArrearsBadge";
 import { canDo } from "@/lib/capabilities";
 
 interface ClientDetail {
@@ -58,6 +59,7 @@ interface ClientDetail {
   legacy?: CustomerLegacyPayments;
   legacyByInvoice?: Record<string, LegacyInvoiceSettlement>;
   numberAliases?: Array<{ aliasNumber: number; mergedFromName: string | null; createdAt: string }>;
+  arrears?: ArrearsInfo | null;
 }
 
 function formatIDR(amount: string | number): string {
@@ -277,7 +279,8 @@ export default function ClientDetailPage() {
           <h1 className="text-2xl font-semibold">
             {customer.type === "BUSINESS" && customer.companyName
               ? customer.companyName
-              : (customer.fullName ?? customer.phone ?? customer.email)}
+              : (customer.fullName ?? customer.phone ?? customer.email)}{" "}
+            <ArrearsChip arrears={data.arrears} />
           </h1>
           {customer.type === "BUSINESS" && (
             // Surfaced beside the name because it changes how this client is

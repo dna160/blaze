@@ -24,3 +24,6 @@ CREATE POLICY tenant_isolation ON "customer_number_aliases"
   WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid);
 CREATE POLICY org_read ON "customer_number_aliases" FOR SELECT
   USING (tenant_id IN (SELECT id FROM tenants WHERE organization_id = nullif(current_setting('app.organization_id', true), '')::uuid));
+
+-- §10.3 deposit refund task: raised once when refund_due_at passes while the deposit is held.
+ALTER TABLE "deposits" ADD COLUMN "refund_task_raised_at" TIMESTAMP(3);

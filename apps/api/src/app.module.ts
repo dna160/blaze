@@ -30,6 +30,7 @@ import { RentalOrderModule } from "./rental-order/rental-order.module.js";
 import { ReportingModule } from "./reporting/reporting.module.js";
 import { SwapRequestsModule } from "./swap-requests/swap-requests.module.js";
 import { ChangeRequestsModule } from "./change-requests/change-requests.module.js";
+import { MoneyRulesModule } from "./money-rules/money-rules.module.js";
 import { TenancyModule } from "./tenancy/tenancy.module.js";
 import { TenantWebhooksModule } from "./tenant-webhooks/tenant-webhooks.module.js";
 import { UsersModule } from "./users/users.module.js";
@@ -63,6 +64,7 @@ import { WebhookDispatchModule } from "./webhook-dispatch/webhook-dispatch.modul
     ReportingModule,
     SwapRequestsModule,
     ChangeRequestsModule,
+    MoneyRulesModule,
     ApiKeysModule,
     TenantWebhooksModule,
     ExternalApiModule,

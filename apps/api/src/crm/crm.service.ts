@@ -1,5 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { CustomerMergeError, legacyPaymentsForCustomer, legacySettlementForInvoices, mergeCustomers, type Prisma } from "@rentos/database";
+import { arrearsByCustomer, CustomerMergeError, legacyPaymentsForCustomer, legacySettlementForInvoices, mergeCustomers, type Prisma } from "@rentos/database";
+import { resolveMoneyRules } from "@rentos/domain";
+import { zonedDateString } from "@rentos/contracts";
 import { classifyCustomerHealth, money, roundMoney, type CustomerHealth } from "@rentos/domain";
 import type { ClientListItem, ClientListQuery, ClientListResponse } from "@rentos/contracts";
 import { isKycVerified } from "@rentos/contracts";
@@ -505,6 +507,11 @@ export class CrmService {
       return { legacyByInvoice: Object.fromEntries(map), legacy: await legacyPaymentsForCustomer(tx, detail) };
     });
     const numberAliases = await this.numberAliases(tenantId, customerId);
-    return { customer: detail, summary: health, notifications, legacy, legacyByInvoice, numberAliases };
+    // PRD go-live 2 §10.3 (T&C V.5) — null unless the branch enabled the arrears badge.
+    const arrears = await this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const t = await tx.tenant.findUniqueOrThrow({ where: { id: tenantId }, select: { featureFlags: true, timezone: true } });
+      return (await arrearsByCustomer(tx, resolveMoneyRules(t.featureFlags), [customerId], zonedDateString(new Date(), t.timezone || "Asia/Jakarta"))).get(customerId) ?? null;
+    });
+    return { customer: detail, summary: health, notifications, legacy, legacyByInvoice, numberAliases, arrears };
   }
 }

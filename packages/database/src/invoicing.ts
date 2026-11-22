@@ -446,3 +446,31 @@ export async function markInvoiceOverdue(tx: Prisma.TransactionClient, invoiceId
   const { to: status } = await invoiceFsm.fire("ISSUED", "DUE_DATE_PASSED", undefined);
   return tx.invoice.update({ where: { id: invoiceId }, data: { status } });
 }
+
+/**
+ * PRD go-live 2 §10.3 — a one-off invoice for charges outside the rent
+ * schedule (overtime access, an overstay after the lease ended). Issued now,
+ * numbered like any other invoice, no tax line (see money-rules.ts), revenue
+ * posted at issue through the same path as every invoice.
+ */
+export async function createAdHocInvoice(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  tenantSlug: string,
+  owner: { bookingId: string | null; customerId: string },
+  lines: ReadonlyArray<{ description: string; amount: string; lineType: string }>,
+  period: { start: Date; end: Date },
+  dueDate?: Date,
+) {
+  const draftLines = lines.map((l) => ({
+    description: l.description,
+    quantity: money(1),
+    unitPrice: money(l.amount),
+    amount: money(l.amount),
+    // Free-text in the database; the fee types are not in the strategy union.
+    lineType: l.lineType as InvoiceDraft["lines"][number]["lineType"],
+  }));
+  const total = draftLines.reduce((s, l) => s.plus(l.amount), money(0));
+  const draft: InvoiceDraft = { lines: draftLines, subtotal: total, taxAmount: money(0), totalAmount: total, periodStart: period.start, periodEnd: period.end };
+  return persistInvoiceCore(tx, tenantId, tenantSlug, owner, draft, dueDate ? { dueDate } : {});
+}

@@ -1274,6 +1274,9 @@ model Deposit {
   refundRequestedByUserId String?       @map("refund_requested_by_user_id") @db.Uuid
   /// Lease end + 30 days (T&C IV.3). Null while the lease has no end date yet.
   refundDueAt             DateTime?     @map("refund_due_at")
+  /// PRD go-live 2 §10.3 — when the "refund this deposit" task was raised
+  /// (refundDueAt passed while the deposit was still held). Raised once.
+  refundTaskRaisedAt      DateTime?     @map("refund_task_raised_at")
   createdAt              DateTime      @default(now()) @map("created_at")
   updatedAt              DateTime      @updatedAt @map("updated_at")
 

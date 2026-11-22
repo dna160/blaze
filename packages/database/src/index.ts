@@ -36,6 +36,7 @@ export {
   createCreditReplacementInvoice,
   toPricingConfig,
   generateRentalOrderInvoice,
+  createAdHocInvoice,
   type BookingForInvoicing,
   type RentalOrderForInvoicing,
   type InvoiceForCredit,
@@ -164,3 +165,13 @@ export {
   type CustomerLegacyPayments,
 } from "./legacy-settlement.js";
 export { mergeCustomers, customerNumberAliases, CustomerMergeError, type CustomerMergePlan } from "./customer-merge.js";
+export {
+  addInvoiceCharge,
+  accrueLateFees,
+  accrueOverstay,
+  chargeOvertime,
+  raiseDepositRefundTasks,
+  arrearsByCustomer,
+  MoneyRuleDisabledError,
+  type ArrearsBadge,
+} from "./money-rules.js";
