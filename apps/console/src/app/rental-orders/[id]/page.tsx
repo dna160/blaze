@@ -5,10 +5,11 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { ConsoleShell } from "@/components/ConsoleShell";
-import { formatDay, formatIDR, RENTAL_ORDER_STATUS_LABEL, RentalOrderStatusChip } from "@/components/RentalOrderStatus";
+import { formatDay, formatIDR, rentalOrderStatusLabel, RentalOrderStatusChip } from "@/components/RentalOrderStatus";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import { canDo } from "@/lib/capabilities";
+import { useT } from "@/lib/i18n";
 
 /** PRD go-live 2 §10.2 — one rental order: customer, unit, invoices, contracts, renewal chain, history, and the staff actions. */
 
@@ -33,6 +34,7 @@ interface Detail {
 const ENDABLE = ["ACTIVE", "EXPIRING", "RENEWAL_OFFERED", "RENEWAL_CONFIRMED", "RENEWAL_DECLINED"];
 
 export default function RentalOrderDetailPage() {
+  const { t, s, intl } = useT();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const me = authClient.getUser();
@@ -50,7 +52,7 @@ export default function RentalOrderDetailPage() {
     }
     apiFetch<Detail>(`/rental-orders/${id}/detail`, { token })
       .then(setD)
-      .catch((e) => setError(e instanceof ApiError ? e.message : "Gagal memuat pesanan sewa."));
+      .catch((e) => setError(e instanceof ApiError ? e.message : t("rentalOrders.loadFailed")));
   }
   useEffect(load, [id, router]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -62,16 +64,16 @@ export default function RentalOrderDetailPage() {
       setNotice(ok);
       load();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Aksi gagal.");
+      setError(e instanceof ApiError ? e.message : t("common.errorAction"));
     } finally {
       setBusy(false);
     }
   }
 
   function end() {
-    const reason = window.prompt("Kenapa sewa ini diakhiri sekarang?");
+    const reason = window.prompt(t("rentalOrders.endPrompt"));
     if (!reason) return;
-    act("end", { reason }, "Sewa diakhiri dan unit dilepas.");
+    act("end", { reason }, t("rentalOrders.ended"));
   }
 
   if (error && !d)
@@ -83,14 +85,14 @@ export default function RentalOrderDetailPage() {
   if (!d)
     return (
       <ConsoleShell>
-        <p className="text-sm text-brand-700/60">Memuat…</p>
+        <p className="text-sm text-brand-700/60">{t("common.loading")}</p>
       </ConsoleShell>
     );
 
   return (
     <ConsoleShell>
       <Link href="/rental-orders" className="text-sm text-brand-700/60 hover:underline">
-        ← Pesanan sewa
+        {t("rentalOrders.back")}
       </Link>
       <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -102,7 +104,7 @@ export default function RentalOrderDetailPage() {
               #{d.customer.customerNumber ?? "-"} {d.customer.companyName ?? d.customer.fullName ?? d.customer.phone}
             </Link>
             {" · "}
-            {d.assetType.name} · dibuat {formatDay(d.createdAt)}
+            {d.assetType.name} · {t("rentalOrders.createdOn", { date: formatDay(d.createdAt) })}
           </p>
         </div>
         <RentalOrderStatusChip status={d.status} />
@@ -114,18 +116,18 @@ export default function RentalOrderDetailPage() {
       {canAct && (
         <div className="mt-4 flex flex-wrap gap-2">
           {d.status === "ACTIVE" && (
-            <button type="button" disabled={busy} onClick={() => act("offer-renewal", {}, "Perpanjangan ditawarkan ke pelanggan.")} className="rounded bg-brand-700 px-3 py-1.5 text-sm text-white disabled:opacity-50">
-              Tawarkan perpanjangan
+            <button type="button" disabled={busy} onClick={() => act("offer-renewal", {}, t("rentalOrders.renewalOffered"))} className="rounded bg-brand-700 px-3 py-1.5 text-sm text-white disabled:opacity-50">
+              {t("rentalOrders.offerRenewal")}
             </button>
           )}
           {ENDABLE.includes(d.status) && (
             <button type="button" disabled={busy} onClick={end} className="rounded border border-red-300 px-3 py-1.5 text-sm text-red-600 disabled:opacity-50">
-              Akhiri sewa sekarang
+              {t("rentalOrders.endNow")}
             </button>
           )}
           {d.status === "PENDING_APPROVAL" && (
             <Link href="/bookings" className="rounded border border-brand-600/20 px-3 py-1.5 text-sm hover:bg-brand-700/5">
-              Setujui di halaman Persetujuan
+              {t("rentalOrders.approveOnWorkbench")}
             </Link>
           )}
         </div>
@@ -133,8 +135,8 @@ export default function RentalOrderDetailPage() {
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <section className="rounded border border-brand-600/10 bg-white p-4">
-          <h2 className="font-medium">Invoice</h2>
-          {d.invoices.length === 0 && <p className="mt-2 text-sm text-brand-700/60">Belum ada invoice.</p>}
+          <h2 className="font-medium">{t("invoices.title")}</h2>
+          {d.invoices.length === 0 && <p className="mt-2 text-sm text-brand-700/60">{t("rentalOrders.noInvoices")}</p>}
           <ul className="mt-2 space-y-2 text-sm">
             {d.invoices.map((i) => (
               <li key={i.id} className="flex justify-between gap-2">
@@ -142,7 +144,7 @@ export default function RentalOrderDetailPage() {
                   {i.invoiceNumber}
                 </Link>
                 <span>
-                  {i.status} · jatuh tempo {formatDay(i.dueDate)} · {formatIDR(i.totalAmount)}
+                  {t("rentalOrders.invoiceLine", { status: s(i.status), date: formatDay(i.dueDate), amount: formatIDR(i.totalAmount) })}
                 </span>
               </li>
             ))}
@@ -150,55 +152,55 @@ export default function RentalOrderDetailPage() {
         </section>
 
         <section className="rounded border border-brand-600/10 bg-white p-4">
-          <h2 className="font-medium">Kontrak</h2>
-          {d.contracts.length === 0 && <p className="mt-2 text-sm text-brand-700/60">Belum ada kontrak.</p>}
+          <h2 className="font-medium">{t("common.contract")}</h2>
+          {d.contracts.length === 0 && <p className="mt-2 text-sm text-brand-700/60">{t("rentalOrders.noContracts")}</p>}
           <ul className="mt-2 space-y-1 text-sm">
             {d.contracts.map((c) => (
               <li key={c.id}>
-                {c.contractNumber ?? "(tanpa nomor)"} · {c.signedAt ? `ditandatangani ${formatDay(c.signedAt)}` : "belum ditandatangani"}
-                {c.confirmedAt ? ` · dikonfirmasi ${formatDay(c.confirmedAt)}` : ""}
+                {c.contractNumber ?? t("rentalOrders.noNumber")} · {c.signedAt ? t("rentalOrders.signedOn", { date: formatDay(c.signedAt) }) : t("rentalOrders.unsigned")}
+                {c.confirmedAt ? t("rentalOrders.confirmedOn", { date: formatDay(c.confirmedAt) }) : ""}
               </li>
             ))}
           </ul>
         </section>
 
         <section className="rounded border border-brand-600/10 bg-white p-4">
-          <h2 className="font-medium">Rantai perpanjangan</h2>
+          <h2 className="font-medium">{t("rentalOrders.chain")}</h2>
           <ul className="mt-2 space-y-1 text-sm">
             {d.previousOrder && (
               <li>
-                Sebelumnya:{" "}
+                {t("rentalOrders.previous")}{" "}
                 <Link href={`/rental-orders/${d.previousOrder.id}`} className="hover:underline">
                   {formatDay(d.previousOrder.periodStart)} – {formatDay(d.previousOrder.periodEnd)}
                 </Link>{" "}
-                ({RENTAL_ORDER_STATUS_LABEL[d.previousOrder.status] ?? d.previousOrder.status})
+                ({rentalOrderStatusLabel(d.previousOrder.status)})
               </li>
             )}
             {d.renewalOf.map((r) => (
               <li key={r.id}>
-                Berikutnya:{" "}
+                {t("rentalOrders.next")}{" "}
                 <Link href={`/rental-orders/${r.id}`} className="hover:underline">
                   {formatDay(r.periodStart)} – {formatDay(r.periodEnd)}
                 </Link>{" "}
-                ({RENTAL_ORDER_STATUS_LABEL[r.status] ?? r.status})
+                ({rentalOrderStatusLabel(r.status)})
               </li>
             ))}
-            {!d.previousOrder && d.renewalOf.length === 0 && <li className="text-brand-700/60">Pesanan pertama, belum diperpanjang.</li>}
+            {!d.previousOrder && d.renewalOf.length === 0 && <li className="text-brand-700/60">{t("rentalOrders.firstOrder")}</li>}
           </ul>
         </section>
 
         <section className="rounded border border-brand-600/10 bg-white p-4">
-          <h2 className="font-medium">Riwayat</h2>
+          <h2 className="font-medium">{t("rentalOrders.history")}</h2>
           <ul className="mt-2 space-y-1 text-sm">
             {d.events.map((e) => (
               <li key={e.id}>
-                <span className="text-brand-700/60">{new Date(e.createdAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</span> ·{" "}
-                {e.fromStatus ? `${RENTAL_ORDER_STATUS_LABEL[e.fromStatus] ?? e.fromStatus} → ` : ""}
-                {RENTAL_ORDER_STATUS_LABEL[e.toStatus] ?? e.toStatus}
+                <span className="text-brand-700/60">{new Date(e.createdAt).toLocaleString(intl, { timeZone: "Asia/Jakarta" })}</span> ·{" "}
+                {e.fromStatus ? `${rentalOrderStatusLabel(e.fromStatus)} → ` : ""}
+                {rentalOrderStatusLabel(e.toStatus)}
                 {e.reason ? ` · ${e.reason}` : ""}
               </li>
             ))}
-            {d.events.length === 0 && <li className="text-brand-700/60">Belum ada riwayat.</li>}
+            {d.events.length === 0 && <li className="text-brand-700/60">{t("rentalOrders.noHistory")}</li>}
           </ul>
         </section>
       </div>

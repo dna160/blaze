@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 
+import { useT } from "@/lib/i18n";
+
 /**
  * PRD go-live 2 §7.3 — "Dibayar di Booqable / Paid in Booqable".
  *
@@ -36,7 +38,7 @@ export interface CustomerLegacyPayments {
 }
 
 const idr = (n: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
-const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" }) : "-");
+const day = (iso: string | null, intl: string) => (iso ? new Date(iso).toLocaleDateString(intl, { timeZone: "Asia/Jakarta" }) : "-");
 
 function recordHref(recordId: string) {
   return `/legacy?record=${encodeURIComponent(recordId)}`;
@@ -44,16 +46,17 @@ function recordHref(recordId: string) {
 
 /** The chip, for an invoice that has any Booqable trace. Nothing when it has none. */
 export function LegacyPaidChip({ settlement }: { settlement: LegacyInvoiceSettlement | null | undefined }) {
+  const { t } = useT();
   if (!settlement) return null;
   const target = settlement.invoiceRecordId ?? settlement.payments[0]?.recordId ?? null;
   const paid = settlement.settledInLegacy;
-  const label = paid ? "Dibayar di Booqable" : "Ada catatan di Booqable";
+  const label = paid ? t("legacyPaid.paid") : t("legacyPaid.hasRecord");
   const title =
     settlement.basis === "VOIDED_AS_SETTLED"
-      ? "Invoice ini dibatalkan di RentOS karena sudah dilunasi di Booqable setelah impor."
+      ? t("legacyPaid.voidedAsSettled")
       : settlement.basis === "LEGACY_INVOICE_PAID"
-        ? "Booqable mencatat invoice ini lunas."
-        : `Booqable mencatat ${settlement.payments.length} pembayaran untuk pesanan #${settlement.orderNumber ?? "-"}.`;
+        ? t("legacyPaid.legacyInvoicePaid")
+        : t("legacyPaid.legacyPayments", { count: settlement.payments.length, order: settlement.orderNumber ?? "-" });
   const cls = paid ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-amber-300 bg-amber-50 text-amber-800";
   const chip = (
     <span title={title} className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${cls}`}>
@@ -71,33 +74,34 @@ export function LegacyPaidChip({ settlement }: { settlement: LegacyInvoiceSettle
 
 /** The invoice page's block: the chip plus the Booqable payments on the same order. */
 export function LegacyPaymentsBlock({ settlement }: { settlement: LegacyInvoiceSettlement | null | undefined }) {
+  const { t, intl } = useT();
   if (!settlement) return null;
   return (
     <section className="mt-4 rounded border border-emerald-200 bg-emerald-50/40 p-4" data-testid="legacy-payments">
       <div className="flex flex-wrap items-center gap-2">
         <LegacyPaidChip settlement={settlement} />
         <span className="text-xs text-brand-700/70">
-          Status di Booqable: {settlement.legacyStatus ?? "-"}
-          {settlement.orderNumber ? ` · pesanan #${settlement.orderNumber}` : ""}
+          {t("legacyPaid.statusInBooqable", { status: settlement.legacyStatus ?? "-" })}
+          {settlement.orderNumber ? t("legacyPaid.orderSuffix", { order: settlement.orderNumber }) : ""}
         </span>
       </div>
       {settlement.payments.length > 0 ? (
         <table className="mt-3 w-full text-sm">
           <thead className="text-left text-xs text-brand-700/60">
             <tr>
-              <th className="py-1">Tanggal</th>
-              <th>Keterangan</th>
-              <th>Status</th>
-              <th className="text-right">Jumlah</th>
+              <th className="py-1">{t("common.date")}</th>
+              <th>{t("legacyPaid.description")}</th>
+              <th>{t("common.status")}</th>
+              <th className="text-right">{t("common.amount")}</th>
             </tr>
           </thead>
           <tbody>
             {settlement.payments.map((p) => (
               <tr key={p.recordId} className="border-t border-emerald-200/70">
-                <td className="py-1">{day(p.occurredAt)}</td>
+                <td className="py-1">{day(p.occurredAt, intl)}</td>
                 <td>
                   <Link href={recordHref(p.recordId)} className="underline">
-                    {p.title ?? "Pembayaran"}
+                    {p.title ?? t("legacyPaid.payment")}
                   </Link>
                 </td>
                 <td>{p.status ?? "-"}</td>
@@ -107,7 +111,7 @@ export function LegacyPaymentsBlock({ settlement }: { settlement: LegacyInvoiceS
           </tbody>
         </table>
       ) : (
-        <p className="mt-2 text-xs text-brand-700/60">Tidak ada pembayaran Booqable yang tercatat untuk pesanan ini.</p>
+        <p className="mt-2 text-xs text-brand-700/60">{t("legacyPaid.noPayments")}</p>
       )}
     </section>
   );
@@ -115,18 +119,18 @@ export function LegacyPaymentsBlock({ settlement }: { settlement: LegacyInvoiceS
 
 /** The client page's block: Booqable payments and each imported rental's paid-through date. */
 export function CustomerLegacyPaymentsBlock({ legacy }: { legacy: CustomerLegacyPayments | null | undefined }) {
+  const { t, intl } = useT();
   if (!legacy || (legacy.paymentCount === 0 && legacy.rentals.length === 0)) return null;
   return (
     <section className="mt-6 rounded border border-emerald-200 bg-white p-4" data-testid="customer-legacy-payments">
-      <h2 className="text-lg font-medium">Pembayaran di Booqable</h2>
-      <p className="text-xs text-brand-700/60">
-        Dari arsip Booqable (hanya baca). {legacy.paymentCount} transaksi, total bersih {idr(legacy.totalPaid)}.
-      </p>
+      <h2 className="text-lg font-medium">{t("legacyPaid.customerTitle")}</h2>
+      <p className="text-xs text-brand-700/60">{t("legacyPaid.customerIntro", { count: legacy.paymentCount, total: idr(legacy.totalPaid) })}</p>
       {legacy.rentals.length > 0 && (
         <ul className="mt-3 space-y-1 text-sm">
           {legacy.rentals.map((r) => (
             <li key={r.bookingId}>
-              {r.unitCode ?? "-"} · pesanan Booqable #{r.legacyBookingNumber} · <b>dibayar sampai {r.paidThrough ?? "-"}</b>
+              {t("legacyPaid.rentalLine", { unit: r.unitCode ?? "-", order: r.legacyBookingNumber })}
+              <b>{t("legacyPaid.paidThrough", { date: r.paidThrough ?? "-" })}</b>
             </li>
           ))}
         </ul>
@@ -135,19 +139,19 @@ export function CustomerLegacyPaymentsBlock({ legacy }: { legacy: CustomerLegacy
         <table className="mt-3 w-full text-sm">
           <thead className="text-left text-xs text-brand-700/60">
             <tr>
-              <th className="py-1">Tanggal</th>
-              <th>Keterangan</th>
-              <th>Status</th>
-              <th className="text-right">Jumlah</th>
+              <th className="py-1">{t("common.date")}</th>
+              <th>{t("legacyPaid.description")}</th>
+              <th>{t("common.status")}</th>
+              <th className="text-right">{t("common.amount")}</th>
             </tr>
           </thead>
           <tbody>
             {legacy.payments.map((p) => (
               <tr key={p.recordId} className="border-t border-brand-600/10">
-                <td className="py-1">{day(p.occurredAt)}</td>
+                <td className="py-1">{day(p.occurredAt, intl)}</td>
                 <td>
                   <Link href={recordHref(p.recordId)} className="underline">
-                    {p.title ?? "Pembayaran"}
+                    {p.title ?? t("legacyPaid.payment")}
                   </Link>
                 </td>
                 <td>{p.status ?? "-"}</td>
@@ -158,7 +162,7 @@ export function CustomerLegacyPaymentsBlock({ legacy }: { legacy: CustomerLegacy
         </table>
       )}
       {legacy.paymentCount > legacy.payments.length && (
-        <p className="mt-2 text-xs text-brand-700/60">Menampilkan {legacy.payments.length} terbaru. Lihat semuanya di Arsip Booqable.</p>
+        <p className="mt-2 text-xs text-brand-700/60">{t("legacyPaid.showingLatest", { count: legacy.payments.length })}</p>
       )}
     </section>
   );

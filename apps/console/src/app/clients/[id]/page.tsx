@@ -323,7 +323,7 @@ export default function ClientDetailPage() {
 
       {data.numberAliases && data.numberAliases.length > 0 && (
         <p className="mt-2 text-xs text-brand-700/60">
-          Juga dikenal sebagai: {data.numberAliases.map((a) => `#${a.aliasNumber}${a.mergedFromName ? ` (${a.mergedFromName})` : ""}`).join(", ")}
+          {t("client.alsoKnownAs")} {data.numberAliases.map((a) => `#${a.aliasNumber}${a.mergedFromName ? ` (${a.mergedFromName})` : ""}`).join(", ")}
         </p>
       )}
       {isOrgAdmin(me) && (
