@@ -85,7 +85,9 @@ export default function AssetsPage() {
   const [assets, setAssets] = useState<UnitMapAsset[] | null>(null);
   const [view, setView] = useState<"grid" | "list">("grid");
   const [selected, setSelected] = useState<UnitMapAsset | null>(null);
-  const canImport = isOrgAdmin(authClient.getUser());
+  // Read after mount: the signed-in user lives in localStorage, which the server render cannot see.
+  const [canImport, setCanImport] = useState(false);
+  useEffect(() => setCanImport(isOrgAdmin(authClient.getUser())), []);
 
   function load() {
     const token = authClient.getToken();
