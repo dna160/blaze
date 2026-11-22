@@ -334,6 +334,17 @@ const TEMPLATES: Record<string, WhatsAppTemplateSpec> = {
   invoice_reminder_admin: INVOICE_REMINDER_ADMIN,
   invoice_overdue_admin: INVOICE_OVERDUE_ADMIN,
 
+  // PRD go-live 2 §10.3 (T&C IV.3) — staff, not the customer: deposits whose
+  // 30-day refund date has passed while still held.
+  deposit_refund_task: {
+    metaName: "deposit_refund_task",
+    category: "UTILITY",
+    params: ["count", "list"],
+    body:
+      "Perhatian: {{1}} deposit sudah melewati batas pengembalian 30 hari dan masih ditahan: {{2}}. Proses refund di console.\n" +
+      "Attention: {{1}} deposit(s) are past their 30-day refund date and still held: {{2}}. Process the refund in the console.",
+  },
+
   lease_suspended: {
     metaName: "lease_suspended",
     category: "UTILITY",

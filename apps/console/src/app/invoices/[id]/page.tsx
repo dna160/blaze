@@ -7,11 +7,13 @@ import type { InvoiceDto, PaymentDto } from "@rentos/contracts";
 import Link from "next/link";
 
 import { ConsoleShell } from "@/components/ConsoleShell";
+import { LegacyPaymentsBlock, type LegacyInvoiceSettlement } from "@/components/LegacyPaid";
+import { InvoiceSettlement, type SettlementPayment } from "@/components/InvoiceSettlement";
 import { apiFetch, apiFetchBlob, apiUpload, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import { canDo } from "@/lib/capabilities";
 
-type InvoiceWithPayments = InvoiceDto & { payments: PaymentDto[] };
+type InvoiceWithPayments = InvoiceDto & { payments: PaymentDto[]; legacySettlement?: LegacyInvoiceSettlement | null };
 interface CreditNote {
   id: string;
   amount: string;
@@ -46,6 +48,8 @@ export default function InvoiceDetailPage() {
   const [method, setMethod] = useState<"CASH" | "MANUAL_TRANSFER">("MANUAL_TRANSFER");
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  // PRD go-live 2 §10.1 — with PPh net settlement on, InvoiceSettlement replaces the full-payment form.
+  const [netSettlement, setNetSettlement] = useState(false);
   const [cnAmount, setCnAmount] = useState("");
   const [cnReason, setCnReason] = useState("");
 
@@ -155,6 +159,7 @@ export default function InvoiceDetailPage() {
       <p className="mt-1 text-brand-700/70">
         Status: {invoice.status} · Due {new Date(invoice.dueDate).toLocaleDateString("id-ID")}
       </p>
+      <LegacyPaymentsBlock settlement={invoice.legacySettlement} />
       {invoice.status === "CREDITED" && (
         <p className="mt-2 text-sm text-amber-700">
           {invoice.supersededByInvoiceId ? (
@@ -234,7 +239,16 @@ export default function InvoiceDetailPage() {
             ))}
           </ul>
 
-          {payable && canRecord && (
+          <InvoiceSettlement
+            invoiceId={invoice.id}
+            payments={invoice.payments as unknown as SettlementPayment[]}
+            canRecord={canRecord}
+            payable={payable}
+            onChanged={() => void load()}
+            onEnabled={setNetSettlement}
+          />
+
+          {payable && canRecord && !netSettlement && (
             <form onSubmit={recordPayment} className="mt-4 space-y-2 border-t border-brand-600/10 pt-4">
               <h3 className="text-sm font-medium">Record manual payment</h3>
               <select

@@ -16,7 +16,7 @@ Generated from the code. Wording changes are made in `packages/domain/src/comms/
 - Nominal ditulis apa adanya dari sistem (mis. `2100000`); bila ingin format `2.100.000`, tuliskan di baris Perubahan.
   Amounts print as the system holds them; say so on the Change line if you want `2.100.000`.
 
-Jumlah pesan / Messages: 32
+Jumlah pesan / Messages: 33
 
 ---
 
@@ -144,7 +144,19 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-10. **`staff_set_password`** — untuk staf / to staff
+10. **`deposit_refund_task`** — untuk staf / to staff
+
+    Subjek email / Email subject: Deposit lewat batas pengembalian / Deposit refunds overdue
+
+    > Perhatian: 3 deposit sudah melewati batas pengembalian 30 hari dan masih ditahan: D-12 #36 Budi Santoso Rp 2.100.000; B-03 #41 Sari Wijaya Rp 1.100.000. Proses refund di console.
+    > Attention: 3 deposit(s) are past their 30-day refund date and still held: D-12 #36 Budi Santoso Rp 2.100.000; B-03 #41 Sari Wijaya Rp 1.100.000. Process the refund in the console.
+
+    *Data:* `count`, `list`
+
+    **Perubahan / Change:**
+
+
+11. **`staff_set_password`** — untuk staf / to staff
 
     Subjek email / Email subject: Akun RentOS Anda / Your RentOS console account
 
@@ -158,7 +170,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-11. **`kyc_requested`** — untuk pelanggan / to the customer
+12. **`kyc_requested`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Verifikasi identitas Anda / Verify your identity
 
@@ -172,7 +184,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-12. **`kyc_rejected`** — untuk pelanggan / to the customer
+13. **`kyc_rejected`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Dokumen perlu diunggah ulang / Please re-upload your documents
 
@@ -186,7 +198,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-13. **`contract_sign_offline`** — untuk pelanggan / to the customer
+14. **`contract_sign_offline`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Tanda tangan kontrak di kantor / Sign your contract at our office
 
@@ -200,7 +212,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-14. **`contract_sign_reminder`** — untuk pelanggan / to the customer
+15. **`contract_sign_reminder`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Pengingat tanda tangan kontrak / Contract signing reminder — 2026-11-27
 
@@ -214,7 +226,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-15. **`contract_sign_lapsed`** — untuk pelanggan / to the customer
+16. **`contract_sign_lapsed`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Pemesanan dibatalkan / Booking cancelled — contract not signed
 
@@ -226,7 +238,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-16. **`contract_proforma_ready`** — untuk pelanggan / to the customer
+17. **`contract_proforma_ready`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Kontrak & proforma 36-21112026-240-431 / Contract & proforma ready
 
@@ -240,7 +252,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-17. **`booking_approved_payment_link`** — untuk pelanggan / to the customer
+18. **`booking_approved_payment_link`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Invoice 36-21112026-240-431 — pembayaran / payment
 
@@ -254,7 +266,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-18. **`invoice_issued`** — untuk pelanggan / to the customer
+19. **`invoice_issued`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Invoice 36-21112026-240-431 diterbitkan / issued
 
@@ -268,7 +280,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-19. **`invoice_paid`** — untuk pelanggan / to the customer
+20. **`invoice_paid`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Pembayaran diterima / Payment received — 36-21112026-240-431
 
@@ -282,7 +294,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-20. **`staff_password_reset`** — untuk pelanggan / to the customer
+21. **`staff_password_reset`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Atur ulang kata sandi console / Reset your console password
 
@@ -296,7 +308,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-21. **`booking_rejected`** — untuk pelanggan / to the customer
+22. **`booking_rejected`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Permintaan booking tidak dapat diproses / Booking request declined
 
@@ -308,7 +320,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-22. **`booking_cancelled`** — untuk pelanggan / to the customer
+23. **`booking_cancelled`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Booking dibatalkan / Booking cancelled
 
@@ -320,7 +332,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-23. **`booking_date_changed`** — untuk pelanggan / to the customer
+24. **`booking_date_changed`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Tanggal mulai sewa diubah / Rental start date changed
 
@@ -334,7 +346,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-24. **`booking_expired`** — untuk pelanggan / to the customer
+25. **`booking_expired`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Permintaan booking kedaluwarsa / Booking request expired
 
@@ -348,7 +360,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-25. **`term_ended`** — untuk pelanggan / to the customer
+26. **`term_ended`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Masa sewa berakhir / Your rental term has ended
 
@@ -362,7 +374,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-26. **`notice_confirmed`** — untuk pelanggan / to the customer
+27. **`notice_confirmed`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Pemberitahuan berhenti sewa diterima / Termination notice received
 
@@ -376,7 +388,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-27. **`lease_suspended`** — untuk pelanggan / to the customer
+28. **`lease_suspended`** — untuk pelanggan / to the customer
 
     Subjek email / Email subject: Akses ditangguhkan / Access suspended — 36-21112026-240-431
 
@@ -390,7 +402,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-28. **`invoice_reminder_h{n} — n hari sebelum jatuh tempo / n days before the due date`** — untuk pelanggan / to the customer
+29. **`invoice_reminder_h{n} — n hari sebelum jatuh tempo / n days before the due date`** — untuk pelanggan / to the customer
 
     *Contoh untuk satu nilai n; kalimatnya sama untuk setiap n. / One value of n shown; the wording is the same for every n.*
 
@@ -406,7 +418,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-29. **`invoice_overdue_d{n} — n hari setelah jatuh tempo / n days after the due date`** — untuk pelanggan / to the customer
+30. **`invoice_overdue_d{n} — n hari setelah jatuh tempo / n days after the due date`** — untuk pelanggan / to the customer
 
     *Contoh untuk satu nilai n; kalimatnya sama untuk setiap n. / One value of n shown; the wording is the same for every n.*
 
@@ -422,7 +434,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-30. **`invoice_reminder_h{n}_admin — salinan untuk admin cabang / the branch admin's copy`** — untuk staf / to staff
+31. **`invoice_reminder_h{n}_admin — salinan untuk admin cabang / the branch admin's copy`** — untuk staf / to staff
 
     *Contoh untuk satu nilai n; kalimatnya sama untuk setiap n. / One value of n shown; the wording is the same for every n.*
 
@@ -436,7 +448,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-31. **`invoice_overdue_d{n}_admin — salinan untuk admin cabang / the branch admin's copy`** — untuk staf / to staff
+32. **`invoice_overdue_d{n}_admin — salinan untuk admin cabang / the branch admin's copy`** — untuk staf / to staff
 
     *Contoh untuk satu nilai n; kalimatnya sama untuk setiap n. / One value of n shown; the wording is the same for every n.*
 
@@ -450,7 +462,7 @@ Jumlah pesan / Messages: 32
     **Perubahan / Change:**
 
 
-32. **`auto_reply — balasan otomatis saat pelanggan mengirim pesan ke nomor sistem / the automatic reply when a customer writes to the system number`** — untuk pelanggan / to the customer
+33. **`auto_reply — balasan otomatis saat pelanggan mengirim pesan ke nomor sistem / the automatic reply when a customer writes to the system number`** — untuk pelanggan / to the customer
 
     *Teks bawaan; dapat diubah di Pengaturan → Pesan, dan hanya terkirim bila balasan otomatis dinyalakan. / The default text; editable in Settings → Messaging, sent only while the auto-reply is on.*
 

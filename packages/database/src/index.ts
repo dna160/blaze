@@ -36,6 +36,7 @@ export {
   createCreditReplacementInvoice,
   toPricingConfig,
   generateRentalOrderInvoice,
+  createAdHocInvoice,
   type BookingForInvoicing,
   type RentalOrderForInvoicing,
   type InvoiceForCredit,
@@ -57,6 +58,7 @@ export { findOrCreateCustomerAccessToken, exchangeCustomerAccessToken, hashAcces
 export {
   recordInvoiceIssuedEntries,
   recordPaymentReceivedEntries,
+  recordSettlementEntries,
   recordDepositHeldEntries,
   recordDepositRefundedEntries,
   recordDepositAppliedEntries,
@@ -155,3 +157,22 @@ export {
   depositRemaining,
   DEPOSIT_REFUND_DAYS,
 } from "./deposits.js";
+export {
+  legacySettlementForInvoices,
+  legacyPaymentsForCustomer,
+  LEGACY_SETTLED_VOID_REASON_PREFIX,
+  type LegacyInvoiceSettlement,
+  type LegacyPaymentRef,
+  type CustomerLegacyPayments,
+} from "./legacy-settlement.js";
+export { mergeCustomers, customerNumberAliases, CustomerMergeError, type CustomerMergePlan } from "./customer-merge.js";
+export {
+  addInvoiceCharge,
+  accrueLateFees,
+  accrueOverstay,
+  chargeOvertime,
+  raiseDepositRefundTasks,
+  arrearsByCustomer,
+  MoneyRuleDisabledError,
+  type ArrearsBadge,
+} from "./money-rules.js";

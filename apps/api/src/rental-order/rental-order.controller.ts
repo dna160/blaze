@@ -1,10 +1,11 @@
-import { BadRequestException, Body, Controller, ForbiddenException, Get, Param, Post, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
 import { CapabilityGuard } from "../common/guards/capability.guard.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
+import { StaffGuard } from "../common/guards/staff.guard.js";
 import { RequireCapability } from "../common/decorators/require-capability.decorator.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
@@ -39,6 +40,20 @@ export class RentalOrderController {
   @RequireCapability("approve_booking")
   pending(@CurrentTenant() tenant: ResolvedTenant) {
     return this.orders.listPending(tenant);
+  }
+
+  /** PRD go-live 2 §10.2 — the console's rental-orders list. `?status=ACTIVE&search=…` (unit, customer name/phone/number). */
+  @Get()
+  @UseGuards(JwtAuthGuard, StaffGuard)
+  list(@CurrentTenant() tenant: ResolvedTenant, @Query("status") status?: string, @Query("search") search?: string) {
+    return this.orders.listForConsole(tenant, { status, search });
+  }
+
+  /** PRD go-live 2 §10.2 — one order with its customer, unit, invoices, contracts, events and renewal chain. */
+  @Get(":id/detail")
+  @UseGuards(JwtAuthGuard, StaffGuard)
+  detail(@CurrentTenant() tenant: ResolvedTenant, @Param("id") id: string) {
+    return this.orders.detailForConsole(tenant, id);
   }
 
   @Get(":id")

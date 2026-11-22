@@ -13,6 +13,7 @@ import { runRenewalTimeouts } from "./jobs/renewal-timeout.job.js";
 import { runSyncOtaCalendars } from "./jobs/sync-ota-calendars.job.js";
 import { runWaitlistExpiry } from "./jobs/waitlist-expiry.job.js";
 import { runOfflineSignDeadline } from "./jobs/offline-sign-deadline.job.js";
+import { runMoneyRules } from "./jobs/money-rules.job.js";
 
 export const INVOICE_GENERATION_QUEUE = "invoice-generation";
 /** PRD v2 §8 — issues the SCHEDULED cycles of term payment schedules on their issue date. */
@@ -28,6 +29,8 @@ export const OTA_CALENDAR_SYNC_QUEUE = "ota-calendar-sync";
 export const PLATFORM_BILLING_QUEUE = "platform-billing";
 /** PRD go-live 2 §5.3 — paper-signing deadline: reminders 3 and 1 day before, lapse after. */
 export const OFFLINE_SIGN_DEADLINE_QUEUE = "offline-sign-deadline";
+/** PRD go-live 2 §10.3 — T&C money rules (late fee, overstay, deposit refund tasks); each off unless the branch enables it. */
+export const MONEY_RULES_QUEUE = "money-rules";
 /** Must match apps/api/src/webhook-dispatch/webhook-dispatch.service.ts's TENANT_WEBHOOK_DELIVERY_QUEUE exactly — that's the producer, this file's Worker is the consumer. */
 export const TENANT_WEBHOOK_DELIVERY_QUEUE = "tenant-webhook-delivery";
 
@@ -60,6 +63,7 @@ export async function scheduleRepeatableJobs(connection: IORedis): Promise<void>
   const scheduledIssueQueue = new Queue(SCHEDULED_INVOICE_ISSUE_QUEUE, { connection });
   const termLifecycleQueue = new Queue(TERM_LIFECYCLE_QUEUE, { connection });
   const offlineSignQueue = new Queue(OFFLINE_SIGN_DEADLINE_QUEUE, { connection });
+  const moneyRulesQueue = new Queue(MONEY_RULES_QUEUE, { connection });
 
   // PRD v2: run the term clock before the invoice issuer so a lease that
   // ended today doesn't get a cycle issued in the same tick.
@@ -73,6 +77,12 @@ export async function scheduleRepeatableJobs(connection: IORedis): Promise<void>
     "tick",
     {},
     { repeat: { pattern: process.env.OFFLINE_SIGN_DEADLINE_CRON ?? "15 2 * * *" }, jobId: "offline-sign-deadline-daily" },
+  );
+  // 00:30 WIB (17:30 UTC): just after the branch day turns, so "today" is the new day and a fee is never added twice.
+  await moneyRulesQueue.add(
+    "tick",
+    {},
+    { repeat: { pattern: process.env.MONEY_RULES_CRON ?? "30 17 * * *" }, jobId: "money-rules-daily" },
   );
   await scheduledIssueQueue.add(
     "tick",
@@ -134,6 +144,7 @@ export async function scheduleRepeatableJobs(connection: IORedis): Promise<void>
   await scheduledIssueQueue.close();
   await termLifecycleQueue.close();
   await offlineSignQueue.close();
+  await moneyRulesQueue.close();
   await dunningQueue.close();
   await ledgerQueue.close();
   await renewalOfferQueue.close();
@@ -168,6 +179,9 @@ export function startWorkers(connection: IORedis): Worker[] {
   const offlineSignWorker = simpleWorker(OFFLINE_SIGN_DEADLINE_QUEUE, async () => {
     await runOfflineSignDeadline();
   });
+  const moneyRulesWorker = simpleWorker(MONEY_RULES_QUEUE, async () => {
+    await runMoneyRules();
+  });
 
   // Not a simpleWorker: this one is per-delivery rather than a cron tick, and
   // needs its own "failed" handler to flip a delivery to terminal FAILED once
@@ -200,6 +214,7 @@ export function startWorkers(connection: IORedis): Worker[] {
     otaSyncWorker,
     platformBillingWorker,
     offlineSignWorker,
+    moneyRulesWorker,
   ];
   for (const worker of workers) {
     worker.on("failed", (job, err) => console.error(`Job ${job?.id} in ${job?.queueName} failed:`, err));

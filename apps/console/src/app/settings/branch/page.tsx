@@ -5,6 +5,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { BankAccount, BranchSettings, UpdateBranchSettingsRequest } from "@rentos/contracts";
 
 import { ConsoleShell } from "@/components/ConsoleShell";
+import { MoneyRulesPanel } from "@/components/MoneyRulesPanel";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import { notifyBranchSettingsChanged } from "@/lib/branch-test-mode";
@@ -44,7 +45,7 @@ const emptyBank: BankAccount = { bank: "", accountNumber: "", accountName: "", s
 export default function BranchSettingsPage() {
   const router = useRouter();
   const [settings, setSettings] = useState<BranchSettings | null>(null);
-  const [form, setForm] = useState<Required<Omit<UpdateBranchSettingsRequest, "contact" | "operatingHours" | "numbering">> & {
+  const [form, setForm] = useState<Required<Omit<UpdateBranchSettingsRequest, "contact" | "operatingHours" | "numbering" | "moneyRules">> & {
     contact: NonNullable<UpdateBranchSettingsRequest["contact"]>;
     operatingHours: NonNullable<UpdateBranchSettingsRequest["operatingHours"]>;
     numbering: NonNullable<UpdateBranchSettingsRequest["numbering"]>;
@@ -424,6 +425,7 @@ export default function BranchSettingsPage() {
           </div>
         )}
       </form>
+      <MoneyRulesPanel settings={settings} />
     </ConsoleShell>
   );
 }

@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import {
   applyUnitImport,
+  arrearsByCustomer,
   planUnitImport,
   computePooledAvailableCount,
   countAvailableStorageAssets,
@@ -9,7 +10,7 @@ import {
   toPricingConfig,
   type Prisma,
 } from "@rentos/database";
-import { computeTermSchedule, getBookingModelStrategy, hasOrganizationScope, termEndDate, type BookingWindow } from "@rentos/domain";
+import { computeTermSchedule, getBookingModelStrategy, hasOrganizationScope, resolveMoneyRules, termEndDate, type BookingWindow } from "@rentos/domain";
 import type {
   CreateAssetRequest,
   CreateAssetTypeRequest,
@@ -21,7 +22,7 @@ import type {
   UpdateAssetTypeRequest,
   UpsertLocationRequest,
 } from "@rentos/contracts";
-import { SIZE_CLASS_ORDER, type SizeClassValue } from "@rentos/contracts";
+import { SIZE_CLASS_ORDER, zonedDateString, type SizeClassValue } from "@rentos/contracts";
 
 import { AuditService } from "../audit/audit.service.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
@@ -339,8 +340,8 @@ export class CatalogService {
    * `periodEnd` gives paid-through date.
    */
   unitMap(tenantId: string, filters: { locationId?: string }) {
-    return this.prisma.runInTenantContext(tenantId, (tx) =>
-      tx.asset.findMany({
+    return this.prisma.runInTenantContext(tenantId, async (tx) => {
+      const assets = await tx.asset.findMany({
         where: { locationId: filters.locationId },
         include: {
           // attributesSchema carries the size label (PRD go-live §5.2).
@@ -351,14 +352,20 @@ export class CatalogService {
             orderBy: { createdAt: "desc" },
             take: 1,
             include: {
-              customer: { select: { fullName: true, phone: true } },
+              customer: { select: { id: true, fullName: true, phone: true } },
               invoices: { where: { status: "PAID" }, orderBy: { periodEnd: "desc" }, take: 1, select: { periodEnd: true } },
             },
           },
         },
         orderBy: [{ locationId: "asc" }, { code: "asc" }],
-      }),
-    );
+      });
+      // PRD go-live 2 §10.3 (T&C V.5) — "Akses ditolak — tunggakan" per occupant; null unless the branch enabled the rule.
+      const tenant = await tx.tenant.findUniqueOrThrow({ where: { id: tenantId }, select: { featureFlags: true, timezone: true } });
+      const rules = resolveMoneyRules(tenant.featureFlags);
+      const occupants = [...new Set(assets.flatMap((a) => a.bookings.map((b) => b.customer.id)))];
+      const arrears = await arrearsByCustomer(tx, rules, occupants, zonedDateString(new Date(), tenant.timezone || "Asia/Jakarta"));
+      return assets.map((a) => ({ ...a, bookings: a.bookings.map((b) => ({ ...b, arrears: arrears.get(b.customer.id) ?? null })) }));
+    });
   }
 
   /**

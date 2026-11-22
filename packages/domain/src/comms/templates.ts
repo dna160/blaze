@@ -85,6 +85,13 @@ const TEMPLATES: Record<string, (vars: Vars) => RenderedMessage> = {
       `Halo ${v(vars, "customerName", "Pelanggan")}, berikut tautan untuk masuk ke akun sewa Anda. Berlaku 15 menit, mohon jangan dibagikan.\n` +
       `Here is your link to sign in to your rental account. Valid for 15 minutes — please don't share it.\n\nMasuk / Sign in: ${v(vars, "link")}`,
   }),
+  /** PRD go-live 2 §10.3 (T&C IV.3) — to the branch admin: held deposits past their refund date. */
+  deposit_refund_task: (vars) => ({
+    subject: "Deposit lewat batas pengembalian / Deposit refunds overdue",
+    text:
+      `Perhatian: ${v(vars, "count", "")} deposit sudah melewati batas pengembalian 30 hari dan masih ditahan: ${v(vars, "list", "")}. Proses refund di console.\n` +
+      `Attention: ${v(vars, "count", "")} deposit(s) are past their 30-day refund date and still held: ${v(vars, "list", "")}. Process the refund in the console.`,
+  }),
   /** PRD go-live §4.4 — staff, by email: no shared or default passwords. */
   staff_set_password: (vars) => ({
     subject: "Akun RentOS Anda / Your RentOS console account",
