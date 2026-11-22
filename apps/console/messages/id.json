@@ -1018,5 +1018,86 @@
     "prev": "Sebelumnya",
     "next": "Berikutnya",
     "page": "Halaman {page} / {pages}"
+  },
+  "requests": {
+    "type": {
+      "CANCEL": "Pembatalan",
+      "CHANGE_START_DATE": "Ubah tanggal mulai"
+    },
+    "status": {
+      "PENDING": "Menunggu keputusan",
+      "APPROVED": "Disetujui",
+      "REJECTED": "Ditolak",
+      "WITHDRAWN": "Ditarik"
+    },
+    "title": "Permintaan",
+    "intro": "Pembatalan dan perubahan tanggal mulai booking yang diajukan staf. Yang mengajukan tidak bisa menyetujui permintaannya sendiri.",
+    "canDecide": "Anda dapat memutuskan: {types}.",
+    "cannotDecide": "Anda dapat mengajukan dan memantau permintaan; keputusannya diambil supervisor, admin, atau Super Admin.",
+    "tabPending": "Menunggu keputusan",
+    "tabHistory": "Riwayat",
+    "loadFailed": "Gagal memuat permintaan.",
+    "noPending": "Tidak ada permintaan yang menunggu keputusan.",
+    "noHistory": "Belum ada riwayat permintaan.",
+    "yours": "Menunggu keputusan Anda ({count})",
+    "others": "Menunggu keputusan orang lain ({count})",
+    "form": {
+      "titleCancel": "Ajukan pembatalan",
+      "titleDate": "Ajukan ubah tanggal mulai",
+      "cancelImmediate": "Anda Super Admin: pembatalan langsung berlaku. Tagihan yang belum dibayar dibatalkan, unit dilepas, dan pelanggan diberi tahu.",
+      "cancelNeedsApproval": "Permintaan ini dikirim ke Super Admin untuk disetujui. Setelah disetujui, tagihan yang belum dibayar dibatalkan, unit dilepas, dan pelanggan diberi tahu.",
+      "currentStart": "Tanggal mulai sekarang: {date}",
+      "unitCode": "unit {code}",
+      "months": "{months} bulan",
+      "approvedBy": "Permintaan ini disetujui oleh supervisor atau admin.",
+      "newStart": "Tanggal mulai baru",
+      "unitFree": "Unit {code} tersedia untuk tanggal ini.",
+      "noUnitFree": "Tidak ada unit tipe ini yang kosong untuk tanggal tersebut. Pilih tanggal lain.",
+      "unitTaken": "Unit {code} tidak tersedia untuk tanggal ini — pilih unit lain:",
+      "currentUnit": "sekarang",
+      "keep": "{code} (tetap)",
+      "signedQuestion": "Kontrak sudah ditandatangani. Setelah tanggal diubah:",
+      "resign": "Pelanggan menandatangani ulang kontrak versi baru",
+      "reconfirm": "Tanda tangan tetap berlaku; staf mengonfirmasi ulang",
+      "reason": "Alasan (wajib)",
+      "reasonPlaceholder": "Mis. pelanggan minta mundur seminggu",
+      "cancelNow": "Batalkan booking",
+      "send": "Kirim permintaan"
+    },
+    "actions": {
+      "date": "Ajukan ubah tanggal",
+      "cancel": "Ajukan pembatalan",
+      "cancelled": "Booking dibatalkan.",
+      "cancelSent": "Permintaan pembatalan terkirim — menunggu persetujuan Super Admin.",
+      "dateSent": "Permintaan ubah tanggal terkirim — menunggu persetujuan supervisor atau admin."
+    },
+    "card": {
+      "withdrawConfirm": "Tarik permintaan ini?",
+      "contract": "kontrak {number}",
+      "requestedBy": "Diajukan {name} · {when}",
+      "dateLine": "Tanggal mulai {from} → {to}",
+      "unitMove": "pindah unit {from} → {to}",
+      "resign": "kontrak ditandatangani ulang",
+      "reconfirm": "kontrak dikonfirmasi ulang",
+      "reason": "Alasan: {reason}",
+      "unitNoLongerFree": "Unit yang diminta tidak lagi kosong untuk tanggal ini — persetujuan akan ditolak. Pengaju perlu memilih unit atau tanggal lain.",
+      "decidedBy": "oleh {name}",
+      "voided": "Invoice dibatalkan: {list}.",
+      "reissued": "Diterbitkan ulang: {list}.",
+      "contractVersion": "Kontrak versi {version}.",
+      "contractVersionResign": "Kontrak versi {version} — perlu tanda tangan ulang.",
+      "contractVersionReconfirm": "Kontrak versi {version} — perlu konfirmasi ulang.",
+      "selfDecision": "Ini permintaan Anda — orang lain yang harus memutuskannya.",
+      "rejectReason": "Alasan penolakan (wajib)",
+      "approve": "Setujui",
+      "reject": "Tolak",
+      "rejectRequest": "Tolak permintaan",
+      "withdraw": "Tarik permintaan"
+    },
+    "panel": {
+      "loading": "Memuat permintaan…",
+      "empty": "Belum ada permintaan perubahan.",
+      "history": "Riwayat permintaan ({count})"
+    }
   }
 }

@@ -8,7 +8,8 @@ import { ChangeRequestCard } from "@/components/ChangeRequests";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { apiFetch, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
-import { CHANGE_TYPE_LABEL, useChangeRequestSummary } from "@/lib/change-requests";
+import { changeTypeLabel, useChangeRequestSummary } from "@/lib/change-requests";
+import { useT } from "@/lib/i18n";
 
 /**
  * PRD go-live 2 §4.1 — "Permintaan": booking changes waiting for a decision,
@@ -17,6 +18,7 @@ import { CHANGE_TYPE_LABEL, useChangeRequestSummary } from "@/lib/change-request
  * policy names decides here (never their own request).
  */
 export default function ChangeRequestsPage() {
+  const { t } = useT();
   const router = useRouter();
   const summary = useChangeRequestSummary();
   const [tab, setTab] = useState<"PENDING" | "HISTORY">("PENDING");
@@ -33,8 +35,9 @@ export default function ChangeRequestsPage() {
     try {
       setRows(await apiFetch<ChangeRequestDto[]>(`/change-requests?status=${tab}`, { token }));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Gagal memuat permintaan.");
+      setError(err instanceof ApiError ? err.message : t("requests.loadFailed"));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- t only changes the fallback text
   }, [router, tab]);
 
   useEffect(() => {
@@ -49,32 +52,30 @@ export default function ChangeRequestsPage() {
     <ConsoleShell>
       <div className="space-y-4">
         <div>
-          <h1 className="text-2xl font-semibold">Permintaan</h1>
-          <p className="text-sm text-brand-700/70">
-            Pembatalan dan perubahan tanggal mulai booking yang diajukan staf. Yang mengajukan tidak bisa menyetujui permintaannya sendiri.
-          </p>
+          <h1 className="text-2xl font-semibold">{t("requests.title")}</h1>
+          <p className="text-sm text-brand-700/70">{t("requests.intro")}</p>
           {summary.approvableTypes.length > 0 ? (
-            <p className="mt-1 text-xs text-brand-700/60">Anda dapat memutuskan: {summary.approvableTypes.map((t) => CHANGE_TYPE_LABEL[t]).join(", ")}.</p>
+            <p className="mt-1 text-xs text-brand-700/60">{t("requests.canDecide", { types: summary.approvableTypes.map((x) => changeTypeLabel(x)).join(", ") })}</p>
           ) : (
-            <p className="mt-1 text-xs text-brand-700/60">Anda dapat mengajukan dan memantau permintaan; keputusannya diambil supervisor, admin, atau Super Admin.</p>
+            <p className="mt-1 text-xs text-brand-700/60">{t("requests.cannotDecide")}</p>
           )}
         </div>
 
         <div className="flex gap-1.5">
-          {(["PENDING", "HISTORY"] as const).map((t) => (
-            <button key={t} onClick={() => setTab(t)} aria-pressed={tab === t} className={`rounded px-3 py-1.5 text-sm ${tab === t ? "bg-brand-700 text-white" : "border border-brand-600/15 hover:bg-brand-700/5"}`}>
-              {t === "PENDING" ? "Menunggu keputusan" : "Riwayat"}
+          {(["PENDING", "HISTORY"] as const).map((x) => (
+            <button key={x} onClick={() => setTab(x)} aria-pressed={tab === x} className={`rounded px-3 py-1.5 text-sm ${tab === x ? "bg-brand-700 text-white" : "border border-brand-600/15 hover:bg-brand-700/5"}`}>
+              {x === "PENDING" ? t("requests.tabPending") : t("requests.tabHistory")}
             </button>
           ))}
         </div>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
-        {!rows && !error && <p className="text-sm text-brand-700/60">Memuat…</p>}
-        {rows && rows.length === 0 && <p className="text-sm text-brand-700/60">{tab === "PENDING" ? "Tidak ada permintaan yang menunggu keputusan." : "Belum ada riwayat permintaan."}</p>}
+        {!rows && !error && <p className="text-sm text-brand-700/60">{t("common.loading")}</p>}
+        {rows && rows.length === 0 && <p className="text-sm text-brand-700/60">{tab === "PENDING" ? t("requests.noPending") : t("requests.noHistory")}</p>}
 
         {rows && tab === "PENDING" && mine.length > 0 && (
           <section className="space-y-2">
-            <h2 className="text-sm font-semibold text-brand-700/80">Menunggu keputusan Anda ({mine.length})</h2>
+            <h2 className="text-sm font-semibold text-brand-700/80">{t("requests.yours", { count: mine.length })}</h2>
             {mine.map((r) => (
               <ChangeRequestCard key={r.id} request={r} onChanged={load} />
             ))}
@@ -82,7 +83,7 @@ export default function ChangeRequestsPage() {
         )}
         {rows && tab === "PENDING" && others.length > 0 && (
           <section className="space-y-2">
-            <h2 className="text-sm font-semibold text-brand-700/80">Menunggu keputusan orang lain ({others.length})</h2>
+            <h2 className="text-sm font-semibold text-brand-700/80">{t("requests.others", { count: others.length })}</h2>
             {others.map((r) => (
               <ChangeRequestCard key={r.id} request={r} onChanged={load} />
             ))}

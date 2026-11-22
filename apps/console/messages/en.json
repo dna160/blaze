@@ -1018,5 +1018,86 @@
     "prev": "Prev",
     "next": "Next",
     "page": "Page {page} / {pages}"
+  },
+  "requests": {
+    "type": {
+      "CANCEL": "Cancellation",
+      "CHANGE_START_DATE": "Start date change"
+    },
+    "status": {
+      "PENDING": "Awaiting decision",
+      "APPROVED": "Approved",
+      "REJECTED": "Rejected",
+      "WITHDRAWN": "Withdrawn"
+    },
+    "title": "Requests",
+    "intro": "Booking cancellations and start-date changes filed by staff. Nobody can approve their own request.",
+    "canDecide": "You can decide: {types}.",
+    "cannotDecide": "You can file and follow requests; supervisors, admins or the Super Admin decide them.",
+    "tabPending": "Awaiting decision",
+    "tabHistory": "History",
+    "loadFailed": "Could not load the requests.",
+    "noPending": "No requests awaiting a decision.",
+    "noHistory": "No request history yet.",
+    "yours": "Awaiting your decision ({count})",
+    "others": "Awaiting someone else's decision ({count})",
+    "form": {
+      "titleCancel": "Request cancellation",
+      "titleDate": "Request a start date change",
+      "cancelImmediate": "You are the Super Admin: the cancellation takes effect at once. Unpaid bills are voided, the unit is released and the customer is told.",
+      "cancelNeedsApproval": "This request goes to the Super Admin for approval. Once approved, unpaid bills are voided, the unit is released and the customer is told.",
+      "currentStart": "Current start date: {date}",
+      "unitCode": "unit {code}",
+      "months": "{months} months",
+      "approvedBy": "A supervisor or admin approves this request.",
+      "newStart": "New start date",
+      "unitFree": "Unit {code} is free for this date.",
+      "noUnitFree": "No unit of this type is free for that date. Choose another date.",
+      "unitTaken": "Unit {code} is not free for this date — choose another unit:",
+      "currentUnit": "current",
+      "keep": "{code} (keep)",
+      "signedQuestion": "The contract is already signed. Once the date changes:",
+      "resign": "The customer signs the new contract version again",
+      "reconfirm": "The signature stands; staff re-confirm it",
+      "reason": "Reason (required)",
+      "reasonPlaceholder": "E.g. the customer asked to start a week later",
+      "cancelNow": "Cancel booking",
+      "send": "Send request"
+    },
+    "actions": {
+      "date": "Request date change",
+      "cancel": "Request cancellation",
+      "cancelled": "Booking cancelled.",
+      "cancelSent": "Cancellation request sent — awaiting the Super Admin's approval.",
+      "dateSent": "Date change request sent — awaiting a supervisor's or admin's approval."
+    },
+    "card": {
+      "withdrawConfirm": "Withdraw this request?",
+      "contract": "contract {number}",
+      "requestedBy": "Requested by {name} · {when}",
+      "dateLine": "Start date {from} → {to}",
+      "unitMove": "unit move {from} → {to}",
+      "resign": "contract re-signed",
+      "reconfirm": "contract re-confirmed",
+      "reason": "Reason: {reason}",
+      "unitNoLongerFree": "The requested unit is no longer free for this date — approval will be refused. The requester needs to choose another unit or date.",
+      "decidedBy": "by {name}",
+      "voided": "Invoices voided: {list}.",
+      "reissued": "Re-issued: {list}.",
+      "contractVersion": "Contract version {version}.",
+      "contractVersionResign": "Contract version {version} — needs signing again.",
+      "contractVersionReconfirm": "Contract version {version} — needs re-confirming.",
+      "selfDecision": "This is your request — someone else has to decide it.",
+      "rejectReason": "Reason for rejecting (required)",
+      "approve": "Approve",
+      "reject": "Reject",
+      "rejectRequest": "Reject request",
+      "withdraw": "Withdraw request"
+    },
+    "panel": {
+      "loading": "Loading requests…",
+      "empty": "No change requests yet.",
+      "history": "Request history ({count})"
+    }
   }
 }

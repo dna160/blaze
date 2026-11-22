@@ -5,6 +5,7 @@ import type { ChangeRequestSummaryDto } from "@rentos/contracts";
 
 import { apiFetch } from "./api";
 import { authClient } from "./auth-client";
+import { getLocale, tr } from "./i18n";
 
 const REFRESH_EVENT = "rentos:change-requests-changed";
 const POLL_MS = 60_000;
@@ -54,17 +55,9 @@ export function useChangeRequestSummary(): ChangeRequestSummaryDto {
   return summary;
 }
 
-export const CHANGE_TYPE_LABEL: Record<string, string> = {
-  CANCEL: "Pembatalan",
-  CHANGE_START_DATE: "Ubah tanggal mulai",
-};
-
-export const CHANGE_STATUS_LABEL: Record<string, string> = {
-  PENDING: "Menunggu keputusan",
-  APPROVED: "Disetujui",
-  REJECTED: "Ditolak",
-  WITHDRAWN: "Ditarik",
-};
+/** In the reader's language: `requests.type.<TYPE>` / `requests.status.<STATUS>`. */
+export const changeTypeLabel = (type: string) => tr(`requests.type.${type}`);
+export const changeStatusLabel = (status: string) => tr(`requests.status.${status}`);
 
 export const CHANGE_STATUS_STYLE: Record<string, string> = {
   PENDING: "bg-amber-100 text-amber-800",
@@ -75,10 +68,10 @@ export const CHANGE_STATUS_STYLE: Record<string, string> = {
 
 export function fmtDay(iso: string | null | undefined): string {
   if (!iso) return "—";
-  return new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  return new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString(getLocale() === "en" ? "en-GB" : "id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 }
 
 export function fmtDateTime(iso: string | null | undefined): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleString("id-ID", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" });
+  return new Date(iso).toLocaleString(getLocale() === "en" ? "en-GB" : "id-ID", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" });
 }
