@@ -1099,5 +1099,51 @@
       "empty": "Belum ada permintaan perubahan.",
       "history": "Riwayat permintaan ({count})"
     }
+  },
+  "legacy": {
+    "tab": {
+      "CONTRACT": "Kontrak",
+      "INVOICE": "Invoice",
+      "PAYMENT": "Pembayaran",
+      "ORDER": "Pesanan",
+      "CUSTOMER": "Pelanggan",
+      "NOTE": "Catatan",
+      "QUOTE": "Penawaran",
+      "EMAIL": "Email",
+      "CONFIG": "Pengaturan"
+    },
+    "recordFailed": "Data tidak dapat dimuat.",
+    "badge": "Arsip Booqable · {source} · hanya baca",
+    "notInConsole": "(#{number}, tidak ada di console)",
+    "number": "Nomor",
+    "paidToPay": "Dibayar / sisa tagihan",
+    "units": "Unit",
+    "line": "Baris",
+    "asMade": "Kontrak sebagaimana dibuat",
+    "iframeTitle": "Kontrak Booqable",
+    "hideRaw": "Sembunyikan semua kolom ekspor",
+    "showRaw": "Tampilkan semua kolom ekspor",
+    "archiveFailed": "Arsip tidak dapat dimuat.",
+    "recordsFailed": "Data arsip tidak dapat dimuat.",
+    "title": "Arsip Booqable",
+    "intro": "Semua data dari sistem sebelumnya (Booqable), disimpan apa adanya: pesanan lama dan berjalan, invoice, pembayaran, kontrak beserta tanda tangannya, dan catatan. Riwayat baca-saja — tidak mengubah invoice, pembayaran, atau akun di console.",
+    "showingCustomer": "Menampilkan pelanggan #{number}.",
+    "showEveryone": "Tampilkan semua",
+    "noneImported": "Belum ada data Booqable yang diimpor.",
+    "searchPlaceholder": "Cari nomor, pelanggan, atau teks",
+    "record": "Data",
+    "nothing": "Tidak ada data.",
+    "pageLine": "Halaman {page} dari {pages} · {total} data",
+    "contract": {
+      "signature": "Tanda tangan",
+      "noSignature": "Tidak ada tanda tangan tersimpan.",
+      "date": "Tanggal",
+      "order": "Pesanan #",
+      "from": "Dari",
+      "until": "Sampai",
+      "units": "Unit",
+      "total": "Total",
+      "deposit": "Deposit jaminan"
+    }
   }
 }

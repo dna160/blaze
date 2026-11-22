@@ -1099,5 +1099,51 @@
       "empty": "No change requests yet.",
       "history": "Request history ({count})"
     }
+  },
+  "legacy": {
+    "tab": {
+      "CONTRACT": "Contracts",
+      "INVOICE": "Invoices",
+      "PAYMENT": "Payments",
+      "ORDER": "Orders",
+      "CUSTOMER": "Customers",
+      "NOTE": "Notes",
+      "QUOTE": "Quotes",
+      "EMAIL": "Emails",
+      "CONFIG": "Settings"
+    },
+    "recordFailed": "Could not load the record.",
+    "badge": "Booqable archive · {source} · read-only",
+    "notInConsole": "(#{number}, not in the console)",
+    "number": "Number",
+    "paidToPay": "Paid / still to pay",
+    "units": "Units",
+    "line": "Line",
+    "asMade": "The contract as it was made",
+    "iframeTitle": "Booqable contract",
+    "hideRaw": "Hide every field as exported",
+    "showRaw": "Show every field as exported",
+    "archiveFailed": "Could not load the archive.",
+    "recordsFailed": "Could not load the records.",
+    "title": "Booqable archive",
+    "intro": "Everything from the previous system (Booqable), kept as it was made: past and current orders, invoices, payments, contracts with their signatures, and notes. Read-only history — it does not change the console's invoices, payments or accounts.",
+    "showingCustomer": "Showing customer #{number}.",
+    "showEveryone": "Show everyone",
+    "noneImported": "No Booqable records have been imported.",
+    "searchPlaceholder": "Search number, customer or text",
+    "record": "Record",
+    "nothing": "Nothing here.",
+    "pageLine": "Page {page} of {pages} · {total} records",
+    "contract": {
+      "signature": "Signature",
+      "noSignature": "No signature on file.",
+      "date": "Date",
+      "order": "Order #",
+      "from": "From",
+      "until": "Until",
+      "units": "Units",
+      "total": "Total",
+      "deposit": "Security deposit"
+    }
   }
 }
