@@ -10,6 +10,7 @@ import { ConsoleShell } from "@/components/ConsoleShell";
 import { apiFetch, apiFetchBlob, apiUpload, ApiError } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import { canDo } from "@/lib/capabilities";
+import { useT } from "@/lib/i18n";
 
 type InvoiceWithPayments = InvoiceDto & { payments: PaymentDto[] };
 interface CreditNote {
@@ -34,6 +35,7 @@ function formatIDR(amount: string | number): string {
 
 
 export default function InvoiceDetailPage() {
+  const { t, s, intl } = useT();
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const user = authClient.getUser();
@@ -86,7 +88,7 @@ export default function InvoiceDetailPage() {
       setProofFile(null);
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to record payment.");
+      setError(err instanceof ApiError ? err.message : t("invoices.recordFailed"));
     } finally {
       setUploading(false);
     }
@@ -98,7 +100,7 @@ export default function InvoiceDetailPage() {
       const blob = await apiFetchBlob(`/payments/${paymentId}/file`, authClient.getToken());
       window.open(URL.createObjectURL(blob), "_blank");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to load proof of payment.");
+      setError(err instanceof ApiError ? err.message : t("invoices.proofFailed"));
     }
   }
 
@@ -109,7 +111,7 @@ export default function InvoiceDetailPage() {
       await apiFetch(`/payments/${paymentId}/verify`, { token: authClient.getToken(), method: "POST" });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Verification failed.");
+      setError(err instanceof ApiError ? err.message : t("invoices.verifyFailed"));
     } finally {
       setBusy(false);
     }
@@ -129,7 +131,7 @@ export default function InvoiceDetailPage() {
       setCnReason("");
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to issue credit note.");
+      setError(err instanceof ApiError ? err.message : t("invoices.creditFailed"));
     } finally {
       setBusy(false);
     }
@@ -138,7 +140,7 @@ export default function InvoiceDetailPage() {
   if (!invoice || !creditNotes) {
     return (
       <ConsoleShell>
-        <p>Loading...</p>
+        <p>{t("common.loading")}</p>
       </ConsoleShell>
     );
   }
@@ -153,20 +155,20 @@ export default function InvoiceDetailPage() {
     <ConsoleShell>
       <h1 className="text-2xl font-semibold">{invoice.invoiceNumber}</h1>
       <p className="mt-1 text-brand-700/70">
-        Status: {invoice.status} · Due {new Date(invoice.dueDate).toLocaleDateString("id-ID")}
+        {t("invoices.statusDue", { status: s(invoice.status), date: new Date(invoice.dueDate).toLocaleDateString(intl) })}
       </p>
       {invoice.status === "CREDITED" && (
         <p className="mt-2 text-sm text-amber-700">
           {invoice.supersededByInvoiceId ? (
             <>
-              Credited — replaced by{" "}
+              {t("invoices.creditedReplaced")}{" "}
               <Link href={`/invoices/${invoice.supersededByInvoiceId}`} className="underline hover:text-amber-900">
-                a corrected invoice
+                {t("invoices.correctedInvoice")}
               </Link>{" "}
-              for the remaining balance.
+              {t("invoices.forRemaining")}
             </>
           ) : (
-            "Credited in full — no remaining balance, no replacement invoice was needed."
+            t("invoices.creditedFull")
           )}
         </p>
       )}
@@ -174,7 +176,7 @@ export default function InvoiceDetailPage() {
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <div className="rounded-lg border border-brand-600/10 bg-white p-5">
-          <h2 className="font-medium">Lines</h2>
+          <h2 className="font-medium">{t("invoices.lines")}</h2>
           <table className="mt-3 w-full text-sm">
             <tbody>
               {invoice.lines.map((line, i) => (
@@ -184,7 +186,7 @@ export default function InvoiceDetailPage() {
                 </tr>
               ))}
               <tr>
-                <td className="pt-3 font-semibold">Total</td>
+                <td className="pt-3 font-semibold">{t("common.total")}</td>
                 <td className="pt-3 text-right font-semibold">{formatIDR(invoice.totalAmount)}</td>
               </tr>
             </tbody>
@@ -192,26 +194,26 @@ export default function InvoiceDetailPage() {
         </div>
 
         <div className="rounded-lg border border-brand-600/10 bg-white p-5">
-          <h2 className="font-medium">Payments</h2>
-          {invoice.payments.length === 0 && <p className="mt-2 text-sm text-brand-700/60">No payments yet.</p>}
+          <h2 className="font-medium">{t("invoices.payments")}</h2>
+          {invoice.payments.length === 0 && <p className="mt-2 text-sm text-brand-700/60">{t("invoices.noPayments")}</p>}
           <ul className="mt-3 space-y-3">
             {(invoice.payments as PaymentWithMaker[]).map((p) => (
               <li key={p.id} className="rounded border border-brand-600/10 p-3 text-sm">
                 <div className="flex items-center justify-between">
                   <span>
-                    {p.method} · {p.provider} · {formatIDR(p.amount)}
+                    {s(p.method)} · {p.provider} · {formatIDR(p.amount)}
                   </span>
-                  <span className="rounded-full bg-brand-700/10 px-2 py-1 text-xs">{p.status}</span>
+                  <span className="rounded-full bg-brand-700/10 px-2 py-1 text-xs">{s(p.status)}</span>
                 </div>
                 {p.provider === "MANUAL" && (
                   <div className="mt-2 flex items-center gap-2 text-xs text-brand-700/60">
                     <span>
-                      Recorded by {p.recordedByUserId === user?.id ? "you" : p.recordedByUserId?.slice(0, 8)}
-                      {p.verifiedByUserId && ` · Verified by ${p.verifiedByUserId === user?.id ? "you" : p.verifiedByUserId.slice(0, 8)}`}
+                      {t("invoices.recordedBy", { name: p.recordedByUserId === user?.id ? t("invoices.you") : p.recordedByUserId?.slice(0, 8) })}
+                      {p.verifiedByUserId && <> · {t("invoices.verifiedBy", { name: p.verifiedByUserId === user?.id ? t("invoices.you") : p.verifiedByUserId.slice(0, 8) })}</>}
                     </span>
                     {p.proofUrl && (
                       <button onClick={() => viewProof(p.id)} className="underline hover:text-brand-700">
-                        View proof
+                        {t("invoices.viewProof")}
                       </button>
                     )}
                   </div>
@@ -222,13 +224,11 @@ export default function InvoiceDetailPage() {
                     disabled={busy}
                     className="mt-2 rounded bg-brand-700 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
                   >
-                    Verify
+                    {t("invoices.verify")}
                   </button>
                 )}
                 {p.status === "PENDING" && p.provider === "MANUAL" && p.recordedByUserId === user?.id && (
-                  <p className="mt-2 text-xs text-amber-700">
-                    Maker-checker: you recorded this — a different Finance Admin must verify it.
-                  </p>
+                  <p className="mt-2 text-xs text-amber-700">{t("invoices.makerChecker")}</p>
                 )}
               </li>
             ))}
@@ -236,14 +236,14 @@ export default function InvoiceDetailPage() {
 
           {payable && canRecord && (
             <form onSubmit={recordPayment} className="mt-4 space-y-2 border-t border-brand-600/10 pt-4">
-              <h3 className="text-sm font-medium">Record manual payment</h3>
+              <h3 className="text-sm font-medium">{t("invoices.recordTitle")}</h3>
               <select
                 value={method}
                 onChange={(e) => setMethod(e.target.value as "CASH" | "MANUAL_TRANSFER")}
                 className="w-full rounded border border-brand-600/20 px-2 py-1 text-sm"
               >
-                <option value="MANUAL_TRANSFER">Bank transfer</option>
-                <option value="CASH">Cash</option>
+                <option value="MANUAL_TRANSFER">{s("MANUAL_TRANSFER")}</option>
+                <option value="CASH">{s("CASH")}</option>
               </select>
               <input
                 type="file"
@@ -256,7 +256,7 @@ export default function InvoiceDetailPage() {
                 disabled={uploading || !proofFile}
                 className="w-full rounded bg-brand-700 py-1.5 text-sm font-medium text-white disabled:opacity-50"
               >
-                {uploading ? "Uploading..." : "Record payment"}
+                {uploading ? t("invoices.uploading") : t("invoices.record")}
               </button>
             </form>
           )}
@@ -264,12 +264,12 @@ export default function InvoiceDetailPage() {
       </div>
 
       <div className="mt-6 rounded-lg border border-brand-600/10 bg-white p-5">
-        <h2 className="font-medium">Credit notes</h2>
-        {creditNotes.length === 0 && <p className="mt-2 text-sm text-brand-700/60">None issued.</p>}
+        <h2 className="font-medium">{t("invoices.creditNotes")}</h2>
+        {creditNotes.length === 0 && <p className="mt-2 text-sm text-brand-700/60">{t("invoices.noneIssued")}</p>}
         <ul className="mt-2 space-y-2">
           {creditNotes.map((cn) => (
             <li key={cn.id} className="text-sm">
-              {formatIDR(cn.amount)} — {cn.reason} ({new Date(cn.createdAt).toLocaleDateString("id-ID")})
+              {formatIDR(cn.amount)} — {cn.reason} ({new Date(cn.createdAt).toLocaleDateString(intl)})
             </li>
           ))}
         </ul>
@@ -280,18 +280,18 @@ export default function InvoiceDetailPage() {
               required
               value={cnAmount}
               onChange={(e) => setCnAmount(e.target.value)}
-              placeholder="Amount (IDR)"
+              placeholder={t("invoices.amountPlaceholder")}
               className="w-40 rounded border border-brand-600/20 px-2 py-1 text-sm"
             />
             <input
               required
               value={cnReason}
               onChange={(e) => setCnReason(e.target.value)}
-              placeholder="Reason"
+              placeholder={t("common.reason")}
               className="flex-1 rounded border border-brand-600/20 px-2 py-1 text-sm"
             />
             <button disabled={busy} className="rounded bg-brand-700 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50">
-              Issue
+              {t("invoices.issue")}
             </button>
           </form>
         )}
