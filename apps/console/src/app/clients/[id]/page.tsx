@@ -9,9 +9,12 @@ import { ChangeRequestActions, ChangeRequestPanel } from "@/components/ChangeReq
 import { HEALTH_STYLE } from "@/components/ClientList";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { KycPanel } from "@/components/KycPanel";
+import { CustomerLegacyPaymentsBlock, LegacyPaidChip, type CustomerLegacyPayments, type LegacyInvoiceSettlement } from "@/components/LegacyPaid";
 import { SignedScanUpload } from "@/components/SignedScanUpload";
 import { apiFetch, apiFetchBlob, ApiError } from "@/lib/api";
-import { authClient } from "@/lib/auth-client";
+import { authClient, isOrgAdmin } from "@/lib/auth-client";
+import { CustomerMergeDialog } from "@/components/CustomerMergeDialog";
+import { ArrearsChip, type ArrearsInfo } from "@/components/ArrearsBadge";
 import { canDo } from "@/lib/capabilities";
 import { getLocale, tr, useT } from "@/lib/i18n";
 
@@ -54,6 +57,10 @@ interface ClientDetail {
   };
   summary: ClientListItem | null;
   notifications: Array<{ id: string; templateKey: string; channel: string; status: string; recipient: string; createdAt: string }>;
+  legacy?: CustomerLegacyPayments;
+  legacyByInvoice?: Record<string, LegacyInvoiceSettlement>;
+  numberAliases?: Array<{ aliasNumber: number; mergedFromName: string | null; createdAt: string }>;
+  arrears?: ArrearsInfo | null;
 }
 
 function formatIDR(amount: string | number): string {
@@ -264,7 +271,8 @@ export default function ClientDetailPage() {
           <h1 className="text-2xl font-semibold">
             {customer.type === "BUSINESS" && customer.companyName
               ? customer.companyName
-              : (customer.fullName ?? customer.phone ?? customer.email)}
+              : (customer.fullName ?? customer.phone ?? customer.email)}{" "}
+            <ArrearsChip arrears={data.arrears} />
           </h1>
           {customer.type === "BUSINESS" && (
             // Surfaced beside the name because it changes how this client is
@@ -312,6 +320,22 @@ export default function ClientDetailPage() {
           <ChangeRequestPanel customerId={customer.id} reloadKey={changeReload} />
         </div>
       </section>
+
+      {data.numberAliases && data.numberAliases.length > 0 && (
+        <p className="mt-2 text-xs text-brand-700/60">
+          Juga dikenal sebagai: {data.numberAliases.map((a) => `#${a.aliasNumber}${a.mergedFromName ? ` (${a.mergedFromName})` : ""}`).join(", ")}
+        </p>
+      )}
+      {isOrgAdmin(me) && (
+        <div className="mt-4">
+          <CustomerMergeDialog
+            survivorId={customer.id}
+            survivorLabel={`#${customer.customerNumber ?? "-"} ${customer.fullName ?? customer.phone ?? ""}`}
+            onMerged={load}
+          />
+        </div>
+      )}
+      <CustomerLegacyPaymentsBlock legacy={data.legacy} />
 
       <section className="mt-8">
         <h2 className="text-lg font-medium">{t("client.rentals")}</h2>
@@ -362,7 +386,8 @@ export default function ClientDetailPage() {
                           <Link href={`/invoices/${inv.id}`} className="hover:underline">
                             {inv.scheduleIndex === 0 ? t("client.proforma") : inv.scheduleIndex !== null ? `#${inv.scheduleIndex + 1}` : ""}{" "}
                             {inv.invoiceNumber.startsWith("SCHEDULED/") ? t("client.numberedWhenIssued") : t("client.invoiceNo", { number: inv.invoiceNumber })}
-                          </Link>
+                          </Link>{" "}
+                          <LegacyPaidChip settlement={data.legacyByInvoice?.[inv.id]} />
                         </td>
                         <td className="py-1">{fmtDate(inv.dueDate)}</td>
                         <td className="py-1">

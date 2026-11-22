@@ -1,3 +1,5 @@
+import { LEGACY_SETTLED_VOID_REASON_PREFIX } from "../legacy-settlement.js";
+import { customerNumberAliases } from "../customer-merge.js";
 import type { Prisma, PrismaClient } from "../../generated/client/index.js";
 import { raiseCounter, resolveNumbering, counterScope, zonedYearMonth } from "../document-number.js";
 import { createHeldDeposit, depositRefundDueAt, recordDepositEvent } from "../deposits.js";
@@ -65,6 +67,12 @@ export interface Finding {
   key: string;
   level: "error" | "warning";
   message: string;
+  /**
+   * PRD go-live 2 §7.2 — a "possible duplicate — merge?" finding: the RentOS
+   * customer that already has this phone, and the imported one (when it
+   * already exists), so the console can offer the merge.
+   */
+  duplicate?: { rentosCustomerId: string; rentosCustomerNumber: number | null; legacyCustomerNumber: number; legacyCustomerId: string | null; phone: string };
 }
 
 export interface LegacyPlan {
@@ -285,6 +293,7 @@ export async function planLegacyImport(prisma: PrismaClient, tenantId: string, i
 
   const db = await withTenantContext(prisma, tenantId, async (tx) => ({
     customers: await tx.customer.findMany({ select: { id: true, customerNumber: true, phone: true } }),
+    aliases: await customerNumberAliases(tx),
     assets: await tx.asset.findMany({ select: { id: true, code: true, status: true, assetType: { select: { slug: true } } } }),
     bookings: await tx.booking.findMany({
       where: { status: { in: ["ACTIVE", "APPROVED", "PENDING_APPROVAL", "NOTICE_GIVEN", "RENEWING", "SUSPENDED"] } },
@@ -318,11 +327,21 @@ export async function planLegacyImport(prisma: PrismaClient, tenantId: string, i
       if (phones.has(c.phone)) add({ file: "customers", line: c.line, key: String(c.number), level: "error", message: `phone ${c.phone} is also on customer ${phones.get(c.phone)} — one phone per customer` });
       phones.set(c.phone, c.number);
       const owner = db.customers.find((x) => x.phone === c.phone);
-      if (owner && owner.customerNumber !== c.number) {
-        add({ file: "customers", line: c.line, key: String(c.number), level: "error", message: `phone ${c.phone} already belongs to RentOS customer #${owner.customerNumber}` });
+      // The same person registered in RentOS and exists in Booqable (PRD go-live 2 §7.2): not an error —
+      // the legacy customer is imported without the phone and staff merge the two in the console.
+      if (owner && owner.customerNumber !== c.number && db.aliases.get(c.number) !== owner.id) {
+        const legacyCustomer = db.customers.find((x) => x.customerNumber === c.number) ?? null;
+        add({
+          file: "customers",
+          line: c.line,
+          key: String(c.number),
+          level: "warning",
+          message: `possible duplicate — merge? phone ${c.phone} already belongs to RentOS customer #${owner.customerNumber ?? "-"}; imported without the phone until the two are merged`,
+          duplicate: { rentosCustomerId: owner.id, rentosCustomerNumber: owner.customerNumber, legacyCustomerNumber: c.number, legacyCustomerId: legacyCustomer?.id ?? null, phone: c.phone },
+        });
       }
     }
-    const taken = db.customers.find((x) => x.customerNumber === c.number && (x.phone ?? "") !== c.phone);
+    const taken = db.customers.find((x) => x.customerNumber === c.number && (x.phone ?? "") !== c.phone && (x.phone ?? "") !== "");
     if (taken) add({ file: "customers", line: c.line, key: String(c.number), level: "error", message: `customer number ${c.number} is already used by a different RentOS customer (${taken.phone})` });
   }
 
@@ -376,7 +395,7 @@ export async function planLegacyImport(prisma: PrismaClient, tenantId: string, i
     if (inv.paid > 0) f("warning", `partly paid (${inv.paid} of ${inv.amount}) — imported as the outstanding ${inv.amount - inv.paid}`);
   }
 
-  const existingCust = new Set(db.customers.map((c) => c.customerNumber));
+  const existingCust = new Set<number | null>([...db.customers.map((c) => c.customerNumber), ...db.aliases.keys()]);
   const existingBooking = new Set(db.legacyBookings.map((b) => b.legacyBookingNumber));
   const existingInv = new Set(db.invoices.map((i) => i.invoiceNumber));
   const plan: LegacyPlan = {
@@ -487,22 +506,55 @@ export async function applyLegacyImport(prisma: PrismaClient, tenantId: string, 
     await prisma.tenant.update({ where: { id: tenantId }, data: { featureFlags: { ...flags, legacy_automation_hold: true } as Prisma.InputJsonValue } });
   }
 
-  // 1. Customers — keyed by legacy customer number.
+  // 1. Customers — keyed by legacy customer number. A number merged into another
+  // customer (an alias, PRD go-live 2 §7.2) updates that survivor instead.
+  const { aliases, phoneOwners } = await withTenantContext(prisma, tenantId, async (tx) => ({
+    aliases: await customerNumberAliases(tx),
+    phoneOwners: new Map((await tx.customer.findMany({ where: { phone: { not: null } }, select: { id: true, phone: true, customerNumber: true } })).map((c) => [c.phone!, c])),
+  }));
   const customerIds = new Map<number, string>();
   for (const c of parsed.customers) {
+    const aliasOf = aliases.get(c.number) ?? null;
+    const owner = c.phone ? phoneOwners.get(c.phone) : undefined;
+    // "possible duplicate": the phone stays with the RentOS customer until staff merge them.
+    const phoneTaken = !!owner && owner.customerNumber !== c.number && owner.id !== aliasOf;
     const data = {
       type: c.type,
       fullName: c.fullName,
       companyName: c.companyName,
-      phone: c.phone || null,
+      phone: phoneTaken ? null : c.phone || null,
       email: c.email,
       address: c.address,
       taxId: c.npwp,
       nib: c.nib,
       pphWithheld: c.pphWithheld,
       kycStatus: "VERIFIED_LEGACY" as const,
-      notes: [c.notes, c.ktp ? `KTP ${c.ktp}` : null, "Imported from Booqable"].filter(Boolean).join(" · "),
+      notes: [
+        c.notes,
+        c.ktp ? `KTP ${c.ktp}` : null,
+        "Imported from Booqable",
+        phoneTaken ? `Kemungkinan duplikat dari pelanggan #${owner!.customerNumber ?? "-"} (nomor ${c.phone}) — gabungkan di halaman pelanggan` : null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
     };
+    if (aliasOf) {
+      // The survivor keeps its own number, contact details and KYC; only fill what it lacks.
+      const row = await withTenantContext(prisma, tenantId, async (tx) => {
+        const cur = await tx.customer.findUniqueOrThrow({ where: { id: aliasOf } });
+        return tx.customer.update({
+          where: { id: aliasOf },
+          data: {
+            ...(cur.taxId ? {} : { taxId: data.taxId }),
+            ...(cur.nib ? {} : { nib: data.nib }),
+            ...(cur.address ? {} : { address: data.address }),
+            ...(cur.pphWithheld === null ? { pphWithheld: data.pphWithheld } : {}),
+          },
+        });
+      });
+      customerIds.set(c.number, row.id);
+      continue;
+    }
     const row = await withTenantContext(prisma, tenantId, (tx) =>
       tx.customer.upsert({
         where: { tenantId_customerNumber: { tenantId, customerNumber: c.number } },
@@ -518,6 +570,7 @@ export async function applyLegacyImport(prisma: PrismaClient, tenantId: string, 
   for (const r of parsed.rentals) {
     const customerId =
       customerIds.get(r.customerNumber) ??
+      aliases.get(r.customerNumber) ??
       (await withTenantContext(prisma, tenantId, (tx) => tx.customer.findUniqueOrThrow({ where: { tenantId_customerNumber: { tenantId, customerNumber: r.customerNumber } } }))).id;
     const pdfKey = r.pdf && input.readFile && input.storeFile ? await (async () => {
       const buf = await input.readFile!(r.pdf!);
@@ -650,7 +703,7 @@ export async function applyLegacyImport(prisma: PrismaClient, tenantId: string, 
       for (const inv of await findSettledInvoices(tx, parsed.invoices.map((i) => i.number))) {
         await tx.invoice.update({
           where: { id: inv.id },
-          data: { status: "VOID", voidedAt: new Date(), voidReason: "Settled in Booqable after the import — see the legacy records" },
+          data: { status: "VOID", voidedAt: new Date(), voidReason: `${LEGACY_SETTLED_VOID_REASON_PREFIX} after the import — see the legacy records` },
         });
         await ledgerSet(tx, tenantId, inv.id, "AR", 0, `Opening balance: Booqable invoice #${inv.invoiceNumber}`);
       }

@@ -6,7 +6,9 @@ import Link from "next/link";
 import type { BookingDto, ContractDto, InvoiceDto, PipelineBookingDto } from "@rentos/contracts";
 
 import { ChangeRequestActions, ChangeRequestPanel } from "@/components/ChangeRequests";
+import { ArrearsBadgeFor } from "@/components/ArrearsBadge";
 import { ConsoleShell } from "@/components/ConsoleShell";
+import { OvertimeCharge } from "@/components/OvertimeCharge";
 import { KycPanel } from "@/components/KycPanel";
 import { SignedScanUpload } from "@/components/SignedScanUpload";
 import { apiFetch, apiFetchBlob, ApiError } from "@/lib/api";
@@ -202,7 +204,8 @@ export default function BookingDetailPage() {
       <h1 className="mt-1 text-2xl font-semibold">
         <Link href={`/clients/${booking.customer.id}`} className="hover:underline">
           {booking.customer.fullName ?? booking.customer.phone ?? booking.customer.email}
-        </Link>
+        </Link>{" "}
+        <ArrearsBadgeFor customerId={booking.customer.id} />
       </h1>
       <p className="mt-1 text-sm text-brand-700/60">
         {booking.assetType.name} — {booking.asset ? t("booking.unit", { code: booking.asset.code }) : t("booking.noUnit")}
@@ -469,6 +472,10 @@ export default function BookingDetailPage() {
             </div>
           )}
         </div>
+      )}
+
+      {["ACTIVE", "RENEWING", "SUSPENDED", "NOTICE_GIVEN"].includes(booking.status) && canDo(authClient.getUser(), "create_booking") && (
+        <OvertimeCharge bookingId={booking.id} onCharged={() => void load()} />
       )}
 
       {booking.status === "APPROVED" && !["VERIFIED", "VERIFIED_LEGACY"].includes(booking.customer.kycStatus) && (

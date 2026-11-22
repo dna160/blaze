@@ -40,6 +40,20 @@ export const NumberingSchema = z.object({
   seqReset: z.enum(["never", "yearly", "monthly"]).optional(),
 });
 
+/**
+ * PRD go-live 2 §10.3 — the T&C money rules, per branch, each OFF by default.
+ * Stored in Tenant.featureFlags.moneyRules; packages/domain resolveMoneyRules
+ * applies the defaults and bounds.
+ */
+export const MoneyRulesSchema = z.object({
+  lateFee: z.object({ enabled: z.boolean(), ratePerDay: z.number().min(0).max(0.1), maxDays: z.number().int().min(1).max(90) }),
+  overstay: z.object({ enabled: z.boolean(), ratePerDay: z.number().min(0).max(0.1), maxDays: z.number().int().min(1).max(180) }),
+  overtime: z.object({ enabled: z.boolean(), hourlyRate: z.number().int().min(0).max(10_000_000) }),
+  depositRefundTask: z.object({ enabled: z.boolean(), days: z.number().int().min(0).max(365) }),
+  arrearsBadge: z.object({ enabled: z.boolean(), thresholdDays: z.number().int().min(0).max(365) }),
+});
+export type MoneyRules = z.infer<typeof MoneyRulesSchema>;
+
 /** Public: what the storefront and portal may show anyone. */
 export const BranchPublicProfileSchema = z.object({
   name: z.string(),
@@ -86,6 +100,8 @@ export const BranchSettingsSchema = BranchPublicProfileSchema.extend({
    * wiped before go-live. Drives the console banner; changes no behaviour.
    */
   testMode: z.boolean(),
+  /** PRD go-live 2 §10.3 — the T&C money rules as resolved (defaults filled in, all OFF unless enabled). */
+  moneyRules: MoneyRulesSchema,
   /** Whether this deployment has a real gateway at all (PAYMENT_PROVIDER=xendit in production). */
   gatewayReady: z.boolean(),
   /** A sample of the next numbers, so a format change can be checked before saving. */
@@ -116,6 +132,7 @@ export const UpdateBranchSettingsRequestSchema = z.object({
   numbering: NumberingSchema.optional(),
   onlinePaymentsEnabled: z.boolean().optional(),
   apiAccessEnabled: z.boolean().optional(),
+  moneyRules: MoneyRulesSchema.optional(),
   legacyAutomationHold: z.boolean().optional(),
   testMode: z.boolean().optional(),
 });

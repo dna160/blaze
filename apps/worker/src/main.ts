@@ -7,7 +7,7 @@ async function main() {
   await scheduleRepeatableJobs(connection);
   const workers = startWorkers(connection);
   console.log(
-    "RentOS worker started — invoice-generation, scheduled-invoice-issue, term-lifecycle, dunning-ladder, ledger-balance-check, tenant-webhook-delivery, ota-calendar-sync, offline-sign-deadline and platform-billing queues active.",
+    "RentOS worker started — invoice-generation, scheduled-invoice-issue, term-lifecycle, dunning-ladder, ledger-balance-check, tenant-webhook-delivery, ota-calendar-sync, offline-sign-deadline, money-rules and platform-billing queues active.",
   );
 
   // Railway healthcheck target — the worker has no HTTP API, but Railway's

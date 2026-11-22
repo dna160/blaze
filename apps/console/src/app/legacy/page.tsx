@@ -215,7 +215,8 @@ function LegacyArchive() {
   const [page, setPage] = useState(1);
   const [list, setList] = useState<{ total: number; items: LegacyRecordListItem[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [openId, setOpenId] = useState<string | null>(null);
+  // ?record=<id> opens one record directly (PRD go-live 2 §7.3: the "Dibayar di Booqable" chip links here).
+  const [openId, setOpenId] = useState<string | null>(params.get("record"));
 
   useEffect(() => {
     const token = authClient.getToken();

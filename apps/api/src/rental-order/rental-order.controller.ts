@@ -1,10 +1,11 @@
-import { BadRequestException, Body, Controller, ForbiddenException, Get, Param, Post, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, ForbiddenException, Get, NotFoundException, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 
 import { CurrentTenant } from "../common/decorators/current-tenant.decorator.js";
 import { CurrentUser } from "../common/decorators/current-user.decorator.js";
 import { CapabilityGuard } from "../common/guards/capability.guard.js";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard.js";
+import { StaffGuard } from "../common/guards/staff.guard.js";
 import { RequireCapability } from "../common/decorators/require-capability.decorator.js";
 import type { AuthenticatedUser } from "../common/types/express-request.js";
 import type { ResolvedTenant } from "../tenancy/tenancy.service.js";
@@ -41,10 +42,27 @@ export class RentalOrderController {
     return this.orders.listPending(tenant);
   }
 
+  /** PRD go-live 2 §10.2 — the console's rental-orders list. `?status=ACTIVE&search=…` (unit, customer name/phone/number). */
+  @Get()
+  @UseGuards(JwtAuthGuard, StaffGuard)
+  list(@CurrentTenant() tenant: ResolvedTenant, @Query("status") status?: string, @Query("search") search?: string) {
+    return this.orders.listForConsole(tenant, { status, search });
+  }
+
+  /** PRD go-live 2 §10.2 — one order with its customer, unit, invoices, contracts, events and renewal chain. */
+  @Get(":id/detail")
+  @UseGuards(JwtAuthGuard, StaffGuard)
+  detail(@CurrentTenant() tenant: ResolvedTenant, @Param("id") id: string) {
+    return this.orders.detailForConsole(tenant, id);
+  }
+
+  /** Staff read any order of the branch; a customer only their own (it carries invoices and contracts). */
   @Get(":id")
   @UseGuards(JwtAuthGuard)
-  get(@CurrentTenant() tenant: ResolvedTenant, @Param("id") id: string) {
-    return this.orders.get(tenant, id);
+  async get(@CurrentTenant() tenant: ResolvedTenant, @CurrentUser() user: AuthenticatedUser, @Param("id") id: string) {
+    const order = await this.orders.get(tenant, id);
+    if (user.kind === "CUSTOMER" && order.customerId !== user.id) throw new NotFoundException("Rental order not found.");
+    return order;
   }
 
   /** Staff approve + assign the specific unit, issuing contract + invoice. */

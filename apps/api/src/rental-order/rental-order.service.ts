@@ -62,6 +62,64 @@ export class RentalOrderService {
     );
   }
 
+  async listForConsole(tenant: ResolvedTenant, q: { status?: string; search?: string }) {
+    const statuses = ["PENDING_APPROVAL", "APPROVED", "AWAITING_PAYMENT", "ACTIVE", "RENEWAL_OFFERED", "RENEWAL_CONFIRMED", "RENEWAL_DECLINED", "EXPIRING", "COMPLETED", "DEFAULTED", "CANCELLED"];
+    if (q.status && !statuses.includes(q.status)) throw new BadRequestException(`Unknown status ${q.status}.`);
+    const needle = q.search?.trim();
+    const numberNeedle = needle && /^#?\d+$/.test(needle) ? Number(needle.replace("#", "")) : null;
+    return this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const rows = await tx.rentalOrder.findMany({
+        where: {
+          ...(q.status ? { status: q.status as never } : {}),
+          ...(needle
+            ? {
+                OR: [
+                  { asset: { code: { contains: needle, mode: "insensitive" } } },
+                  { customer: { fullName: { contains: needle, mode: "insensitive" } } },
+                  { customer: { companyName: { contains: needle, mode: "insensitive" } } },
+                  { customer: { phone: { contains: needle } } },
+                  ...(numberNeedle !== null ? [{ customer: { customerNumber: numberNeedle } }] : []),
+                ],
+              }
+            : {}),
+        },
+        orderBy: [{ periodStart: "desc" }],
+        take: 300,
+        include: {
+          customer: { select: { id: true, customerNumber: true, fullName: true, companyName: true, phone: true } },
+          asset: { select: { id: true, code: true } },
+          assetType: { select: { id: true, name: true } },
+          invoices: { select: { id: true, invoiceNumber: true, status: true, totalAmount: true, dueDate: true }, orderBy: { issueDate: "desc" }, take: 1 },
+        },
+      });
+      const counts = await tx.rentalOrder.groupBy({ by: ["status"], _count: { _all: true } });
+      return {
+        items: rows.map(({ invoices, ...o }) => ({ ...o, latestInvoice: invoices[0] ?? null })),
+        counts: Object.fromEntries(counts.map((c) => [c.status, c._count._all])),
+      };
+    });
+  }
+
+  async detailForConsole(tenant: ResolvedTenant, id: string) {
+    return this.prisma.runInTenantContext(tenant.id, async (tx) => {
+      const order = await tx.rentalOrder.findUnique({
+        where: { id },
+        include: {
+          customer: { select: { id: true, customerNumber: true, fullName: true, companyName: true, phone: true, email: true, kycStatus: true } },
+          asset: { select: { id: true, code: true, status: true } },
+          assetType: { select: { id: true, name: true } },
+          invoices: { orderBy: { issueDate: "asc" }, include: { payments: { select: { id: true, status: true, amount: true, method: true, paidAt: true } } } },
+          contracts: { orderBy: { createdAt: "desc" }, select: { id: true, contractNumber: true, signedAt: true, confirmedAt: true, createdAt: true } },
+          events: { orderBy: { createdAt: "asc" } },
+          previousOrder: { select: { id: true, periodStart: true, periodEnd: true, status: true } },
+          renewalOf: { select: { id: true, periodStart: true, periodEnd: true, status: true } },
+        },
+      });
+      if (!order) throw new NotFoundException("Rental order not found.");
+      return order;
+    });
+  }
+
   listPending(tenant: ResolvedTenant) {
     return this.prisma.runInTenantContext(tenant.id, (tx) =>
       tx.rentalOrder.findMany({ where: { status: "PENDING_APPROVAL" }, orderBy: { createdAt: "asc" } }),

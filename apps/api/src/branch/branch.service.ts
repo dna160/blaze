@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { resolveMoneyRules } from "@rentos/domain";
 import type { BankAccount, BranchPublicProfile, BranchSettings, ConsoleBranding, LegacyMigrationRequest, UpdateBranchSettingsRequest } from "@rentos/contracts";
 import { consoleNameOf, DEFAULT_CONSOLE_NAME } from "@rentos/contracts";
 import {
@@ -139,6 +140,7 @@ export class BranchService {
       apiAccessEnabled: flags.api_access_enabled === true,
       legacyAutomationHold: flags.legacy_automation_hold === true,
       testMode: flags.test_mode === true,
+      moneyRules: resolveMoneyRules(flags),
       gatewayReady: gatewayReady(),
       numberPreview: {
         contract: formatDocumentNumber(numbering.contract, sample),
@@ -198,7 +200,7 @@ export class BranchService {
     if (body.facilities !== undefined) data.facilities = body.facilities as Prisma.InputJsonValue;
     if (body.bankAccounts !== undefined) data.bankAccounts = body.bankAccounts as Prisma.InputJsonValue;
     if (body.numbering !== undefined) data.numbering = body.numbering as Prisma.InputJsonValue;
-    if (body.onlinePaymentsEnabled !== undefined || body.apiAccessEnabled !== undefined || body.legacyAutomationHold !== undefined || body.testMode !== undefined) {
+    if (body.onlinePaymentsEnabled !== undefined || body.apiAccessEnabled !== undefined || body.legacyAutomationHold !== undefined || body.testMode !== undefined || body.moneyRules !== undefined) {
       data.featureFlags = {
         ...((before.featureFlags ?? {}) as Record<string, unknown>),
         ...(body.onlinePaymentsEnabled !== undefined ? { onlinePaymentsEnabled: body.onlinePaymentsEnabled } : {}),
@@ -208,6 +210,8 @@ export class BranchService {
         ...(body.legacyAutomationHold !== undefined ? { legacy_automation_hold: body.legacyAutomationHold } : {}),
         // PRD go-live 2 §7.1 — the test-period banner ("data will be wiped before go-live").
         ...(body.testMode !== undefined ? { test_mode: body.testMode } : {}),
+        // PRD go-live 2 §10.3 — the T&C money rules (each off unless enabled).
+        ...(body.moneyRules !== undefined ? { moneyRules: body.moneyRules } : {}),
       } as Prisma.InputJsonValue;
     }
 
@@ -241,6 +245,7 @@ export class BranchService {
       apiAccessEnabled: ((before.featureFlags ?? {}) as Record<string, unknown>).api_access_enabled ?? false,
       legacyAutomationHold: ((before.featureFlags ?? {}) as Record<string, unknown>).legacy_automation_hold ?? false,
       testMode: ((before.featureFlags ?? {}) as Record<string, unknown>).test_mode ?? false,
+      moneyRules: resolveMoneyRules(before.featureFlags),
     };
     const changes: Record<string, { from: unknown; to: unknown }> = {};
     for (const [key, to] of Object.entries(body)) {

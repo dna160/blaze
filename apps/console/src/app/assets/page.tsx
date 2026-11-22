@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { unitSizeLabel } from "@rentos/contracts";
 
+import { ArrearsChip, type ArrearsInfo } from "@/components/ArrearsBadge";
 import { ConsoleShell } from "@/components/ConsoleShell";
 import { CsvImportPanel } from "@/components/CsvImportPanel";
 import { apiFetch } from "@/lib/api";
@@ -26,6 +27,7 @@ interface UnitMapAsset {
   bookings: Array<{
     startDate: string;
     customer: { fullName: string | null; phone: string };
+    arrears?: ArrearsInfo | null;
     invoices: Array<{ periodEnd: string | null }>;
     /** PRD go-live §10 — set on rentals imported from Booqable, which have no paid RentOS invoice yet. */
     paidThrough?: string | null;
@@ -229,7 +231,7 @@ export default function AssetsPage() {
                       </span>
                     </td>
                     <td className="p-3 text-brand-700/70">
-                      {booking ? (booking.customer.fullName ?? booking.customer.phone) : "—"}
+                      {booking ? (booking.customer.fullName ?? booking.customer.phone) : "—"} {booking && <ArrearsChip arrears={booking.arrears} />}
                     </td>
                   </tr>
                 );
@@ -295,7 +297,9 @@ export default function AssetsPage() {
                 <dl className="mt-3 grid grid-cols-3 gap-4 text-sm">
                   <div>
                     <dt className="text-brand-700/50">Occupant</dt>
-                    <dd>{selected.bookings[0].customer.fullName ?? selected.bookings[0].customer.phone}</dd>
+                    <dd>
+                      {selected.bookings[0].customer.fullName ?? selected.bookings[0].customer.phone} <ArrearsChip arrears={selected.bookings[0].arrears} />
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-brand-700/50">Since</dt>

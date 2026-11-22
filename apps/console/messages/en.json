@@ -224,7 +224,9 @@
       "branchProfile": "Branch profile",
       "users": "Users & roles",
       "messagingSettings": "Messaging",
-      "suppressed": "Held-back messages"
+      "suppressed": "Held-back messages",
+      "rentalOrders": "Rental orders",
+      "buktiPotong": "Withholding slips"
     },
     "badgeGroup": "{count} waiting in {group}",
     "badgeUnread": "{count} unread messages",

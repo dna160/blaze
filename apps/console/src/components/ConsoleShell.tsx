@@ -32,6 +32,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/bookings", label: "items.bookings" },
       { href: "/change-requests", label: "items.changeRequests" },
+      { href: "/rental-orders", label: "items.rentalOrders" },
       { href: "/swap-requests", label: "items.swapRequests" },
       { href: "/messaging", label: "items.messaging" },
     ],
@@ -59,6 +60,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/invoices", label: "items.invoices" },
       { href: "/deposits", label: "items.deposits" },
+      { href: "/bukti-potong", label: "items.buktiPotong", capability: "record_payment" },
       // PRD go-live 2 §6.2 — reports are Finance's and Admin's; a supervisor does not see them.
       { href: "/reports", label: "items.reports", capability: "run_reports" },
     ],

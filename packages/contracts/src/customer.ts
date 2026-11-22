@@ -54,6 +54,13 @@ export const ClientListQuerySchema = z.object({
 });
 export type ClientListQuery = z.infer<typeof ClientListQuerySchema>;
 
+/** PRD go-live 2 §7.2 — POST /customers/:survivorId/merge. Dry run unless apply. */
+export const MergeCustomersRequestSchema = z.object({
+  duplicateId: z.string().uuid(),
+  apply: z.boolean().optional(),
+});
+export type MergeCustomersRequest = z.infer<typeof MergeCustomersRequestSchema>;
+
 export const ClientListItemSchema = z.object({
   id: z.string().uuid(),
   /** City Storage's own customer number (the {CUST} of contract and invoice numbers). */

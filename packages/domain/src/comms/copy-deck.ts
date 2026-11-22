@@ -24,6 +24,8 @@ export const MESSAGE_SAMPLE_VALUES: Readonly<Record<string, string>> = {
   consoleName: "City Storage",
   documents: "Selfie",
   documentsEn: "Selfie",
+  // deposit_refund_task (staff): the deposits past their refund date.
+  list: "D-12 #36 Budi Santoso Rp 2.100.000; B-03 #41 Sari Wijaya Rp 1.100.000",
   displayName: "Risa",
   branchName: "City Storage Kebon Jeruk",
   assetTypeName: "Medium Storage",
@@ -99,7 +101,7 @@ export interface CopyDeckEntry {
 }
 
 /** Sent to staff, not to customers — the wording rules for customer copy do not apply to these. */
-export const STAFF_FACING_TEMPLATES: ReadonlySet<string> = new Set(["connection_test", "staff_set_password"]);
+export const STAFF_FACING_TEMPLATES: ReadonlySet<string> = new Set(["connection_test", "staff_set_password", "deposit_refund_task"]);
 
 export function isStaffFacing(templateKey: string): boolean {
   return STAFF_FACING_TEMPLATES.has(templateKey) || templateKey.endsWith("_admin");
