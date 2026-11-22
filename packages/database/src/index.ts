@@ -58,6 +58,7 @@ export { findOrCreateCustomerAccessToken, exchangeCustomerAccessToken, hashAcces
 export {
   recordInvoiceIssuedEntries,
   recordPaymentReceivedEntries,
+  recordSettlementEntries,
   recordDepositHeldEntries,
   recordDepositRefundedEntries,
   recordDepositAppliedEntries,

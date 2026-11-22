@@ -219,3 +219,13 @@ export {
   FEE_LINE_TYPES,
   type MoneyRulesConfig,
 } from "./finance/money-rules.js";
+export {
+  expectedPphWithholding,
+  applySettlement,
+  settlementLedger,
+  SettlementError,
+  DEFAULT_PPH_RATES,
+  SETTLEMENT_TOLERANCE,
+  type PphType,
+  type SettlementOutcome,
+} from "./finance/pph-settlement.js";

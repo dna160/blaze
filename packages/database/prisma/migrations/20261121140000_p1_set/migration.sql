@@ -27,3 +27,11 @@ CREATE POLICY org_read ON "customer_number_aliases" FOR SELECT
 
 -- §10.3 deposit refund task: raised once when refund_due_at passes while the deposit is held.
 ALTER TABLE "deposits" ADD COLUMN "refund_task_raised_at" TIMESTAMP(3);
+
+-- §10.1 PPh net settlement: the withheld part of a payment, its bukti potong, and how much of an invoice is settled.
+ALTER TABLE "payments" ADD COLUMN "pph_withheld_amount" DECIMAL(14,2) NOT NULL DEFAULT 0;
+ALTER TABLE "payments" ADD COLUMN "bukti_potong_key" TEXT;
+ALTER TABLE "payments" ADD COLUMN "bukti_potong_at" TIMESTAMP(3);
+ALTER TABLE "invoices" ADD COLUMN "settled_amount" DECIMAL(14,2) NOT NULL DEFAULT 0;
+-- A PAID invoice was settled in full; a partly refunded / credited one too (its refund is separate).
+UPDATE "invoices" SET "settled_amount" = "total_amount" WHERE "status" IN ('PAID', 'PARTIALLY_REFUNDED', 'REFUNDED');

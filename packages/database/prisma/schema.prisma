@@ -1081,6 +1081,9 @@ model Invoice {
   subtotal              Decimal       @db.Decimal(14, 2)
   taxAmount             Decimal       @default(0) @map("tax_amount") @db.Decimal(14, 2)
   totalAmount           Decimal       @map("total_amount") @db.Decimal(14, 2)
+  /// PRD go-live 2 §10.1 — transfer + withheld PPh settled by verified payments so far.
+  /// PAID when it reaches totalAmount (within Rp 1); below that the invoice stays open with the balance shown.
+  settledAmount         Decimal       @default(0) @map("settled_amount") @db.Decimal(14, 2)
   issueDate             DateTime      @map("issue_date")
   dueDate               DateTime      @map("due_date")
   paidAt                DateTime?     @map("paid_at")
@@ -1226,6 +1229,12 @@ model Payment {
   recordedByUserId  String?       @map("recorded_by_user_id") @db.Uuid
   verifiedByUserId  String?       @map("verified_by_user_id") @db.Uuid
   proofUrl          String?       @map("proof_url")
+  /// PRD go-live 2 §10.1 — PPh the customer withheld on this payment (transfer = amount;
+  /// amount + pphWithheldAmount is what it settles). 0 for everyone else.
+  pphWithheldAmount Decimal       @default(0) @map("pph_withheld_amount") @db.Decimal(14, 2)
+  /// The bukti potong (withholding slip) file; may arrive after the payment.
+  buktiPotongKey    String?       @map("bukti_potong_key")
+  buktiPotongAt     DateTime?     @map("bukti_potong_at")
   rawWebhookPayload Json?         @map("raw_webhook_payload")
   createdAt         DateTime      @default(now()) @map("created_at")
   updatedAt         DateTime      @updatedAt @map("updated_at")

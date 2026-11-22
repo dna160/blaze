@@ -61,6 +61,26 @@ export async function recordPaymentReceivedEntries(
   await recordEntry(tx, tenantId, "ACCOUNTS_RECEIVABLE", "CREDIT", revenuePortion, "PAYMENT", paymentId, `Payment received for invoice ${invoiceId}`);
 }
 
+/**
+ * PRD go-live 2 §10.1 — one verified payment, possibly net of withheld PPh and
+ * possibly short: Dr CASH (transfer, minus the deposit share on the closing
+ * payment), Dr PREPAID_TAX_PPH (withheld), Cr ACCOUNTS_RECEIVABLE. Amounts come
+ * from packages/domain settlementLedger. A full single payment without PPh
+ * posts exactly what recordPaymentReceivedEntries posts.
+ */
+export async function recordSettlementEntries(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  paymentId: string,
+  invoiceNumber: string,
+  amounts: { cash: number; prepaidPph: number; arCredit: number },
+) {
+  const d = `Payment received for invoice ${invoiceNumber}`;
+  await recordEntry(tx, tenantId, "CASH", "DEBIT", amounts.cash.toFixed(2), "PAYMENT", paymentId, d);
+  await recordEntry(tx, tenantId, "PREPAID_TAX_PPH", "DEBIT", amounts.prepaidPph.toFixed(2), "PAYMENT", paymentId, `${d} — PPh withheld by the customer`);
+  await recordEntry(tx, tenantId, "ACCOUNTS_RECEIVABLE", "CREDIT", amounts.arCredit.toFixed(2), "PAYMENT", paymentId, d);
+}
+
 /** Called when a paid invoice includes a deposit line — the deposit never touched AR, it becomes a liability the moment cash lands. */
 export async function recordDepositHeldEntries(
   tx: Prisma.TransactionClient,

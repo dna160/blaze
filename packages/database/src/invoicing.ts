@@ -437,7 +437,8 @@ export async function generateRentalOrderInvoice(
 export async function markInvoicePaid(tx: Prisma.TransactionClient, invoiceId: string) {
   const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
   const { to: status } = await invoiceFsm.fire(invoice.status as never, "PAYMENT_RECEIVED", undefined);
-  return tx.invoice.update({ where: { id: invoiceId }, data: { status, paidAt: new Date() } });
+  // PRD go-live 2 §10.1 — settled in full (transfer + any withheld PPh).
+  return tx.invoice.update({ where: { id: invoiceId }, data: { status, paidAt: new Date(), settledAmount: invoice.totalAmount } });
 }
 
 export async function markInvoiceOverdue(tx: Prisma.TransactionClient, invoiceId: string) {
