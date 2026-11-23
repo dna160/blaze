@@ -161,12 +161,16 @@ export class AuthService {
   }
 
   /** PRD go-live 2 §9.1 — the console language this staff member reads (`id` default, `en`). */
-  async updateStaffPreferences(actor: AuthenticatedUser, prefs: { locale: "id" | "en" }) {
+  async updateStaffPreferences(actor: AuthenticatedUser, prefs: { locale?: "id" | "en"; displayName?: string }) {
     const where = { id: actor.id };
+    const data = {
+      ...(prefs.locale !== undefined ? { locale: prefs.locale } : {}),
+      ...(prefs.displayName !== undefined ? { displayName: prefs.displayName } : {}),
+    };
     if (actor.tenantId) {
-      await this.prisma.runInTenantContext(actor.tenantId, (tx) => tx.user.update({ where, data: { locale: prefs.locale } }));
+      await this.prisma.runInTenantContext(actor.tenantId, (tx) => tx.user.update({ where, data }));
     } else {
-      await this.prisma.runInPlatformContext((tx) => tx.user.update({ where, data: { locale: prefs.locale } }));
+      await this.prisma.runInPlatformContext((tx) => tx.user.update({ where, data }));
     }
     return this.staffMe(actor);
   }

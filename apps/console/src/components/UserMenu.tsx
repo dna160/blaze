@@ -4,18 +4,23 @@ import { staffRoleLabel } from "@rentos/contracts";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
-import { CHANGE_PASSWORD_PATH } from "@/lib/api";
 import type { StaffSessionUser } from "@/lib/auth-client";
-import { LOCALES, useT } from "@/lib/i18n";
-import { chooseLocale } from "@/lib/locale-preference";
+import { useT } from "@/lib/i18n";
+import { initials } from "@/lib/initials";
+
+/** Fired after the signed-in user's own details change (e.g. their name), so the shell re-reads the session. */
+export const SESSION_CHANGED_EVENT = "rentos:session-changed";
+
+/** Where the user settings page lives (name, language, password). */
+export const USER_SETTINGS_PATH = "/account";
 
 /**
- * The top bar's user menu (PRD go-live 2 §6.1): who is signed in and as what,
- * Change password, Log out. A button + popover, closed by Escape, an outside
- * click or choosing an item.
+ * The top bar's user menu: a round badge with the person's initials; it opens
+ * who is signed in and as what, "User settings" and "Log out". Closed by
+ * Escape, an outside click or choosing an item.
  */
 export function UserMenu({ user, onLogout }: { user: StaffSessionUser | null; onLogout: () => void }) {
-  const { t, locale } = useT();
+  const { t } = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -37,6 +42,7 @@ export function UserMenu({ user, onLogout }: { user: StaffSessionUser | null; on
 
   const roles = (user?.roleAssignments ?? []).map((r) => staffRoleLabel(r.role, r.scope));
   const roleLine = roles.length ? [...new Set(roles)].join(", ") : (user?.roles ?? []).join(", ");
+  const name = user?.displayName ?? user?.email ?? "";
 
   return (
     <div ref={ref} className="relative">
@@ -45,42 +51,28 @@ export function UserMenu({ user, onLogout }: { user: StaffSessionUser | null; on
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex items-center gap-1.5 rounded px-2 py-1 text-sm text-brand-700/70 hover:bg-brand-700/5"
+        aria-label={t("nav.menu.account")}
+        title={name}
+        data-testid="user-badge"
+        className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-700 text-sm font-semibold tracking-wide text-white ring-offset-2 hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-700"
       >
-        {t("nav.menu.account")}
-        <svg aria-hidden viewBox="0 0 20 20" className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`}>
-          <path d="M5 7.5l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+        {user ? initials(user.displayName, user.email) : ""}
       </button>
       {open && (
-        <div role="menu" className="absolute right-0 z-20 mt-1 w-64 rounded-lg border border-brand-600/10 bg-white py-1 shadow-lg">
-          <div className="border-b border-brand-600/10 px-4 py-3">
-            <p className="truncate text-sm font-medium">{user?.displayName ?? user?.email ?? "—"}</p>
-            {user?.displayName && <p className="truncate text-xs text-brand-700/60">{user.email}</p>}
-            {roleLine && <p className="mt-1 text-xs text-brand-700/60">{roleLine}</p>}
-          </div>
-          <Link href={CHANGE_PASSWORD_PATH} role="menuitem" onClick={() => setOpen(false)} className="block px-4 py-2 text-sm hover:bg-brand-700/5">
-            {t("nav.menu.changePassword")}
-          </Link>
-          {/* PRD go-live 2 §9.1 — saved on the account, so every browser follows. */}
-          <div className="border-y border-brand-600/10 px-4 py-2" role="group" aria-label={t("nav.menu.language")}>
-            <p className="mb-1 text-xs text-brand-700/60">{t("nav.menu.language")}</p>
-            <div className="flex gap-1">
-              {LOCALES.map((l) => (
-                <button
-                  key={l}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={locale === l}
-                  data-testid={`locale-${l}`}
-                  onClick={() => void chooseLocale(l)}
-                  className={`rounded px-2 py-1 text-xs ${locale === l ? "bg-brand-700 text-white" : "border border-brand-600/15 hover:bg-brand-700/5"}`}
-                >
-                  {l === "id" ? t("common.languageId") : t("common.languageEn")}
-                </button>
-              ))}
+        <div role="menu" className="absolute right-0 z-20 mt-2 w-64 rounded-lg border border-brand-600/10 bg-white py-1 shadow-lg">
+          <div className="flex items-center gap-3 border-b border-brand-600/10 px-4 py-3">
+            <span aria-hidden className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-700 text-sm font-semibold text-white">
+              {user ? initials(user.displayName, user.email) : ""}
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">{name || "—"}</p>
+              {user?.displayName && <p className="truncate text-xs text-brand-700/60">{user.email}</p>}
+              {roleLine && <p className="mt-0.5 truncate text-xs text-brand-700/60">{roleLine}</p>}
             </div>
           </div>
+          <Link href={USER_SETTINGS_PATH} role="menuitem" onClick={() => setOpen(false)} className="block px-4 py-2 text-sm hover:bg-brand-700/5">
+            {t("nav.menu.userSettings")}
+          </Link>
           <button
             type="button"
             role="menuitem"

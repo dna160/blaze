@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { BrandMark } from "@/components/BrandMark";
-import { UserMenu } from "@/components/UserMenu";
+import { SESSION_CHANGED_EVENT, UserMenu } from "@/components/UserMenu";
 import { useT } from "@/lib/i18n";
 import { CHANGE_PASSWORD_PATH } from "@/lib/api";
 import { authClient, isAdmin } from "@/lib/auth-client";
@@ -111,6 +111,12 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
   // see: read it after mount so the first client render matches the server's.
   const [user, setUser] = useState<ReturnType<typeof authClient.getUser>>(null);
   useEffect(() => setUser(authClient.getUser()), [pathname]);
+  // User settings changed the name: the badge follows without a navigation.
+  useEffect(() => {
+    const onChange = () => setUser(authClient.getUser());
+    window.addEventListener(SESSION_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(SESSION_CHANGED_EVENT, onChange);
+  }, []);
   // PRD go-live 2 §6.1 — an account that must change its password sees nothing
   // of the console until it has (the API refuses every other call regardless).
   useEffect(() => {

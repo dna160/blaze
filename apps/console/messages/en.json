@@ -239,7 +239,8 @@
       "account": "Account",
       "changePassword": "Change password",
       "logout": "Log out",
-      "language": "Language"
+      "language": "Language",
+      "userSettings": "User settings"
     },
     "banners": {
       "testMode": "Test mode — data will be wiped before go-live",
@@ -1567,5 +1568,20 @@
     "since": "Since",
     "paidThrough": "Paid through",
     "noTenant": "No active tenant."
+  },
+  "account": {
+    "title": "User settings",
+    "intro": "Your own account: name, console language and password.",
+    "profile": "Profile",
+    "email": "Email",
+    "role": "Role",
+    "displayName": "Display name",
+    "saveName": "Save name",
+    "saving": "Saving…",
+    "saved": "Name saved.",
+    "saveFailed": "The name could not be saved. Try again.",
+    "nameHint": "Other staff see this name, and it gives the initials in the top-right corner. Email and role are changed by an admin.",
+    "languageHint": "Saved on your account, so it applies in every browser.",
+    "passwordHint": "After a change, your sessions on other devices are signed out."
   }
 }

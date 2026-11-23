@@ -140,7 +140,13 @@ export type ChangeStaffPasswordRequest = z.infer<typeof ChangeStaffPasswordReque
 /** PRD go-live 2 §9.1 — a staff member's console preferences. */
 export const ConsoleLocaleSchema = z.enum(["id", "en"]);
 export type ConsoleLocale = z.infer<typeof ConsoleLocaleSchema>;
-export const UpdateStaffPreferencesRequestSchema = z.object({ locale: ConsoleLocaleSchema });
+/** My own account settings (user settings page): language and the name staff see. */
+export const UpdateStaffPreferencesRequestSchema = z
+  .object({
+    locale: ConsoleLocaleSchema.optional(),
+    displayName: z.string().trim().min(2, "Nama minimal 2 karakter.").max(80).optional(),
+  })
+  .refine((v) => v.locale !== undefined || v.displayName !== undefined, { message: "Nothing to update." });
 export type UpdateStaffPreferencesRequest = z.infer<typeof UpdateStaffPreferencesRequestSchema>;
 
 /** The error `code` the API sends (HTTP 403) while a session must change its password. */

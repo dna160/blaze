@@ -239,7 +239,8 @@
       "account": "Akun",
       "changePassword": "Ganti kata sandi",
       "logout": "Keluar",
-      "language": "Bahasa"
+      "language": "Bahasa",
+      "userSettings": "Pengaturan pengguna"
     },
     "banners": {
       "testMode": "Mode uji — data akan dihapus sebelum go-live",
@@ -1567,5 +1568,20 @@
     "since": "Sejak",
     "paidThrough": "Dibayar sampai",
     "noTenant": "Tidak ada penyewa aktif."
+  },
+  "account": {
+    "title": "Pengaturan pengguna",
+    "intro": "Akun Anda sendiri: nama, bahasa console, dan kata sandi.",
+    "profile": "Profil",
+    "email": "Email",
+    "role": "Peran",
+    "displayName": "Nama yang ditampilkan",
+    "saveName": "Simpan nama",
+    "saving": "Menyimpan…",
+    "saved": "Nama disimpan.",
+    "saveFailed": "Nama tidak dapat disimpan. Coba lagi.",
+    "nameHint": "Nama ini dilihat staf lain dan dipakai untuk inisial di pojok kanan atas. Email dan peran diubah oleh admin.",
+    "languageHint": "Disimpan di akun Anda, jadi berlaku di semua browser.",
+    "passwordHint": "Setelah diganti, sesi Anda di perangkat lain otomatis keluar."
   }
 }
