@@ -65,7 +65,12 @@ export async function runOfflineSignDeadline(now: Date = new Date()): Promise<{ 
           tx.notification.findFirst({
             where: {
               templateKey: "contract_sign_reminder",
-              AND: [{ payload: { path: ["contractId"], equals: contract.id } }, { payload: { path: ["daysLeft"], equals: String(step.daysLeft) } }],
+              // Per deadline: a deadline restarted by a date change gets its reminders again.
+              AND: [
+                { payload: { path: ["contractId"], equals: contract.id } },
+                { payload: { path: ["daysLeft"], equals: String(step.daysLeft) } },
+                { payload: { path: ["deadline"], equals: common.deadline } },
+              ],
             },
             select: { id: true },
           }),

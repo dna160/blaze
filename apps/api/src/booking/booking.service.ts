@@ -1262,6 +1262,11 @@ export class BookingService {
               : {}),
             // The signature stands; staff confirm the re-dated agreement again.
             ...(reconfirm ? { confirmedAt: null, confirmedByUserId: null } : {}),
+            // Owner, 2026-11-23: an offline contract that still has to be signed gets a
+            // fresh signing window from the moment the new dates are approved.
+            ...(contract.signMethod === "OFFLINE" && (!contractSigned || resign)
+              ? { signDeadlineAt: new Date(Date.now() + resolveOfflineSignDays(tenant.featureFlags) * 86_400_000) }
+              : {}),
           },
         });
         contractOutcome = {
